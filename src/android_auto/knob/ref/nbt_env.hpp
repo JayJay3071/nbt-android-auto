@@ -1,0 +1,87 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2026 nanaisu - NBT-AAD (https://github.com/Sq00ky/Supra-iDrive6-Android-Auto)
+#ifndef NBT_ENV_HPP
+#define NBT_ENV_HPP
+
+#include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
+
+namespace nbt {
+
+// Shared reading for the on/off settings.
+// Unset, empty, or an unrecognised word returns -1 so the caller keeps its default.
+// 0 / off / no / false return 0. 1 / on / yes / true return 1.
+// A variable that is merely present does not turn a setting on.
+inline int envFlag(const char* name) {
+    const char* e = name ? getenv(name) : NULL;
+    if (!e || !*e) return -1;
+    if (strcmp(e, "0") == 0 || strcmp(e, "off") == 0 || strcmp(e, "no") == 0 ||
+        strcmp(e, "false") == 0) return 0;
+    if (strcmp(e, "1") == 0 || strcmp(e, "on") == 0 || strcmp(e, "yes") == 0 ||
+        strcmp(e, "true") == 0) return 1;
+    return -1;
+}
+
+// HU-hosted wireless (Bluetooth RFCOMM -> Wi-Fi credentials -> TCP accept) is the default since
+// v1.4.2 (car-verified). NBT_WIRELESS=0 / off / no restores the legacy outbound phone scanner.
+inline bool wirelessEnabled() {
+    return envFlag("NBT_WIRELESS") != 0;   // unset stays on
+}
+
+// iDrive knob / tilt / hard keys -> phone is the default since v1.4.3 (car-verified nbt-25).
+// NBT_KNOB=0 / off / no disables it.
+inline bool knobEnabled() {
+    return envFlag("NBT_KNOB") != 0;
+}
+
+// The audio mode (NBT_AUDIO_MODE, AudioMode, audioMode()) and the audio settings are in audio/config.hpp.
+
+// Android Auto over USB through the head unit's AOA drivers (usb_accessory.cpp). Experimental, not car-verified,
+// so off unless NBT_USB=1 / on / yes / true: it switches any Android phone plugged in while the daemon runs into
+// accessory mode, which takes it away from iDrive's USB media (MTP) until it is replugged.
+inline bool usbEnabled() {
+    const char* e = getenv("NBT_USB");
+    if (!e || !*e) return false;
+    return strcmp(e, "1") == 0 || strcmp(e, "on") == 0 || strcmp(e, "yes") == 0 || strcmp(e, "true") == 0;
+}
+
+// NBT_USB_DIRECT=1 (with NBT_USB=1, experimental): read the phone through libusbdi, not devc-serusb-aoap (which it
+// stops for the phone): see usb_direct.hpp.
+inline bool usbDirectEnabled() {
+    const char* e = getenv("NBT_USB_DIRECT");
+    if (!e || !*e) return false;
+    return strcmp(e, "1") == 0 || strcmp(e, "on") == 0 || strcmp(e, "yes") == 0 || strcmp(e, "true") == 0;
+}
+
+// NBT_USB_CLAIM_DRIVER=0: with NBT_USB_DIRECT, stop devc-serusb-aoap after it has started instead of keeping it from
+// starting (usb_direct.hpp). On by default.
+inline bool usbClaimDriverEnabled() {
+    const char* e = getenv("NBT_USB_CLAIM_DRIVER");
+    if (!e || !*e) return true;
+    return !(strcmp(e, "0") == 0 || strcmp(e, "off") == 0 || strcmp(e, "no") == 0 || strcmp(e, "false") == 0);
+}
+
+inline unsigned long envHex(const char* name, unsigned long def) {
+    const char* e = getenv(name);
+    if (!e || !*e) return def;
+    char* end = NULL;
+    unsigned long v = strtoul(e, &end, 0);
+    return (end && end != e) ? v : def;
+}
+
+// A whole number setting clamped to [lo, hi]; unset or unparsable returns def.
+inline long envRange(const char* name, long def, long lo, long hi) {
+    const char* e = getenv(name);
+    long v = def;
+    if (e && *e) {
+        char* end = NULL;
+        long x = strtol(e, &end, 0);
+        if (end && end != e) v = x;
+    }
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
+} // namespace nbt
+
+#endif // NBT_ENV_HPP

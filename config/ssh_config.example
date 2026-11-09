@@ -1,0 +1,20 @@
+# Copy to .local/ssh_config and replace the User and IdentityFile values.
+# Private keys belong outside the repository, e.g. in the Windows .ssh folder.
+Host qnx-build
+    HostName 192.168.56.10
+    User REPLACE_ME
+    Port 22
+    IdentityFile ~/.ssh/nbt_qnx_build_rsa
+    IdentitiesOnly yes
+    ForwardAgent no
+    ForwardX11 no
+    ClearAllForwardings yes
+    StrictHostKeyChecking yes
+    ConnectTimeout 5
+    ServerAliveInterval 15
+    ServerAliveCountMax 2
+    # Enable individual legacy options ONLY if negotiation proves necessary:
+    # HostKeyAlgorithms +ssh-rsa
+    # PubkeyAcceptedAlgorithms +ssh-rsa
+    # MACs +hmac-sha1
+    # No KEX downgrade was needed for the observed QNX VM.

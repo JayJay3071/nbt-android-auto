@@ -1,0 +1,2 @@
+paramiko>=3.4,<4   # the NBT's OpenSSH 5.2 only offers ssh-rsa host keys, dropped in paramiko 4
+

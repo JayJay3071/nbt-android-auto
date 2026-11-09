@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Prototype: validate against the original NBT parser before installation. -->
+<pluginApps>
+  <pluginApp applicationType="Multimedia" applicationWeight="200" text="Hello NBT">
+    <entryButton id="1" action="2" model="3"/>
+    <actions>
+      <hmiAction id="2" target="10" targetModel="5"/>
+    </actions>
+    <models>
+      <textIdModel id="3" textId="1" preinst="false"/>
+      <textIdModel id="4" textId="2" preinst="false"/>
+      <raIntModel id="5" value="10"/>
+    </models>
+    <hmiStates>
+      <hmiState id="10" textModel="3" text="Hello NBT">
+        <components>
+          <label id="11" model="4" text="Hello World from QNX x86!"/>
+        </components>
+      </hmiState>
+    </hmiStates>
+  </pluginApp>
+</pluginApps>

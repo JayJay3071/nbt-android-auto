@@ -1,0 +1,34 @@
+# Private development files: car dumps, SSH configs, keys, head-unit libraries, logs
+/.local/
+/build/
+
+# Keys and host pinning
+*.pem
+*.ppk
+*.key
+id_rsa*
+id_ed25519*
+known_hosts
+*_known_hosts
+
+# Archives and logs (diagnostic ZIPs may contain private data)
+*.zip
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Installer build output (payload and apps are release assets, not source)
+/installer/payload/
+/installer/dist/
+/installer/build/
+*.spec
+
+# OS and editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

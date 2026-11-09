@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- "Android Auto" entry under Multimedia. Base structure as the vehicle-confirmed NbtLiveImage page; hold state 13 and
+     focusEvent 52 as in the NBT-AAD reference rhmiapp (screen exclusivity). The picture is drawn by nbt_wal_present in
+     front of the HMI; libNbtAndroidAuto.so moves iDrive from state 10 to the inert state 13 and toggles
+     /fs/ram3/nbt-aa-hidden / nbt-aa-request (see aa_entry_plugin.cpp). -->
+<pluginApps>
+  <pluginApp applicationType="Multimedia" applicationWeight="200" text="Android Auto">
+    <entryButton id="1" action="2" model="3"/>
+    <actions>
+      <hmiAction id="2" target="10" targetModel="5"/>
+      <!-- picture mode buttons -> inert pages 30 / 31; the plugin stores the mode and sends focus event 53 back to 10 -->
+      <hmiAction id="26" target="30"/>
+      <hmiAction id="27" target="31"/>
+      <!-- restart of the Android Auto service only (not the head unit) -> inert page 32, then back to 10 -->
+      <hmiAction id="28" target="32"/>
+    </actions>
+    <models>
+      <textIdModel id="3" textId="1" preinst="false"/>
+      <textIdModel id="4" textId="2" preinst="false"/>
+      <raIntModel id="5" value="10"/>
+      <textIdModel id="6" textId="11" preinst="false"/>
+      <textIdModel id="7" textId="12" preinst="false"/>
+      <textIdModel id="8" textId="13" preinst="false"/>
+      <textIdModel id="9" textId="14" preinst="false"/>
+      <textIdModel id="22" textId="15" preinst="false"/>
+      <textIdModel id="23" textId="18" preinst="false"/>
+      <textIdModel id="24" textId="10" preinst="false"/>
+      <textIdModel id="25" textId="19" preinst="false"/>
+      <textIdModel id="26" textId="20" preinst="false"/>
+    </models>
+    <events>
+      <focusEvent id="52" target="20"/>
+      <focusEvent id="53" target="10"/>
+      <!-- second way into the hold states (car 2026-11-09: iDrive ignored 52 after the page had been left from level 18;
+           the plugin alternates 52 / 54 while one is ignored) -->
+      <focusEvent id="54" target="13"/>
+    </events>
+    <hmiStates>
+      <hmiState id="10" textModel="3" text="Android Auto">
+        <components>
+          <label id="11" model="4" text="Telefon per USB verbinden"><properties><property id="2" value="false"/></properties></label>
+          <button id="61" action="26" model="6" text="16:9"/>
+          <button id="62" action="27" model="7" text="Breitbild"/>
+          <button id="68" action="28" model="25" text="Android Auto neu starten"/>
+          <label id="63" model="8" text="Tipp"><properties><property id="2" value="false"/></properties></label>
+          <label id="64" model="9" text="Breitbild"><properties><property id="2" value="false"/></properties></label>
+          <label id="65" model="22" text="Wechsel"><properties><property id="2" value="false"/></properties></label>
+        </components>
+      </hmiState>
+      <!-- picture mode pages: nothing selectable, the plugin returns to page 10 at once -->
+      <hmiState id="30" parentId="10" textModel="24" text="Bildmodus">
+        <components>
+          <label id="66" model="23" text="Bildmodus gespeichert"/>
+        </components>
+      </hmiState>
+      <hmiState id="31" parentId="10" textModel="24" text="Bildmodus">
+        <components>
+          <label id="67" model="23" text="Bildmodus gespeichert"/>
+        </components>
+      </hmiState>
+      <hmiState id="32" parentId="10" textModel="3" text="Android Auto">
+        <components>
+          <label id="69" model="26" text="Android Auto startet neu"/>
+        </components>
+      </hmiState>
+      <!-- hold states 13..20, each nested in the previous one: nothing selectable, so controller turns / pushes / tilts do
+           nothing in iDrive. BACK (or tilt left) only climbs one level, so no focus event is needed for it; focusEvent 52
+           goes to the deepest level (car 2026-11-07: too many events made the HMI ignore them until a reboot). -->
+      <hmiState id="13" parentId="10" textModel="3" text="Android Auto">
+        <components>
+          <label id="41" model="4" text="Telefon per USB verbinden"/>
+        </components>
+      </hmiState>
+      <hmiState id="14" parentId="13" textModel="3" text="Android Auto">
+        <components>
+          <label id="42" model="4" text="Telefon per USB verbinden"/>
+        </components>
+      </hmiState>
+      <hmiState id="15" parentId="14" textModel="3" text="Android Auto">
+        <components>
+          <label id="43" model="4" text="Telefon per USB verbinden"/>
+        </components>
+      </hmiState>
+      <hmiState id="16" parentId="15" textModel="3" text="Android Auto">
+        <components>
+          <label id="44" model="4" text="Telefon per USB verbinden"/>
+        </components>
+      </hmiState>
+      <hmiState id="17" parentId="16" textModel="3" text="Android Auto">
+        <components>
+          <label id="45" model="4" text="Telefon per USB verbinden"/>
+        </components>
+      </hmiState>
+      <hmiState id="18" parentId="17" textModel="3" text="Android Auto">
+        <components>
+          <label id="46" model="4" text="Telefon per USB verbinden"/>
+        </components>
+      </hmiState>
+      <hmiState id="19" parentId="18" textModel="3" text="Android Auto">
+        <components>
+          <label id="47" model="4" text="Telefon per USB verbinden"/>
+        </components>
+      </hmiState>
+      <hmiState id="20" parentId="19" textModel="3" text="Android Auto">
+        <components>
+          <label id="48" model="4" text="Telefon per USB verbinden"/>
+        </components>
+      </hmiState>
+    </hmiStates>
+  </pluginApp>
+</pluginApps>

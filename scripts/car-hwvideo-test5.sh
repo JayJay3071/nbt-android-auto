@@ -1,0 +1,47 @@
+#!/bin/sh
+# Fifth hardware-video test (2026-11-07): z=1 for VIDEO, then 3 s HMI hidden (restored twice).
+# Fourth hardware-video test (2026-11-07): test 3 plus DisplayManager size/pos/visibility for CinemoVideo1_TaskA.
+# Third hardware-video test (2026-11-07): like car-hwvideo-test.sh plus setVisible(VIDEO 0x41c, 1) and z-order to the front.
+# First hardware-video test (2026-11-07): test clip through the STOCK video output (Cinemo output 1, windows
+# CinemoVideo1_TaskA/B), then the HMI's own MOST sequence to VideoApp (FBlock D7 VideoConnectionMaster, D8 VideoSink,
+# captured in build/video-trace-20261107/) to put it on the CID full screen, 15 s later the stop sequence.
+# Send with: python tools\nbt_request.py "tr -d '\015' | sh -s" --input-file scripts\car-hwvideo-test.sh --timeout 90
+T=/fs/ram3/nbt-video-test
+cd $T || exit 2
+ID='?video-output-id=1&video-output-aspect-x=1&video-output-aspect-y=1&video-window-class=CinemoVideo1_TaskA,CinemoVideo1_TaskB&video-subpicture-window-class=CinemoSubpicture1_TaskA,CinemoSubpicture1_TaskB'
+rm -f hw-run.log hw-start.log hw-stop.log
+(LD_LIBRARY_PATH=/opt/mm/lib/cinemo:/opt/mm/lib:/lib:/usr/lib ./video_runner 40 ./NmeCmdLine -a0 -wd 0 -wi 0 -wm 0 -vd NmeDeviceScreen -vi "$ID" -r -i $T/pattern-800x480.h264 > hw-run.log 2>&1 &)
+sleep 4
+K="./nbt_knob --trace --filter D7,D8 --fifo $T/none.fifo"
+# start: connection source 0x16 -> CID, current source, source viewport 800x480, StartVideo, screen viewport 0,0,1280,480
+LD_LIBRARY_PATH=/opt/sys/lib:/lib:/usr/lib $K --seconds 4 \
+  --send 2008,D7,01,060,6,0,1,0,FFFF,01011601 \
+  --send 2007,D8,01,C05,0,0,1,0,FFFF,1600 \
+  --send 2007,D8,01,C03,0,0,1,0,FFFF,00000000032001e0 \
+  --send 2007,D8,01,C01,6,0,1,0,FFFF,0101 \
+  --send 2007,D8,01,C04,0,0,1,0,FFFF,00000000050001e0 > hw-start.log 2>&1
+sleep 1
+# Intel side: our Cinemo window visible at full capture size (VideoApp did not do it for us, test 3)
+for c in 's,800,480;' 'p,0,0;' 'a,255;' 'v,1;'; do echo "CinemoVideo1_TaskA,$c" > /dev/DisplayManager:0; done
+# bring the hardware video window VIDEO (0x41c) in front; WalServer logs the old value ('zorder changed')
+# phase 1 (6 s): VIDEO in front of the HMI with a LOW z value; phase 2 (3 s): HMI window 0x100 hidden, then shown again
+( Z="LD_LIBRARY_PATH=/opt/sys/lib:/lib:/usr/lib ./nbt_wal_zorder"
+  LD_LIBRARY_PATH=/opt/sys/lib:/lib:/usr/lib ./nbt_wal_zorder --hold 6 --visible 0x41c 1 0x41c:1
+  LD_LIBRARY_PATH=/opt/sys/lib:/lib:/usr/lib ./nbt_wal_zorder --hold 3 --visible 0x100 0
+  LD_LIBRARY_PATH=/opt/sys/lib:/lib:/usr/lib ./nbt_wal_zorder --visible 0x100 1 ) > hw-z.log 2>&1 &
+echo '=== start replies'
+grep -e 'TX ' -e '2007->2' -e '2008->2' hw-start.log | sed 30q
+sleep 15
+LD_LIBRARY_PATH=/opt/sys/lib:/lib:/usr/lib ./nbt_wal_zorder --visible 0x100 1 >> hw-z.log 2>&1
+echo '=== zorder'; cat hw-z.log; sloginfo | grep -e 'zorder changed' -e 'first render' -e SETVISIBLE -e 'visible changed' -e 'WindowVisible' | tail -15
+LD_LIBRARY_PATH=/opt/sys/lib:/lib:/usr/lib $K --seconds 3 \
+  --send 2007,D8,01,C02,6,0,1,0,FFFF,0102 \
+  --send 2008,D7,01,061,6,0,1,0,FFFF,01021601 \
+  --send 2007,D8,01,C05,0,0,1,0,FFFF,0000 > hw-stop.log 2>&1
+echo '=== stop replies'
+grep -e 'TX ' -e '2007->2' -e '2008->2' hw-stop.log | sed 30q
+echo '=== system log'
+sloginfo | grep -e DisplayManagerScreen | tail -14; sloginfo | grep -e nvideocapture | tail -4
+echo '=== decoder'
+sed 12q hw-run.log
+echo '=== END'

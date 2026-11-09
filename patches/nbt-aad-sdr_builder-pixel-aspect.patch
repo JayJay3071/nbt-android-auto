@@ -1,0 +1,72 @@
+NBT-AAD patch: optional pixel aspect ratio override (NBT_VID_PAR) for the anamorphic "wide" picture mode.
+Upstream: https://github.com/Sq00ky/Supra-iDrive6-Android-Auto commit 41975f2 (PolyForm Noncommercial 1.0.0).
+Apply inside the upstream checkout: git apply <this file>
+
+diff --git a/milestone-7/src/sdr_builder.cpp b/milestone-7/src/sdr_builder.cpp
+index c06831d..6a6e2a0 100644
+--- a/milestone-7/src/sdr_builder.cpp
++++ b/milestone-7/src/sdr_builder.cpp
+@@ -464,7 +464,7 @@ std::vector<uint8_t> buildServiceDiscovery(const uint8_t* base, size_t baseLen,
+ // ---- main-display VideoConfig experiments ----------------------------------------------------------
+ namespace {
+ 
+-struct VidOv { bool res, mw, mh, ins, dpi; int vres, vmw, vmh, it, ib, il, ir, vdpi; };
++struct VidOv { bool res, mw, mh, ins, dpi, par; int vres, vmw, vmh, it, ib, il, ir, vdpi, vpar; };
+ 
+ bool envInt(const char* n, int& v) {
+     const char* e = getenv(n);
+@@ -481,7 +481,10 @@ bool patchVideoConfig(const uint8_t* p, size_t n, const VidOv& o, std::vector<ui
+     size_t pos = 0;
+     const uint8_t* f11p = NULL;
+     size_t f11n = 0;
+-    VarRepl vr[5] = { {1, o.res, o.vres}, {3, o.mw, o.vmw}, {4, o.mh, o.vmh}, {5, o.dpi, o.vdpi}, {9, o.dpi, o.vdpi} };
++    // field 8 = pixel_aspect_ratio_e4 (NBT project 2026-11-08, anamorphic mode: pixels 1.6x wider than tall)
++    VarRepl vr[6] = { {1, o.res, o.vres}, {3, o.mw, o.vmw}, {4, o.mh, o.vmh}, {5, o.dpi, o.vdpi}, {9, o.dpi, o.vdpi},
++                      {8, o.par, o.vpar} };
++    bool parSeen = false;
+     while (pos < n) {
+         size_t start = pos;
+         uint64_t key;
+@@ -491,7 +494,8 @@ bool patchVideoConfig(const uint8_t* p, size_t n, const VidOv& o, std::vector<ui
+             uint64_t x;
+             if (!getVarint(p, n, pos, x)) return false;
+             bool done = false;
+-            for (int i = 0; i < 5; ++i)
++            if (f == 8) parSeen = true;
++            for (int i = 0; i < 6; ++i)
+                 if (vr[i].field == f && vr[i].on) { putVarint(out, key); putVarint(out, (uint64_t)vr[i].value); done = true; }
+             if (!done) out.insert(out.end(), p + start, p + pos);
+         } else if (wt == 2) {
+@@ -503,6 +507,7 @@ bool patchVideoConfig(const uint8_t* p, size_t n, const VidOv& o, std::vector<ui
+         else if (wt == 1) { pos += 8; out.insert(out.end(), p + start, p + pos); }
+         else return false;
+     }
++    if (o.par && !parSeen) { putVarint(out, (8u << 3) | 0); putVarint(out, (uint64_t)o.vpar); }
+     if (o.ins) {
+         std::vector<uint8_t> vi, avc;
+         putVarint(vi, (1u << 3) | 0); putVarint(vi, (uint64_t)o.it);
+@@ -598,6 +603,7 @@ bool patchMainVideo(std::vector<uint8_t>& sdr) {
+     o.res = envInt("NBT_VID_RES", o.vres);
+     o.mw = envInt("NBT_VID_MW", o.vmw);
+     o.mh = envInt("NBT_VID_MH", o.vmh);
++    o.par = envInt("NBT_VID_PAR", o.vpar) && o.vpar > 0;   // pixel aspect ratio x 10000 (16000 = anamorphic 1.6)
+     // Default DPI 140 (car-verified 2026-10-23, w9: rail icons no longer overlap in crop mode).
+     // NBT_VID_DPI=<n> overrides, NBT_VID_DPI=0 keeps the phone's own DPI.
+     // MINI round display (1180_480 coding): DPI 152 and 40 px side insets by default (car-verified on a MINI F60).
+@@ -619,7 +625,7 @@ bool patchMainVideo(std::vector<uint8_t>& sdr) {
+         int t = 0, b = 0, l = 0, r = 0;
+         if (sscanf(ins, "%d,%d,%d,%d", &t, &b, &l, &r) >= 2) { o.ins = true; o.it = t; o.ib = b; o.il = l; o.ir = r; }
+     }
+-    if (!o.res && !o.mw && !o.mh && !o.ins && !o.dpi) return false;
++    if (!o.res && !o.mw && !o.mh && !o.ins && !o.dpi && !o.par) return false;
+     std::vector<uint8_t> out;
+     size_t n = sdr.size(), pos = 0;
+     bool changed = false;
+@@ -649,6 +655,7 @@ bool patchMainVideo(std::vector<uint8_t>& sdr) {
+         printf("[SDR] main VideoConfig override: res=%s%d mw=%s%d mh=%s%d dpi=%s%d insets=%s(%d,%d,%d,%d)\n",
+                o.res ? "" : "(keep)", o.vres, o.mw ? "" : "(keep)", o.vmw, o.mh ? "" : "(keep)", o.vmh,
+                o.dpi ? "" : "(keep)", o.vdpi, o.ins ? "" : "(keep)", o.it, o.ib, o.il, o.ir);
++        if (o.par) printf("[SDR] pixel_aspect_ratio_e4=%d\n", o.vpar);
+         sdr.swap(out);
+     }
+     return changed;
