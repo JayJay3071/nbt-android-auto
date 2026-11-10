@@ -4,6 +4,20 @@ Installiert Android Auto auf einem originalen BMW NBT (QNX). Danach gibt es unte
 **Android Auto**. Der Installer braucht nur SSH-Zugang zum NBT: IP-Adresse und root-Passwort.
 Das Passwort wird nirgends gespeichert.
 
+## Vorher: SSH-Zugang freischalten
+
+Ab Werk nimmt das NBT keine SSH-Anmeldung an. SSH muss deshalb zuerst einmal gepatcht werden.
+
+- **So hat es der Entwickler gemacht:** mit dem **FeatureInstaller**.
+  - Das braucht teils **mehrere Anläufe**.
+  - Der letzte Schritt meldet teils **Fehler, obwohl SSH geklappt hat**. Deshalb danach einfach die Verbindung testen,
+    z. B. `ssh root@169.254.199.99`.
+- **Root-Passwort:** steht in diesem Forum-Thread:
+  [SSH access guide (supramkv.com)](https://www.supramkv.com/threads/ssh-access-guide-supra-nbtevo-headunit.24190/).
+  Der Thread dreht sich um das NBT Evo im Toyota Supra, das root-Passwort steht dort.
+
+Das Freischalten verändert die Konfiguration des Geräts. Wie alles hier geschieht es auf eigene Gefahr.
+
 ## Benutzung
 
 1. Laptop per ENET-Kabel mit dem Auto verbinden, Zündung an. Die übliche NBT-Adresse ist `169.254.199.99`.

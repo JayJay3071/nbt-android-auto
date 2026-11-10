@@ -38,9 +38,23 @@ What changed between versions: [CHANGELOG.md](CHANGELOG.md).
 ## Requirements
 
 - BMW with the **original NBT** (not NBT Evo, not CIC). NBT Evo uses a different DSI library and is not supported.
-- **SSH root access to the NBT** and its root password. The installer does not set this up for you.
+- **SSH root access to the NBT** and its root password. The installer does not set this up for you, see
+  [Getting SSH access](#getting-ssh-access).
 - A laptop connected to the car with an **ENET cable** (the NBT usually answers at `169.254.199.99`).
 - A USB cable for the phone.
+
+## Getting SSH access
+
+The stock NBT does not accept SSH logins, so SSH has to be unlocked (patched) once before you can install anything.
+
+- **How it was done on the developer's car:** with **FeatureInstaller**. It can take **several attempts**. The last
+  step sometimes reports **errors even though SSH access was enabled**, so try to connect (for example
+  `ssh root@169.254.199.99`) before you assume it failed.
+- **Root password:** it can be looked up in this forum thread:
+  [SSH access guide (supramkv.com)](https://www.supramkv.com/threads/ssh-access-guide-supra-nbtevo-headunit.24190/).
+  The thread is about the NBT Evo in the Toyota Supra; the root password is given there.
+
+Unlocking SSH changes the head unit's configuration. As with everything here, you do it at your own risk.
 
 ## Install
 
@@ -131,6 +145,10 @@ traffic laws.
 Vollbild über den Hardware-Videoweg, Bedienung mit dem iDrive-Controller, Google-Maps-Abbiegehinweise im Tacho.
 
 - **Voraussetzungen:** originales NBT (kein NBT Evo), SSH-Root-Zugang mit Passwort, ENET-Kabel.
+- **SSH freischalten:** SSH muss zuerst einmal gepatcht werden. Beim Entwickler ging das mit dem **FeatureInstaller**.
+  Das braucht teils mehrere Anläufe, und der letzte Schritt meldet teils Fehler, obwohl SSH geklappt hat. Also einfach
+  die Verbindung testen. Das root-Passwort steht in diesem
+  [Forum-Thread](https://www.supramkv.com/threads/ssh-access-guide-supra-nbtevo-headunit.24190/).
 - **Installation:** Installer aus den [Releases](../../releases) laden und der Anleitung in
   [installer/README.md](installer/README.md) folgen.
 - **Einschränkungen:** noch kein Ton über Android Auto (Musik weiter per Bluetooth), 800x480, getestet mit einem Auto
