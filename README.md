@@ -62,7 +62,7 @@ Unlocking SSH changes the head unit's configuration. As with everything here, yo
    Alternatively run the Python version: `pip install "paramiko>=3.4,<4"`, then `python installer/nbt_aa_installer.py`
    with the `payload/` folder from the release next to it.
 2. Connect the ENET cable, ignition on, enter IP address and root password, click **Install / Update**.
-3. Restart the iDrive (hold the power button for about 30 s).
+3. Restart the iDrive.
 4. Plug in the phone and choose **Multimedia → Android Auto**.
 
 The installer writes only two folders (`/var/opt/hmi/data/rw/NbtAndroidAutoRT/` and
