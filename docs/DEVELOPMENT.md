@@ -6,13 +6,26 @@ is one of the most useful contributions right now.
 
 ## What you need
 
-- **QNX Software Development Platform 6.5.0 (x86)**, for example in a VirtualBox VM. QNX SDP is licensed software
-  and is not part of this repository. The compiler is `qcc -V4.4.2,gcc_ntox86` (C) / `gcc_ntox86_cpp` (C++).
+- **QNX Software Development Platform 6.5.0 (x86)** in a virtual machine (VirtualBox works). It can be downloaded
+  from QNX; it is not part of this repository. The compiler is `qcc -V4.4.2,gcc_ntox86` (C) / `gcc_ntox86_cpp` (C++).
+  See [Setting up QNX 6.5.0](#setting-up-qnx-650) below.
 - A Windows, macOS or Linux machine with Python 3.10+ for the installer and the helper scripts.
 - An NBT with SSH root access for testing. A few proprietary libraries have to be copied **from your own NBT** for
   linking (see below). Never commit them.
 
 Private files belong in `.local/` and build output in `build/`; both are ignored by git.
+
+## Setting up QNX 6.5.0
+
+1. Download **QNX 6.5.0** from QNX.
+2. Install it in a VM. This video shows everything you need, step by step:
+   [QNX 6.5.0 setup on YouTube](https://www.youtube.com/watch?v=3yjVaIwzPsc&t=182s).
+3. **Tip: adjust the BIOS date of the VM** (set it back to an earlier date). In VirtualBox you can do this with an
+   offset in milliseconds while the VM is off, for example one year back:
+
+   ```sh
+   VBoxManage modifyvm "QNX" --biossystemtimeoffset -31536000000
+   ```
 
 ## QNX VM
 

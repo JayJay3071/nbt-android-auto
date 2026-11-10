@@ -24,6 +24,9 @@ car, phone and pair of hands. Issues and pull requests are welcome in **English 
 
 ## Before you start
 
+- To build anything for the head unit you need **QNX 6.5.0** in a VM. You can download it from QNX; the setup (video
+  walkthrough and a BIOS date tip) is in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#setting-up-qnx-650).
+
 - Read the safety rules in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#safety-rules-learned-the-hard-way). Some
   experiments restart the head unit; a few rules keep the car usable.
 - For larger changes, open an issue first so we can agree on the approach.
