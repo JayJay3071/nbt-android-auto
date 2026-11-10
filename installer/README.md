@@ -25,7 +25,7 @@ Das Freischalten verändert die Konfiguration des Geräts. Wie alles hier geschi
    - Windows: `NBT-AndroidAuto-Installer.exe`
    - macOS: `NBT-AndroidAuto-Installer.app`. Beim ersten Start mit Rechtsklick → Öffnen, weil die App nicht signiert ist.
 3. IP-Adresse und Passwort eingeben, dann **Installieren / Aktualisieren** klicken.
-4. Das iDrive neu starten: Ein/Aus-Knopf ca. 30 s halten.
+4. Das iDrive neu starten.
 5. Telefon per USB anstecken und **Multimedia → Android Auto** wählen.
 
 ## Was Android Auto auf dem NBT kann
