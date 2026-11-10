@@ -7,6 +7,8 @@ iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrum
 > **Status: community prototype.** It works daily in the developer's car (BMW F07, 2014, OnePlus 7 Pro). It has not
 > been tested on other cars, other NBT software levels (I-Stufen) or NBT Evo. Read the [disclaimer](#disclaimer) first.
 
+🎬 **Sneak peek:** [see it running in the car (Instagram video)](https://www.instagram.com/reel/DfkW1wYsB__/)
+
 🇩🇪 **Deutsch:** Kurzfassung [weiter unten](#deutsch), Installationsanleitung in [installer/README.md](installer/README.md).
 
 ## Features
@@ -148,6 +150,7 @@ traffic laws.
 
 **NBT Android Auto** bringt kabelgebundenes Android Auto auf das **originale BMW NBT** (QNX, x86), ohne Zusatzhardware:
 Vollbild über den Hardware-Videoweg, Bedienung mit dem iDrive-Controller, Google-Maps-Abbiegehinweise im Tacho.
+So sieht es im Auto aus: [Video auf Instagram](https://www.instagram.com/reel/DfkW1wYsB__/).
 
 - **Voraussetzungen:** originales NBT (kein NBT Evo), SSH-Root-Zugang mit Passwort, ENET-Kabel.
 - **SSH freischalten:** SSH muss zuerst einmal gepatcht werden. Beim Entwickler ging das mit dem **FeatureInstaller**.
