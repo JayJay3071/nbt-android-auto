@@ -3,6 +3,8 @@
 Thanks for wanting to help! This project started as one person's experiment on one car. It gets better with every
 car, phone and pair of hands. Issues and pull requests are welcome in **English or German**.
 
+Questions or suggestions that do not fit an issue: **androidauto.nbt@proton.me** (also PayPal for donations).
+
 ## Ways to help
 
 - **Test on your car** and report the result, good or bad: car model, build year, NBT software level (I-Stufe),

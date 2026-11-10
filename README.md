@@ -115,6 +115,11 @@ are kept in [docs/history/](docs/history/) for reference.
 Help is very welcome, especially for **Android Auto audio**, other NBT software levels and cars, and a reproducible
 build. Start with [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
+## Support and contact
+
+If this project is useful to you, donations are very welcome via **PayPal** to **androidauto.nbt@proton.me**.
+The same address is also the place to reach me with questions or suggestions.
+
 ## Credits and license
 
 Parts of the Android Auto core and the controller code come from **NBT-AAD** by nanaisu
@@ -156,3 +161,5 @@ Vollbild über den Hardware-Videoweg, Bedienung mit dem iDrive-Controller, Googl
 - **Nutzung auf eigene Gefahr**, keine Gewähr. Lizenz: PolyForm Noncommercial 1.0.0, also keine kommerzielle Nutzung.
 - Mitmachen ist ausdrücklich erwünscht: [CONTRIBUTING.md](CONTRIBUTING.md). Issues und Pull Requests gern auf Deutsch
   oder Englisch.
+- **Spenden und Kontakt:** Wer das Projekt unterstützen möchte, kann gern per **PayPal** an
+  **androidauto.nbt@proton.me** spenden. Über dieselbe Adresse erreichst du mich auch bei Fragen oder Vorschlägen.
