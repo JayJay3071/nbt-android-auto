@@ -206,13 +206,13 @@ public:
     bmw::PluginApp* app;
     bool stopping, polling, entryFocused, running;
     unsigned focusMask, visibleMask;
-    unsigned shownText; int shownMode; long window; unsigned holds, ignoredHolds; long lastSideHold, lastAutoHold; long long lastSideHoldMs;
+    unsigned shownText; int shownMode; long window; unsigned holds, ignoredHolds; long lastSideHold, lastAutoHold; long long lastSideHoldMs, lastHoldMs, lastFocusMs;
     Checker checker;
     Verifier verifier;
     BackToEntry back;
     HoldSlot slots[kHoldCount];
     Entry():app(0),stopping(false),polling(false),entryFocused(false),running(false),focusMask(0),visibleMask(0),
-            shownText(0),shownMode(0),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000) {
+            shownText(0),shownMode(0),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0) {
         checker.e=this; verifier.e=this;
         for(unsigned i=0;i<kHoldCount;++i){slots[i].e=this;slots[i].idx=i;}
     }
@@ -223,6 +223,12 @@ public:
     // in between)
     void verify() { if(!verifier.pending&&!stopping&&app){verifier.pending=true;app->post(&verifier,5000);} }
     void hold(const char* why) {
+        // review 2026-11-09: on every entry with Android Auto running the checker (+30 ms) and the status poll (+50 ms)
+        // each sent the event, 50 ms apart and in the middle of iDrive's page transition; in the log of 2026-11-09 the
+        // first ignored event was exactly such a pair. One event per second at most.
+        const long long tm=now_ms();
+        if(tm-lastHoldMs<1000){plog("hold skipped (one was just sent)");return;}
+        lastHoldMs=tm;lastAutoHold=now_s();
         long t=now_s();
         if(t-window>=60){window=t;holds=0;}
         if(++holds>10){plog("hold refused by loop guard (10/min)");touch(kHidden);return;}
@@ -231,6 +237,7 @@ public:
         const unsigned ev=ignoredHolds%2?kEvHoldAlt:kEvHold;
         plog(why,(int)holds);
         plog("  focus event",(int)ev);
+        plog("  ms since the last focus change",(int)(tm-lastFocusMs>100000?100000:tm-lastFocusMs));
         app->triggerEvent(ev);
         verify();
     }
@@ -254,7 +261,7 @@ public:
     static bool entryFocus(void* self,const bmw::Parcel& p) {
         Entry* e=static_cast<Entry*>(self);
         bool focused=false;p.readBool(focused);
-        e->entryFocused=focused;
+        e->entryFocused=focused;e->lastFocusMs=now_ms();
         plog("entry focus",focused);
         if(focused&&!e->stopping){
             unlink(kLeave);                    // the driver came back on purpose
@@ -288,6 +295,7 @@ public:
         HoldSlot* s=static_cast<HoldSlot*>(self); Entry* e=s->e;
         bool focused=false;p.readBool(focused);
         if(focused)e->focusMask|=1u<<s->idx; else e->focusMask&=~(1u<<s->idx);
+        e->lastFocusMs=now_ms();
         plog(focused?"hold focus 1, level":"hold focus 0, level",(int)s->idx);
         if(focused){unlink(kLeave);unlink(kHidden);e->ignoredHolds=0;e->startPolling(500);}
         else e->check(150);            // decide after the HMI has finished its transition (see Checker)

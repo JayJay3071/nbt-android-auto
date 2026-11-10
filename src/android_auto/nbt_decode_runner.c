@@ -20,7 +20,10 @@ int main(int argc,char**argv){
  seconds=strtol(argv[1],&end,10);if(*end||seconds<0||seconds>3600)return 2;
  signal(SIGTERM,stopped);signal(SIGINT,stopped);signal(SIGPIPE,SIG_IGN);
  child=fork();if(child<0)return 2;
- if(!child){struct rlimit core;memset(&core,0,sizeof(core));if(setrlimit(RLIMIT_CORE,&core)||setpgid(0,0))_exit(125);
+ if(!child){struct rlimit core;
+  /* Software decoding on purpose (car test 2026-11-10): hardware decoding (-wd 1) gave a picture, but the io-nme video
+   * queue grew to 0.85 MB (seconds of delay; software keeps it at 0.004 MB), and a playback speed above normal (-s 1200)
+   * made NmeCmdLine stop after the first frame of the live stream. */  memset(&core,0,sizeof(core));if(setrlimit(RLIMIT_CORE,&core)||setpgid(0,0))_exit(125);
   /* argv[4] == "screen": hardware video path (car 2026-11-07): render into the stock video window class of Cinemo
    * output 1 (CinemoVideo1_TaskA/B, made visible by nbt_hwvideo) instead of raw I420 frames into a FIFO */
   /* "screen720": phone canvas 1280x720 with content rows 0..479 (insets 0,240,0,0) -> crop 667/1000 */

@@ -186,6 +186,34 @@ Linien direkt auf dem Rand einer Fläche werden abgeschnitten. Die Farbe 0x0E (g
 - Byte-Reihenfolge **A B G R**: Mit A R G B wurde Blau zu Braun.
 - A = 0 ist durchsichtig.
 
+**Bitmap-Tempo** (Messlauf am Auto 10.11.2026, `nbt_cluster --bench` / `--bench2`, Auto geparkt):
+
+| Kanal | Bild | Größe | Zeit bis zur Antwort |
+|---|---|---|---|
+| tx 0 (Steuerkanal) | Schild 305×44 | 1,4 KB | 250–420 ms |
+| tx 0 | Streifen 305×44 | 5,7 KB | 830 ms (~7 KB/s) |
+| tx 0 | Karte 221×158 | 7,2 KB | **ErrorAck `0C 01`** (Segmentierungsfehler), ab ~6 KB |
+| tx 1 (asynchron) | Karte 221×158 | 7 KB | 360–490 ms (~15–19 KB/s) |
+| tx 1 | Streifen 221×158 | 11 KB | 570 ms |
+
+- Die perspektivische Fläche 0x21 nimmt Bitmaps an.
+- Drei Kartenbilder hintereinander auf tx 1 ergaben **1,5 Bilder/s**, und zwar mit einer stark vereinfachten Testgrafik:
+  Route, sechs Straßen, wenige Flächen.
+- Ein echtes Google-Maps-Bild hat Verläufe und Kantenglättung. Mit RLE wird es ein Vielfaches größer, geschätzt
+  50–120 KB, also mehrere Sekunden pro Bild.
+- Eine flüssige Karte im Tacho geht über diesen Weg nicht. Höchstens eine stark vereinfachte Grafik, die etwa einmal pro
+  Sekunde wechselt, wäre machbar.
+- **Sichttest (`--mapdemo`, 10.11.2026):** In den Zeichenflächen 0x21, 0x1F, 0x1D und 0x23 werden Bitmaps zwar mit
+  ResultAck bestätigt, aber **nicht angezeigt**. Polygone in denselben Flächen sind sichtbar. Bilder zeigt der Tacho
+  nur in den RoadIcon-Flächen 0x18/0x19 (obere Zeile, 305×44). Eine Karte ist damit ausgeschlossen.
+
+**Text:** Die große Entfernungsschrift (0x1B) hat kein Komma: „5,4“ erscheint als „5 4“, „5.4“ mit Punkt geht.
+`nbt_cluster` wandelt das Komma deshalb in einen Punkt um.
+
+**Schilder:** Seit 10.11.2026 werden Ziffern und Kanten kantengeglättet gezeichnet (Strichschrift, Randpixel über Schwarz
+gemischt und deckend). Damit werden die Bilder größer (ca. 5,5 KB mit Schild und 50er-Schild), sie gehen deshalb über
+tx 1. Der Entfernungsbalken erscheint erst unter 1 km.
+
 **Umsetzung in `nbt_cluster`:**
 
 - **Schilder:** „A 66“ wird zu einem blauen Schild mit weißer Zahl, „B 40“ zu einem gelben mit schwarzer Zahl. Beide liegen links in der oberen Zeile (0x18 und 0x19). Die Nummer wird dann aus dem Straßentext entfernt.

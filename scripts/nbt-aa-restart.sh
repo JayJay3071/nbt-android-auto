@@ -15,6 +15,11 @@ S=$D/restart-`date +%d%H%M%S`.txt
   ls -l /fs/ram3/nbt-aa-hidden /fs/ram3/nbt-aa-request /fs/ram3/nbt-aa-leave
   echo '--- plugin log'; tail -80 /fs/ram3/nbt-aa-plugin.log
   echo '--- boot log'; tail -40 /fs/ram3/nbt-aa-boot.log
+  echo '--- states'; tail -30 $P/logs/states.txt
+  # the session logs of this boot: boot.sh rotates logs/ right after this snapshot (car 2026-11-10: the reason for a
+  # drop-out before the restart was lost that way)
+  for f in `ls -t $R/capture-*.log 2>/dev/null | sed 3q`; do echo "--- $f"; tail -60 $f; done
+  for f in `ls -t $R/decoder-*.log 2>/dev/null | sed 2q` `ls -t $R/hwvideo-*.log 2>/dev/null | sed 1q` $R/switch.log; do echo "--- $f"; tail -20 $f; done
   echo '--- processes'; pidin arg | grep -i -e nme -e media -e audio -e amp -e nbt -e oneplus -e native -e decode -e hwvideo -e mm
   echo '--- system log'; sloginfo | tail -400
 } > $S 2>&1

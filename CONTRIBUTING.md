@@ -17,7 +17,8 @@ car, phone and pair of hands. Issues and pull requests are welcome in **English 
 2. **Reproducible build.** One script that builds every QNX binary and the plugin from a clean checkout plus the QNX
    SDP, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 3. **Other cars and NBT software levels**, and possibly NBT Evo (different DSI library).
-4. **Latency**: the Cinemo HTTP buffer adds controller delay.
+4. **Latency**: the Cinemo HTTP buffer adds controller delay. Hardware decoding (`-wd 1`) was tried and made it worse
+   (larger io-nme queue), see the comment in `src/android_auto/nbt_decode_runner.c`.
 5. **Signed release builds** (Windows code signing, macOS notarization).
 6. **Lane guidance** in the cluster has not been seen with a real phone yet.
 

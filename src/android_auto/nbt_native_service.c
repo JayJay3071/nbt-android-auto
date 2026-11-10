@@ -205,7 +205,11 @@ int main(int argc,char**argv){
   if(!stopping&&(live?alive(&http):(!access("http.ready",F_OK)&&alive(&decoder)&&alive(&http)))){
    char*args[]={"./oneplus_native","--capture-video",b,d,0};snprintf(b,sizeof(b),"%d",bus);snprintf(d,sizeof(d),"%d",device);
    {char capname[40];snprintf(capname,sizeof(capname),"capture-%u.log",session);capture=spawn(args,0,capname);}report("running",session);
+   {long long began=ms();
    while(!stopping&&alive(&capture)&&alive(&http)&&(live||(alive(&decoder)&&(hw||alive(&frames))))){usleep(200000);keep_reported(session);}
+   /* a session that ran for a minute was a good one: its end is not a failed attempt (review 2026-11-09: the counter was
+    * only reset by unplugging, so the third normal session end of a drive showed "replug the phone") */
+   if(ms()-began>=60000)attempts=0;}
   }
   report("draining",session);end(&hwv);if(center)hmi_visible();end(&capture);if(!live)end(&http);
   {long long limit=ms()+3000;while(alive(&decoder)&&ms()<limit)usleep(20000);}

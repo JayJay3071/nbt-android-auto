@@ -29,8 +29,11 @@ iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrum
 - **800x480 only.** The hardware capture (`dev-nvideocapture`) is limited to WVGA. 720p was tested: not sharper, more
   input lag.
 - The controller has a noticeable delay because of the video buffer.
+- No map picture in the instrument cluster: the 6WB cluster shows pictures only in its top line (turn arrow, shields).
 - In wide mode, switch iDrive split screen off (OPTION → split screen off), otherwise tilting right twice opens it.
 - Tested with one car and one phone only.
+
+What changed between versions: [CHANGELOG.md](CHANGELOG.md).
 
 ## Requirements
 

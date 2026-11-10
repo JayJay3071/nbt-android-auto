@@ -53,8 +53,10 @@ echo "native_service started pid=$!"
 # Android Auto turn-by-turn in the instrument cluster (arrow, distance, street, road shield, lanes; nbt_cluster draws only
 # while the phone guides and yields to the iDrive navigation). Disable: touch $P/cluster-off
 if test -f $P/nbt_cluster -a ! -e $P/cluster-off; then
-  cp $P/nbt_cluster $R/nbt_cluster && chmod 700 $R/nbt_cluster
+  # stop a running copy first: a running binary cannot be overwritten (car 2026-11-10: "cp: Resource busy")
   slay nbt_cluster 2>/dev/null
+  sleep 1
+  cp $P/nbt_cluster $R/nbt_cluster && chmod 700 $R/nbt_cluster
   (cd $R; LD_LIBRARY_PATH=/opt/sys/lib:/lib:/usr/lib ./nbt_cluster </dev/null > /fs/ram3/nbt-cluster.log 2>&1 &)
   echo 'cluster guidance started'
 fi

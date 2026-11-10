@@ -76,7 +76,15 @@ void send(uint16_t fkt, const std::vector<uint8_t>& data, uint32_t tx = 4) {
 }
 // results of the cluster go to the NBT's own client; we see them on the tap. One that matches none of our commands of
 // the last 8 s = the iDrive navigation draws.
-void onMsg(const nbt::most::View& m, nbt::most::MsgClass, void*) {
+// --bench: time from sending an ImageAddBitmap to its answer
+volatile unsigned g_benchInst = 0; volatile int g_benchOp = -1; volatile long long g_benchT = 0;
+void onMsg(const nbt::most::View& m, nbt::most::MsgClass cls, void*) {
+    if (g_benchInst && m.fblock == kFb && m.fkt == 0xC05) {
+        if (cls == nbt::most::kTxStatus) printf("[bench] transmit status %u\n", (unsigned)m.varVal);
+        else if (m.src == kKombi && m.len >= 2 && (unsigned)((m.data[0] << 8) | m.data[1]) == g_benchInst && g_benchOp < 0) {
+            g_benchT = nowMs(); g_benchOp = m.op;
+        }
+    }
     if (g_probe && m.fblock == kFb && m.src == kKombi && (m.fkt >= 0xC00 || m.fkt == 0x300 || m.op != 0xD)) {
         char hex[100] = ""; size_t o = 0;
         for (size_t i = 0; i < m.len && i < 24; ++i) o += snprintf(hex + o, sizeof(hex) - o, "%02X ", m.data[i]);
@@ -371,73 +379,115 @@ std::vector<uint8_t> rle32(const std::vector<uint32_t>& px) {
     o.insert(o.end(), pad, 0);
     return o;
 }
-// 5 x 7 glyphs, drawn twice the size
-const uint8_t* glyph(char c) {
-    static const uint8_t d[12][7] = {
-        { 0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E }, { 0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E },
-        { 0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F }, { 0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E },
-        { 0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02 }, { 0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E },
-        { 0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E }, { 0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08 },
-        { 0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E }, { 0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C },
-        { 0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11 }, { 0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E } };
-    if (c >= '0' && c <= '9') return d[c - '0'];
-    if (c == 'A') return d[10];
-    if (c == 'B') return d[11];
-    return 0;
+// ---- smooth drawing for the top-line picture (user 2026-11-10: the 5x7 pixel digits looked coarse) -------------------
+// Everything is anti-aliased by coverage = distance to the shape edge. Edge pixels are blended over black and kept
+// opaque (the cluster background behind the top line is black; partial alpha is not proven on the cluster).
+uint32_t mixArgb(uint32_t a, uint32_t b, double t) {             // t = 0 -> a, 1 -> b
+    if (t <= 0) return a; if (t >= 1) return b;
+    uint32_t r = 0xFF000000;
+    for (int sh = 0; sh < 24; sh += 8) {
+        const double ca = (a >> sh) & 0xff, cb = (b >> sh) & 0xff;
+        r |= (uint32_t)(ca + (cb - ca) * t + 0.5) << sh;
+    }
+    return r;
 }
-// autobahn: white number on blue, white rim; bundesstraße: black number on yellow, black rim. Transparent around.
+void blendPx(std::vector<uint32_t>& px, int x, int y, uint32_t c, double cover) {
+    if (x < 0 || x >= kIconW || y < 0 || y >= kIconH || cover <= 0) return;
+    uint32_t& d = px[y * kIconW + x];
+    const uint32_t under = (d >> 24) ? d : 0xFF000000;              // transparent counts as the black background
+    d = mixArgb(under, c, cover > 1 ? 1 : cover);
+}
+double lineDist(double px, double py, double ax, double ay, double bx, double by) {
+    const double dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    double t = l2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / l2 : 0; if (t < 0) t = 0; if (t > 1) t = 1;
+    const double qx = ax + t * dx - px, qy = ay + t * dy - py;
+    return sqrt(qx * qx + qy * qy);
+}
+// stroke digits in a 4 x 8 box (polylines, -1 separates strokes), modelled on the DIN road-sign figures
+const double* strokes(char c, int& n) {
+    static const double d0[] = { 1,0, 3,0, 4,1.2, 4,6.8, 3,8, 1,8, 0,6.8, 0,1.2, 1,0 };
+    static const double d1[] = { 0.8,1.8, 2.6,0, 2.6,8 };
+    static const double d2[] = { 0,1.6, 1,0, 3,0, 4,1.2, 4,2.9, 0,8, 4.2,8 };
+    static const double d3[] = { 0,1.2, 1,0, 3,0, 4,1.1, 4,2.9, 3,3.9, 1.6,3.9, -1,-1, 3,3.9, 4,5, 4,6.9, 3,8, 1,8, 0,6.8 };
+    static const double d4[] = { 3.2,8, 3.2,0, 0,5.6, 4.3,5.6 };
+    static const double d5[] = { 4,0, 0.6,0, 0.2,3.7, 1.4,3.3, 3,3.3, 4,4.4, 4,6.9, 3,8, 1,8, 0,6.9 };
+    static const double d6[] = { 3.6,0.2, 2.6,0, 1.4,0, 0,1.8, 0,6.8, 1,8, 3,8, 4,6.8, 4,5, 3,3.9, 1,3.9, 0,5 };
+    static const double d7[] = { 0,0, 4.1,0, 1.4,8 };
+    static const double d8[] = { 1,3.9, 0,2.9, 0,1.1, 1,0, 3,0, 4,1.1, 4,2.9, 3,3.9, 1,3.9, 0,5, 0,6.9, 1,8, 3,8, 4,6.9, 4,5, 3,3.9 };
+    static const double d9[] = { 0.4,7.8, 1.4,8, 2.6,8, 4,6.2, 4,1.2, 3,0, 1,0, 0,1.2, 0,3, 1,4.1, 3,4.1, 4,3 };
+    static const double* t[10] = { d0, d1, d2, d3, d4, d5, d6, d7, d8, d9 };
+    static const int s[10] = { sizeof(d0), sizeof(d1), sizeof(d2), sizeof(d3), sizeof(d4), sizeof(d5), sizeof(d6), sizeof(d7),
+                               sizeof(d8), sizeof(d9) };
+    if (c < '0' || c > '9') { n = 0; return 0; }
+    n = s[c - '0'] / (int)sizeof(double) / 2;
+    return t[c - '0'];
+}
+// a number centred at (cx, cy), digit height h px, stroke width sw px
+void drawNumber(std::vector<uint32_t>& px, const std::string& num, double cx, double cy, double h, double sw, uint32_t ink) {
+    const double sc = h / 8.0, dw = 4 * sc, gap = sc * 1.6;
+    const double total = num.size() * dw + (num.size() > 1 ? (num.size() - 1) * gap : 0);
+    double x0 = cx - total / 2;
+    for (size_t k = 0; k < num.size(); ++k, x0 += dw + gap) {
+        int n = 0; const double* p = strokes(num[k], n);
+        if (!p) continue;
+        const int bx0 = (int)floor(x0 - sw), bx1 = (int)ceil(x0 + dw + sw), by0 = (int)floor(cy - h / 2 - sw), by1 = (int)ceil(cy + h / 2 + sw);
+        for (int y = by0; y <= by1; ++y)
+            for (int x = bx0; x <= bx1; ++x) {
+                double best = 1e9;
+                for (int i = 0; i + 1 < n; ++i) {
+                    if (p[2 * i] < 0 || p[2 * i + 2] < 0) continue;
+                    const double dd = lineDist(x + 0.5, y + 0.5, x0 + p[2 * i] * sc, cy - h / 2 + p[2 * i + 1] * sc,
+                                               x0 + p[2 * i + 2] * sc, cy - h / 2 + p[2 * i + 3] * sc);
+                    if (dd < best) best = dd;
+                }
+                blendPx(px, x, y, ink, sw / 2 + 0.5 - best);
+            }
+    }
+}
+// signed distance to a rounded rectangle (negative inside)
+double roundRectDist(double x, double y, double x0, double y0, double x1, double y1, double r) {
+    const double cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, hx = (x1 - x0) / 2 - r, hy = (y1 - y0) / 2 - r;
+    const double qx = fabs(x - cx) - hx, qy = fabs(y - cy) - hy;
+    const double ox = qx > 0 ? qx : 0, oy = qy > 0 ? qy : 0;
+    return sqrt(ox * ox + oy * oy) + (qx > qy ? (qx < 0 ? qx : 0) : (qy < 0 ? qy : 0)) - r;
+}
+// autobahn: white number on blue with a white rim; bundesstraße: black number on yellow with a black rim
 std::vector<uint32_t> shield(bool autobahn, const std::string& number) {
     std::vector<uint32_t> px(kIconW * kIconH, kClear);
-    const int x0 = 2, x1 = 50, y0 = 7, y1 = 36;                 // 49 x 30 sign at the left end of the line
+    const double x0 = 1.5, x1 = 53.5, y0 = 5.5, y1 = 38.5, r = 6;  // 52 x 33 sign at the left end of the line
     const uint32_t fill = autobahn ? kBlue : kYellow, ink = autobahn ? kWhite : kBlack;
-    for (int y = y0; y <= y1; ++y)
-        for (int x = x0; x <= x1; ++x) {
-            const bool corner = (x - x0 + y - y0 < 3) || (x1 - x + y - y0 < 3) || (x - x0 + y1 - y < 3) || (x1 - x + y1 - y < 3);
-            if (corner) continue;
-            const bool rim = x - x0 < 2 || x1 - x < 2 || y - y0 < 2 || y1 - y < 2 ||
-                             (x - x0 + y - y0 < 5) || (x1 - x + y - y0 < 5) || (x - x0 + y1 - y < 5) || (x1 - x + y1 - y < 5);
-            px[y * kIconW + x] = rim ? ink : fill;
+    for (int y = 0; y < kIconH; ++y)
+        for (int x = 0; x < 60; ++x) {
+            const double d = roundRectDist(x + 0.5, y + 0.5, x0, y0, x1, y1, r);
+            if (d > 0.5) continue;
+            blendPx(px, x, y, ink, 0.5 - d);                         // outer edge of the rim
+            const double di = roundRectDist(x + 0.5, y + 0.5, x0 + 2.2, y0 + 2.2, x1 - 2.2, y1 - 2.2, r - 2.2);
+            if (di < 0.5) blendPx(px, x, y, fill, 0.5 - di);         // inside the rim
         }
-    const int gw = 10, gap = 2, tw = (int)number.size() * (gw + gap) - gap;
-    int tx = (x0 + x1 + 1 - tw) / 2;
-    const int ty = (y0 + y1 + 1) / 2 - 7;
-    for (size_t k = 0; k < number.size(); ++k, tx += gw + gap) {
-        const uint8_t* g = glyph(number[k]);
-        if (!g) continue;
-        for (int r = 0; r < 14; ++r)
-            for (int c = 0; c < gw; ++c)
-                if (g[r / 2] & (0x10 >> (c / 2))) px[(ty + r) * kIconW + tx + c] = ink;
-    }
+    const double h = number.size() > 2 ? 17 : 19;
+    drawNumber(px, number, (x0 + x1) / 2, (y0 + y1) / 2, h, number.size() > 2 ? 2.6 : 3.0, ink);
     return px;
 }
 // speed limit sign (red ring, white disc, black number) into an existing top-line picture, centre x = cx
 const uint32_t kRed = 0xFFE01010;
 void speedSign(std::vector<uint32_t>& px, int cx, int limit) {
-    const int cy = 22, ro = 20, ri = 15;
-    for (int y = cy - ro; y <= cy + ro; ++y)
-        for (int x = cx - ro; x <= cx + ro; ++x) {
-            const int d2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
-            if (d2 > ro * ro || x < 0 || x >= kIconW || y < 0 || y >= kIconH) continue;
-            px[y * kIconW + x] = d2 > ri * ri ? kRed : kWhite;
+    const double cy = 22, ro = 20.5, ri = 15.2;
+    for (int y = 0; y < kIconH; ++y)
+        for (int x = cx - 22; x <= cx + 22; ++x) {
+            const double d = sqrt((x + 0.5 - cx) * (x + 0.5 - cx) + (y + 0.5 - cy) * (y + 0.5 - cy));
+            if (d > ro + 0.5) continue;
+            blendPx(px, x, y, kRed, ro + 0.5 - d);
+            if (d < ri + 0.5) blendPx(px, x, y, kWhite, ri + 0.5 - d);
         }
     char num[8]; snprintf(num, sizeof(num), "%d", limit);
-    const int n = (int)strlen(num), gw = n > 2 ? 8 : 10, gap = n > 2 ? 1 : 2, tw = n * (gw + gap) - gap;
-    int tx = cx - tw / 2;
-    for (int k = 0; k < n; ++k, tx += gw + gap) {
-        const uint8_t* g = glyph(num[k]);
-        if (!g) continue;
-        for (int r = 0; r < 14; ++r)
-            for (int c = 0; c < gw; ++c)
-                if (g[r / 2] & (0x10 >> (c * 5 / gw))) px[(cy - 7 + r) * kIconW + tx + c] = kBlack;
-    }
+    drawNumber(px, num, cx, cy, strlen(num) > 2 ? 13 : 15, strlen(num) > 2 ? 2.4 : 2.8, kBlack);
 }
 // the whole top-line picture: road shield at the left, speed limit sign next to it (either may be missing)
 std::vector<uint32_t> topLine(const std::string& sh, int limit) {
     std::vector<uint32_t> px = sh.empty() ? std::vector<uint32_t>(kIconW * kIconH, kClear) : shield(sh[0] == 'A', sh.substr(1));
-    if (limit > 0) speedSign(px, sh.empty() ? 22 : 76, limit);
+    if (limit > 0) speedSign(px, sh.empty() ? 23 : 80, limit);
     return px;
-}
-// ImageAddBitmap, layout found on the car 2026-11-08 (ResultAck [inst][bitmapId][p5]; a wrong 4th byte = ErrorAck 06 04):
+}// ImageAddBitmap, layout found on the car 2026-11-08 (ResultAck [inst][bitmapId][p5]; a wrong 4th byte = ErrorAck 06 04):
 //   [inst u16][x u16][y u16][file type 1][1][0][bitmap id][RLE32 data]   on transmission type 0 (tx 4 gets no answer)
 uint8_t g_bmpId = 0;
 void addBitmap(unsigned inst, const std::vector<uint8_t>& rle) {
@@ -445,7 +495,7 @@ void addBitmap(unsigned inst, const std::vector<uint8_t>& rle) {
     g_bmpId = (uint8_t)(g_bmpId % 200 + 1);
     b.push_back(1); b.push_back(1); b.push_back(0); b.push_back(g_bmpId);
     b.insert(b.end(), rle.begin(), rle.end());
-    send(0xC05, b, 0);
+    send(0xC05, b, 1);                                // tx 1 = asynchronous channel: tx 0 fails above ~6 KB (ErrorAck 0C)
 }
 // "A 66", "A66 Frankfurt", "Richtung B 40" -> "A66" / "B40"; "" if the road carries no motorway/federal road number
 std::string roadShield(const std::string& s) {
@@ -496,15 +546,150 @@ void bmpProbe(int variant, unsigned inst, bool autobahn, const std::string& numb
     visible(kArea, true); visible(inst, true);
     send(0xC05, b, variant % 2 ? 4 : 0);                // odd: control channel (tx 4), even: tx 0 like the NBT's results
 }
+// ---- bitmap throughput benchmark (2026-11-09: could a map picture reach the cluster fast enough?) --------------------
+// map-like test picture on a transparent background: detail 0 = route line + position mark, 1 = + six roads,
+// 2 = + two filled areas; shift moves everything (a new frame)
+double segDist(double px, double py, double ax, double ay, double bx, double by) {
+    const double dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    double t = l2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / l2 : 0; if (t < 0) t = 0; if (t > 1) t = 1;
+    const double qx = ax + t * dx - px, qy = ay + t * dy - py;
+    return sqrt(qx * qx + qy * qy);
+}
+std::vector<uint32_t> mapPicture(int w, int h, int detail, int shift) {
+    std::vector<uint32_t> px(w * h, kClear);
+    const uint32_t road = 0xFFB0B0B0, route = 0xFF2A7FFF, park = 0xFF2E6B3A, water = 0xFF1E4F8F;
+    const double s = shift;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            uint32_t c = kClear;
+            if (detail >= 2) {
+                if ((x - 40 - s) * (x - 40 - s) + (y - 35) * (y - 35) < 28 * 28) c = park;
+                if (x > w - 60 + s && y > h - 45) c = water;
+            }
+            if (detail >= 1) {
+                static const double r[6][4] = { { 0, 30, 1, 60 }, { 0, 110, 1, 95 }, { 0.2, 0, 0.3, 1 }, { 0.75, 0, 0.6, 1 }, { 0, 150, 0.9, 0 }, { 0.5, 0, 1, 120 } };
+                for (int i = 0; i < 6; ++i) {
+                    const double ax = r[i][0] <= 1 ? r[i][0] * w : r[i][0], ay = r[i][1] <= 1 ? r[i][1] * h : r[i][1];
+                    const double bx = r[i][2] <= 1 ? r[i][2] * w : r[i][2], by = r[i][3] <= 1 ? r[i][3] * h : r[i][3];
+                    if (segDist(x, y, ax + s, ay, bx + s, by) < 1.5) c = road;
+                }
+            }
+            if (segDist(x, y, w * 0.5 + s, h - 1, w * 0.5 + s, h * 0.55) < 3 || segDist(x, y, w * 0.5 + s, h * 0.55, w * 0.8 + s, h * 0.15) < 3) c = route;
+            if (segDist(x, y, w * 0.5 + s, h - 14, w * 0.5 + s, h - 14) < 6) c = kWhite;
+            px[y * w + x] = c;
+        }
+    return px;
+}
+// coarse vertical bars over the whole picture: a picture with many runs (size test)
+std::vector<uint32_t> barsPicture(int w, int h, int period) {
+    std::vector<uint32_t> px(w * h, kClear);
+    for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) if ((x / period) % 2) px[y * w + x] = (y / 8) % 2 ? kYellow : kBlue;
+    return px;
+}
+// sends one bitmap and waits for the cluster's answer; returns the time in ms, -1 = no answer
+long benchSend(const char* label, unsigned inst, const std::vector<uint32_t>& px, uint32_t tx, long timeoutMs) {
+    std::vector<uint8_t> rle = rle32(px);
+    std::vector<uint8_t> b; put16(b, inst); put16(b, 0); put16(b, 0);
+    g_bmpId = (uint8_t)(g_bmpId % 200 + 1);
+    b.push_back(1); b.push_back(1); b.push_back(0); b.push_back(g_bmpId);
+    b.insert(b.end(), rle.begin(), rle.end());
+    if (b.size() > 60000) { printf("[bench] %s: %u bytes, too big, skipped\n", label, (unsigned)b.size()); return -1; }
+    g_benchOp = -1; g_benchInst = inst;
+    const long long t0 = nowMs();
+    send(0xC05, b, tx);
+    while (g_benchOp < 0 && nowMs() - t0 < timeoutMs && !g_stop) usleep(5000);
+    const long ms = g_benchOp < 0 ? -1 : (long)(g_benchT - t0);
+    if (ms < 0) printf("[bench] %s: inst %02X tx %u, %u bytes -> NO ANSWER in %ld ms\n", label, inst, (unsigned)tx, (unsigned)b.size(), timeoutMs);
+    else printf("[bench] %s: inst %02X tx %u, %u bytes -> op %X after %ld ms (%ld bytes/s)\n", label, inst, (unsigned)tx,
+                (unsigned)b.size(), g_benchOp, ms, ms > 0 ? (long)(b.size() * 1000 / ms) : 0);
+    g_benchInst = 0;
+    return g_benchOp == 0xD ? ms : -1;
+}
+void bench() {
+    g_probe = true;
+    visible(kArea, true); visible(kIconA, true);
+    // 1) the known-good area 0x18 (305 x 44): small, medium and larger pictures on the control channel
+    benchSend("top line, shield", kIconA, topLine("A66", 0), 0, 8000);
+    benchSend("top line, shield + sign", kIconA, topLine("A66", 50), 0, 8000);
+    benchSend("top line, bars 32", kIconA, barsPicture(kIconW, kIconH, 32), 0, 12000);
+    benchSend("top line, bars 12", kIconA, barsPicture(kIconW, kIconH, 12), 0, 20000);
+    // 2) the same small picture on the asynchronous (packet) channel
+    benchSend("top line, shield, async", kIconA, topLine("A66", 0), 1, 4000);
+    usleep(500000);
+    benchSend("top line, shield again", kIconA, topLine("A66", 0), 0, 8000);
+    // 3) does a drawing area (221 x 158) take a bitmap at all?
+    const unsigned areas[2] = { 0x21, 0x1F };
+    for (int a = 0; a < 2 && !g_stop; ++a) {
+        clearInst(areas[a]); visible(areas[a], true);
+        if (benchSend("map area, route only", areas[a], mapPicture(221, 158, 0, 0), 0, 15000) < 0) { visible(areas[a], false); continue; }
+        usleep(1500000);
+        benchSend("map area, route + roads", areas[a], mapPicture(221, 158, 1, 0), 0, 25000);
+        usleep(1500000);
+        // 4) three frames in a row = the frame rate a moving map would get
+        const long long t0 = nowMs(); int ok = 0;
+        for (int i = 1; i <= 3 && !g_stop; ++i) if (benchSend("map frame", areas[a], mapPicture(221, 158, 1, i * 6), 0, 25000) >= 0) ++ok;
+        const long long dt = nowMs() - t0;
+        printf("[bench] area %02X: %d of 3 frames in %lld ms = %.2f frames/s\n", areas[a], ok, dt, dt > 0 ? ok * 1000.0 / dt : 0.0);
+        usleep(3000000);
+        clearInst(areas[a]); visible(areas[a], false);
+    }
+    visible(kIconA, false); visible(kIconB, false); visible(kArea, false);
+    printf("[bench] done\n");
+}
+// second run (car 2026-11-10): on tx 0 bitmaps above ~6 KB end with ErrorAck 0C (segmentation error) - same on the
+// asynchronous channel (tx 1)? Map-area pictures of growing size, then three frames, all on tx 1.
+void bench2() {
+    g_probe = false;
+    const unsigned a = 0x21;
+    visible(kArea, true); clearInst(a); visible(a, true);
+    benchSend("async, route only", a, mapPicture(221, 158, 0, 0), 1, 8000);
+    usleep(800000);
+    benchSend("async, route + roads", a, mapPicture(221, 158, 1, 0), 1, 15000);
+    usleep(800000);
+    benchSend("async, route + roads + areas", a, mapPicture(221, 158, 2, 0), 1, 15000);
+    usleep(800000);
+    benchSend("async, bars 16", a, barsPicture(221, 158, 16), 1, 20000);
+    usleep(800000);
+    const long long t0 = nowMs(); int ok = 0;
+    for (int i = 1; i <= 3 && !g_stop; ++i) if (benchSend("async map frame", a, mapPicture(221, 158, 1, i * 6), 1, 15000) >= 0) ++ok;
+    const long long dt = nowMs() - t0;
+    printf("[bench] async: %d of 3 frames in %lld ms = %.2f frames/s\n", ok, dt, dt > 0 ? ok * 1000.0 / dt : 0.0);
+    usleep(2000000);
+    clearInst(a); visible(a, false); visible(kArea, false);
+    printf("[bench] done\n");
+}
+// --mapdemo N (user request 2026-11-10: see what a map in the cluster looks like): the simple test map in the middle
+// area 0x21, moving, as fast as the cluster takes it (asynchronous channel), for N seconds
+void mapDemo(long seconds, unsigned a) {
+    // exact area sizes (ImageGetSize): a bitmap must match them
+    const int w = a == 0x1D || a == 0x1E ? 145 : a == 0x23 || a == 0x24 ? 283 : 221;
+    const int h = a == 0x1D || a == 0x1E ? 44 : a == 0x23 || a == 0x24 ? 40 : 158;
+    if (a == 0x1F) visible(0x20, false);
+    if (a == 0x21) visible(0x22, false);
+    visible(kArea, true); clearInst(a); visible(a, true);
+    printf("[mapdemo] area %02X %dx%d\n", a, w, h);
+    const long long t0 = nowMs(); int frames = 0, shift = 0;
+    while (!g_stop && nowMs() - t0 < seconds * 1000LL) {
+        if (benchSend("map demo", a, mapPicture(w, h, 2, shift), 1, 5000) >= 0) ++frames;
+        shift = (shift + 4) % 60;
+    }
+    const long long dt = nowMs() - t0;
+    printf("[mapdemo] %d frames in %lld ms = %.2f frames/s\n", frames, dt, dt > 0 ? frames * 1000.0 / dt : 0.0);
+    clearInst(a); visible(a, false); visible(kArea, false);
+}
 }
 
 int main(int argc, char** argv) {
     long seconds = 0;
-    bool demo = false, frames = false;
+    bool demo = false, frames = false, doBench = false, doBench2 = false, doMapDemo = false; unsigned mapInst = 0x21;
     int bmpVariant = -1; unsigned bmpInst = 0x18; std::string bmpRoad = "A66";
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--seconds") && i + 1 < argc) seconds = atol(argv[++i]);
         else if (!strcmp(argv[i], "--frames")) frames = true;   // test frames in the drawing areas 0x1D, 0x21, 0x23
+        else if (!strcmp(argv[i], "--bench")) doBench = true;
+        else if (!strcmp(argv[i], "--bench2")) doBench2 = true;
+        else if (!strcmp(argv[i], "--mapdemo")) doMapDemo = true;   // with --seconds
+        else if (!strcmp(argv[i], "--mapinst") && i + 1 < argc) mapInst = (unsigned)strtoul(argv[++i], 0, 16);   // bitmap throughput test (car parked, no route)
         else if (!strcmp(argv[i], "--demo")) demo = true;   // fixed test data instead of the phone (with --seconds)
         else if (!strcmp(argv[i], "--bmp") && i + 3 < argc) {   // --bmp VARIANT INST(hex) ROAD   e.g. --bmp 1 18 A66
             bmpVariant = atoi(argv[++i]); bmpInst = (unsigned)strtoul(argv[++i], 0, 16); bmpRoad = argv[++i];
@@ -517,6 +702,9 @@ int main(int argc, char** argv) {
     for (int w = 0; w < 50 && g_most.state() != nbt::most::kUp && !g_stop; ++w) usleep(100000);
     if (g_most.state() != nbt::most::kUp) { printf("[cluster] MOST link not up\n"); return 3; }
     printf("[cluster] v2 up, own device 0x%04X\n", g_most.deviceId());
+    if (doBench) { bench(); fflush(stdout); _exit(0); }
+    if (doBench2) { bench2(); fflush(stdout); _exit(0); }
+    if (doMapDemo) { mapDemo(seconds ? seconds : 40, mapInst); fflush(stdout); _exit(0); }
     if (frames) {
         // frame around each area (sizes from ImageGetSize) + a mark: 0x21 an X, 0x23 a middle line, 0x1D nothing inside
         g_probe = true;
@@ -603,7 +791,8 @@ int main(int argc, char** argv) {
             // top line: street and distance of the current step (user 2026-11-08: the following step later)
             std::string street = fitStreet(toIso(n.road));
             std::string dist = n.distText;
-            for (size_t i = 0; i < dist.size(); ++i) if (dist[i] == '.') dist[i] = ',';
+            // the cluster's big distance font has no comma (car 2026-11-10: "5,4" showed as "5 4"), the point works
+            for (size_t i = 0; i < dist.size(); ++i) if (dist[i] == ',') dist[i] = '.';
             if (dist.size() > 5) dist = dist.substr(0, 5);
             std::string unit = unitText(n.unit);
             // road shield (A = blue, B = yellow) in both RoadIcon areas when the step's road carries a number
@@ -624,10 +813,14 @@ int main(int argc, char** argv) {
             if (street != shownStreet) { text(kStreet, street); shownStreet = street; }
             if (dist != shownDist) { text(kDist, dist); shownDist = dist; }
             if (unit != shownUnit) { text(kUnit, unit); shownUnit = unit; }
-            int v = n.dist < 0 || n.dist >= kNear ? 255 : (int)(n.dist * 255 / kNear);
-            if (lastBar < 0 || abs(v - lastBar) >= 4) { bar(v); lastBar = v; }
-            if (!barShown) { visible(kBar, true); barShown = true; }
-        }        if (!want && shown) {
+            // distance bar only from 1 km on (user 2026-11-10), empty at the maneuver
+            if (n.dist >= 0 && n.dist < kNear) {
+                const int v = (int)(n.dist * 255 / kNear);
+                if (lastBar < 0 || abs(v - lastBar) >= 4) { bar(v); lastBar = v; }
+                if (!barShown) { visible(kBar, true); barShown = true; }
+            } else if (barShown) { visible(kBar, false); barShown = false; lastBar = -1; }
+        }
+        if (!want && shown) {
             if (!bmw) {
                 printf("[cluster] hide\n");
                 clearInst(kDraw); text(kStreet, ""); text(kDist, ""); text(kUnit, "");

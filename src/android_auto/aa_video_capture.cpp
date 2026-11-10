@@ -183,6 +183,17 @@ void save(Capture* c,const uint8_t* p,size_t n,uint64_t pts,bool config) {
     pthread_mutex_unlock(&c->mutex);
 }
 void video(uint32_t,const uint8_t* p,size_t n,uint64_t pts,void* v) {save((Capture*)v,p,n,pts,false);}
+// The phone asked for the screen back (car 2026-11-10: the "exit to car" icon in the Android Auto rail, picked with the
+// controller): it stops the video, our decoder ran dry ("stream inactive"), the service ended the session and the phone
+// refused the reconnect - the "connected but nothing works" drop-out. This head unit has no native screen to hand back
+// to (MENU leaves Android Auto), so the projection is given back to the phone half a second later and AA simply goes on.
+volatile long long g_refocus_at=0;
+void focus_request(bool projected,uint32_t reason,void*) {
+    if(projected)return;
+    printf("AA_FOCUS phone asked for the native screen (reason %u): giving the projection back in 0.5 s\n",(unsigned)reason);
+    struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);
+    g_refocus_at=(long long)t.tv_sec*1000+t.tv_nsec/1000000+500;
+}
 void config(const uint8_t* p,size_t n,void* v) {save((Capture*)v,p,n,0,true);}
 void* reader(void* v) {
     Capture* c=(Capture*)v;unsigned char b[65536];
@@ -275,7 +286,8 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer,void* context
     if(socketpair(AF_UNIX,SOCK_STREAM,0,pair)) {close(c.data);close(c.index);return 2;}
     c.socket=pair[1];
     nbt::AASession session;session.setVideoFrameCallback(video,&c);session.setCodecConfigCallback(config,&c);
-    if(c.live){session.setNavStatusCallback(nav_status,0);unlink("/fs/ram3/nbt-aa-native/nav.state");}
+    if(c.live){session.setNavStatusCallback(nav_status,0);unlink("/fs/ram3/nbt-aa-native/nav.state");
+        g_refocus_at=0;session.setVideoFocusCallback(focus_request,0);}
     setenv("NBT_VID_RES","1",0);   // 800x480 unless the service asks for 1280x720 (res720)
     printf("AA_VIDEO_CAPTURE_BEGIN max_seconds=%u max_bytes=8388608 max_frames=%u no_display=1 no_audio_playback=1\n",seconds,c.frame_limit);
     if(!session.start(pair[0])) {close(pair[1]);close(c.data);close(c.index);return 3;}
@@ -300,15 +312,24 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer,void* context
     const char* bg=getenv("NBT_AA_BG_FOCUS");const bool bg_focus=c.live&&bg&&!strcmp(bg,"1");
     int shown_state=1;long long next_focus_check=0;
     const long long start=now_ms();
-    while(start>=0 && !live_stop && (c.live||now_ms()-start<seconds*1000LL) && session.isActive()) {
-        if(bg_focus&&now_ms()>=next_focus_check&&now_ms()-start>=2000) {
+    // Clean end (car 2026-11-10): an abrupt end (service restart, decoder gone) left Android Auto on the phone stuck until
+    // it was force-stopped ("Invalid channel ... premature encryption" right after the next VersionRequest). Before
+    // stopping, a ByeByeRequest goes out and the session keeps pumping both directions for up to 1 s until the phone's
+    // ByeByeResponse ends it.
+    long long bye_until=0;
+    while(start>=0 && session.isActive()) {
+        pthread_mutex_lock(&c.mutex);const bool finished=c.error || c.frames>=c.frame_limit;pthread_mutex_unlock(&c.mutex);
+        const bool want_stop=live_stop || (!c.live&&now_ms()-start>=seconds*1000LL) || finished;
+        if(want_stop&&!bye_until){session.postByeBye();bye_until=now_ms()+1000;printf("AA_BYEBYE requested\n");}
+        if(bye_until&&now_ms()>=bye_until){printf("AA_BYEBYE no answer within 1 s\n");break;}
+        if(!bye_until&&g_refocus_at&&now_ms()>=g_refocus_at){g_refocus_at=0;session.postVideoFocus(true);
+            printf("AA_FOCUS projection given back to the phone\n");}
+        if(!bye_until&&bg_focus&&now_ms()>=next_focus_check&&now_ms()-start>=2000) {
             next_focus_check=now_ms()+250;
             const int visible=access("/fs/ram3/nbt-aa-hidden",F_OK)!=0;
             if(visible!=shown_state){shown_state=visible;session.postVideoFocus(visible!=0);
                 printf("AA_VIDEO_FOCUS %s\n",visible?"PROJECTED (page on screen)":"NATIVE (iDrive on screen)");}
         }
-        pthread_mutex_lock(&c.mutex);bool done=c.error || c.frames>=c.frame_limit;pthread_mutex_unlock(&c.mutex);
-        if(done)break;
         fd_set fds;FD_ZERO(&fds);FD_SET(c.socket,&fds);if(input>=0)FD_SET(input,&fds);struct timeval timeout={0,100000};
         int ready=select((input>c.socket?input:c.socket)+1,&fds,0,0,&timeout);
         if(ready<0 && errno==EINTR)continue;
@@ -322,6 +343,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer,void* context
         }
     }
     if(input>=0)close(input);
+    if(bye_until)printf("AA_BYEBYE %s\n",session.isActive()?"session still open: closing it":"session ended cleanly");
     shutdown(c.socket,SHUT_RDWR);session.stop();if(c.live)unlink("/fs/ram3/nbt-aa-native/nav.state");
     // USB reader's individual transfer is bounded; no cancellation of a live URB.
     pthread_join(thread,0);
