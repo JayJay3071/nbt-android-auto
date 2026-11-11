@@ -118,8 +118,9 @@ files and shows how they work together.
 
 ## Contributing
 
-Help is very welcome, especially for **Android Auto audio**, other NBT software levels and cars, and a reproducible
-build. Start with [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+Help is very welcome, especially for **Android Auto audio** and other NBT software levels and cars. Everything can be
+built from this repository with one command in a QNX 6.5.0 VM (`scripts/build_all.py`). Start with
+[CONTRIBUTING.md](CONTRIBUTING.md) and [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Support and contact
 

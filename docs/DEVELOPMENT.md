@@ -1,8 +1,8 @@
 # Development guide
 
-This page explains how the pieces are built and how to work on the car safely. The build is **not yet a single
-command**: parts were built by hand in the QNX VM during development. Turning this into one reproducible build script
-is one of the most useful contributions right now.
+This page explains how the pieces are built and how to work on the car safely. **One command builds every program of
+the installed package** in the QNX VM: `python scripts/build_all.py` (see [Building everything](#building-everything)).
+Built from this repository, the programs are byte-identical to the ones in installer 2026.11.10.2 (details below).
 
 ## What you need
 
@@ -55,62 +55,71 @@ export QNX_TARGET=/usr/qnx650/target/qnx6
 export PATH=$QNX_HOST/usr/bin:$PATH
 ```
 
-## Components and how they are built
+## Building everything
 
-| Binary (on the car) | Source | Notes |
-|---|---|---|
-| `oneplus_native` | `src/android_auto/aa_video_capture.cpp`, `tls_usb_probe.cpp`, `oneplus_aoa.c` + NBT-AAD core | see "Android Auto core" |
-| `native_service` | `src/android_auto/nbt_native_service.c` | supervisor; starts and watches the other processes |
-| `fifo_http` | `src/android_auto/nbt_fifo_http.c` | serves the H.264 FIFO to Cinemo over local HTTP |
-| `decode_runner` | `src/android_auto/nbt_decode_runner.c` | starts the stock `NmeCmdLine` with the hardware video device |
-| `accessory_window` | `src/android_auto/accessory_window.c` | keeps the stock USB stack away from the phone |
-| `nbt_knob`, `nbt_hwvideo`, `nbt_cluster` | `src/android_auto/knob/` | C++, use the MOST/DSI client in `knob/ref/` |
-| `libNbtAndroidAuto.so` | `src/idrive/aa_entry_plugin.cpp`, `NbtAndroidAuto.xml`, `make_aa_entry_resources.py` | HMI plugin |
-| `boot.sh`, `restart.sh` | `scripts/nbt-aa-boot.sh`, `scripts/nbt-aa-restart.sh` | autostart and service restart |
+Which program is built from which files: [src/README.md](../src/README.md).
 
-### Android Auto core
+### Once
 
-The protocol core comes from NBT-AAD ([Sq00ky/Supra-iDrive6-Android-Auto](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto),
-`milestone-7/`, commit `41975f2`). Check it out into `.local/reference-nbt-aad` and keep that checkout clean; the
-scripts copy the files they need into a build archive.
+1. **NBT-AAD** (the Android Auto protocol core) at the exact commit the patches are made for:
 
-1. `python scripts/Test-QnxTls.py` downloads Mbed TLS 3.6.7 (SHA-256 checked), builds the static libraries in the VM
-   and runs the TLS tests.
-2. `python scripts/Test-AndroidAutoCore.py` and `python scripts/Test-AndroidAutoSession.py` build the core
-   (`aa_session`, `aa_cryptor`, `audio_acks`, `sdr_builder`, `crash_handler`) into `libnbt_aa_core.a`, run the
-   session tests and link the `oneplus_capture` program (= `oneplus_native`) with `-DNBT_AA_TLS_HANDSHAKE -DNBT_AA_CAPTURE`.
-3. The current car build also contains [patches/nbt-aad-sdr_builder-pixel-aspect.patch](../patches/nbt-aad-sdr_builder-pixel-aspect.patch)
-   (pixel aspect ratio for the wide picture mode). Apply it to the source copy that is compiled, not to the clean
-   reference checkout.
+   ```sh
+   git clone https://github.com/Sq00ky/Supra-iDrive6-Android-Auto .local/reference-nbt-aad
+   git -C .local/reference-nbt-aad checkout 41975f269b065dbdbc77af9f568387cd22b9ed27
+   ```
 
-### HMI plugin
+   Keep this checkout unmodified; the build applies our changes to a copy.
+2. **Two HMI libraries from your own NBT** for the plugin: copy `libAppFramework.A.so` and `libCoreFramework.A.so` from
+   the HMI's library directory on the head unit (read only) into a folder in the VM, e.g. `~/.nbt-build/hmi-libs/`.
+   They are BMW software: never commit or publish them. Without them everything except the plugin is built.
+3. SSH from your PC to the VM works with a key (see [QNX VM](#qnx-vm)); the build runs as the normal VM user, not root.
+   Mbed TLS 3.6.7 is downloaded automatically on the first run (SHA-256 checked).
 
-The plugin links against two libraries from the NBT itself. Copy them from your car (read only) into a VM folder,
-for example `~/.nbt-build/hmi-libs/`:
-
-- `libAppFramework.A.so`, `libCoreFramework.A.so` (from the HMI's library directory on the NBT)
-
-Then in the VM:
+### Every build
 
 ```sh
-qcc -V4.4.2,gcc_ntox86_cpp-ne -O2 -Wall -Wextra -shared -fPIC -fno-exceptions -fno-rtti -Wl,-z,defs -I. \
-  aa_entry_plugin.cpp -o libNbtAndroidAuto.so -L$HOME/.nbt-build/hmi-libs -lAppFramework.A -lCoreFramework.A
+python scripts/build_all.py --host qnx-build --hmi-libs '$HOME/.nbt-build/hmi-libs' --compare installer/payload
 ```
 
-Texts and images are packed by `src/idrive/make_aa_entry_resources.py`.
+`--identity <key>` if your SSH config does not name the VM key; `--compare` is optional (an installer payload, for
+example unpacked from a release ZIP). The run takes about 5 minutes (most of it Mbed TLS) and leaves:
+
+- `build/qnx-build-<time>/programs/` - all programs for the head unit, plus `boot.sh` / `restart.sh`
+- `build/qnx-build-<time>/plugin-resources/` - plugin XML, manifest and the text/image ZIPs
+- `build/qnx-build-<time>/build.log` - the full VM log with the comparison table
+
+What `build_all.py` puts together (on your PC) and `scripts/build-qnx.sh` compiles (in the VM):
+
+| Step | What |
+|---|---|
+| Mbed TLS 3.6.7 | release archive + `scripts/mbedtls_legacy_time.py` (old phone certificate dates) + QNX config (no AES-NI/ASM/PadLock), static libraries |
+| NBT-AAD core `libnbt_aa_core.a` | upstream `milestone-7/src` + `scripts/aa_session_overlay.py` + `patches/*.patch` + our `aa_cryptor_mbedtls.cpp` (Mbed TLS instead of OpenSSL) |
+| `oneplus_native` | `oneplus_aoa.c` (`-DNBT_AA_TLS_HANDSHAKE -DNBT_AA_CAPTURE`), `aa_video_capture.cpp`, `tls_usb_probe.cpp` + core + Mbed TLS, `-lsocket -lm -lusbdi` |
+| `native_service`, `decode_runner` | C, `-O2` |
+| `fifo_http`, `accessory_window` | C, no optimisation (as shipped) |
+| `nbt_knob`, `nbt_hwvideo`, `nbt_cluster` | C++ `-O1`, with the MOST/DSI client from `knob/ref/` |
+| `libNbtAndroidAuto.so` | C++ shared library without exceptions/RTTI, linked against the two HMI libraries |
+
+**Verified on 2026-11-11** against installer 2026.11.10.2: `native_service`, `decode_runner`, `fifo_http`,
+`accessory_window`, `nbt_knob`, `nbt_cluster` and `libNbtAndroidAuto.so` are byte-identical, `oneplus_native` is
+identical apart from the symbol table (file names). `nbt_hwvideo` differs on purpose: the source has one more
+read-only diagnostic option (`--registry-all`, 2026-11-08) than the shipped program.
 
 ## Installer and release
 
-1. Put the tested binaries into `build/aa-entry-20261106/` (service, `oneplus_native`, knob, hwvideo, cluster, decoder,
-   `NbtAndroidAuto/`) and `build/native-prototype-20261106/package/` (`accessory_window`, `fifo_http`, PEM files).
-2. `python installer/make_payload.py <version>` collects everything into `installer/payload/` and writes
-   `manifest.json` with SHA-256 per file. It refuses a plugin library older than its source.
-3. `installer/build_windows.ps1` builds the Windows .exe, `installer/build_mac.sh` the macOS app (on a Mac).
+1. `python installer/make_payload.py <version> --built build/qnx-build-<time> --pem-dir <folder with cert.pem, key.pem, ca.pem>`
+   collects everything into `installer/payload/` and writes `manifest.json` with SHA-256 per file. The PEM files are
+   the public NBT-AAD head-unit identity; take them from `rt/` of a release payload. (Without `--built` the script
+   uses the original developer's private build folders.)
+2. `installer/build_windows.ps1` builds the Windows .exe, `installer/build_mac.sh` the macOS app (on a Mac).
    paramiko must stay below 4 (the NBT only offers `ssh-rsa`).
-4. Test against the VM first: the installer has hidden options `--key <ssh key>` and `--root <test dir>` to install
-   below a test folder instead of the system.
+3. Test against the VM first: the installer has hidden options `--key <ssh key>` and `--root <test dir>` to install
+   below a test folder instead of the system. Then test on a car.
 
-Release assets: the Windows .exe, the zipped macOS app, `payload.zip` for the Python way, and SHA-256 sums.
+Release assets: the Windows .exe, the Python package ZIP (installer + payload), and SHA-256 sums.
+
+The older test scripts `scripts/Test-QnxTls.py`, `Test-AndroidAutoCore.py` and `Test-AndroidAutoSession.py` still run
+the offline TLS and protocol tests (simulated phone) in the VM.
 
 ## Working on the car
 

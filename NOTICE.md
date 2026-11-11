@@ -16,7 +16,8 @@ Parts of this project are taken from or based on NBT-AAD by nanaisu,
 - `src/android_auto/aa_cryptor.hpp`, `src/android_auto/aa_cryptor_mbedtls.cpp`
 - `src/android_auto/accessory_window.c`, `src/android_auto/oneplus_aoa.c`, `src/android_auto/tls_usb_probe.cpp`
 - the Android Auto protocol core (`aa_session`, `sdr_builder`, `audio_acks`, `crash_handler`), which is built from the
-  upstream repository at commit `41975f2` plus [patches/](patches/) and is contained in the `oneplus_native` binary
+  upstream repository at commit `41975f2` plus `scripts/aa_session_overlay.py` and [patches/](patches/) (both are
+  modifications of NBT-AAD under the same license) and is contained in the `oneplus_native` binary
 - the head-unit TLS identity `cert.pem` / `key.pem` / `ca.pem` shipped in the installer payload (the well-known
   Android Auto head-unit test identity, as embedded in upstream `aa_cryptor.cpp`; it is public and not a secret)
 

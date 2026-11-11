@@ -52,7 +52,11 @@ The protocol itself (version exchange, TLS, service discovery, channels) is **NB
 
 - `android_auto/aa_cryptor_mbedtls.cpp` replaces upstream `aa_cryptor.cpp` (Mbed TLS 3.6.7 instead of OpenSSL).
 - `scripts/aa_session_overlay.py` applies checked edits to upstream `aa_session.cpp` (stricter phase checks, TLS errors).
+- [patches/nbt-aad-aa_session-byebye.patch](../patches/) adds the clean session end (`postByeBye`, ByeByeRequest /
+  ByeByeResponse) that `aa_video_capture.cpp` uses.
 - [patches/nbt-aad-sdr_builder-pixel-aspect.patch](../patches/) adds the pixel aspect ratio for the wide picture mode.
+
+`scripts/build_all.py` applies all of this automatically and builds every program (see DEVELOPMENT.md).
 - `scripts/mbedtls_legacy_time.py` patches Mbed TLS to accept the old UTCTime format of some phone certificates.
 
 ## Tests and diagnostics (VM)

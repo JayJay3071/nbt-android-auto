@@ -16,8 +16,8 @@ Questions or suggestions that do not fit an issue: **androidauto.nbt@proton.me**
 
 1. **Android Auto audio.** Today music goes over Bluetooth. The plan and current findings are in
    [docs/AA-AUDIO-PLAN.md](docs/AA-AUDIO-PLAN.md) (audio source switching over MOST, like the video path).
-2. **Reproducible build.** One script that builds every QNX binary and the plugin from a clean checkout plus the QNX
-   SDP, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+2. **Build automation.** `scripts/build_all.py` builds everything in the VM (see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md));
+   a GitHub Actions job that at least builds the installer from a release payload would still help.
 3. **Other cars and NBT software levels**, and possibly NBT Evo (different DSI library).
 4. **Latency**: the Cinemo HTTP buffer adds controller delay. Hardware decoding (`-wd 1`) was tried and made it worse
    (larger io-nme queue), see the comment in `src/android_auto/nbt_decode_runner.c`.

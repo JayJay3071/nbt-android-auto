@@ -1,8 +1,13 @@
 """Collect the car-tested build outputs into installer/payload (+ manifest.json with SHA-256 per file).
 Usage: python installer/make_payload.py [version]
+       python installer/make_payload.py [version] --built build/qnx-build-<time> [--pem-dir <folder>]
 The payload contains binaries and the head-unit TLS identity; it is not committed (see .gitignore) but bundled into the
 release builds. Rebuild libNbtAndroidAuto.so in the QNX VM after any change to src/idrive/aa_entry_plugin.cpp first.
+--built takes the programs and plugin files from a scripts/build_all.py run instead of the developer's build folders;
+the PEM files (public NBT-AAD head-unit identity) then come from --pem-dir (default: rt/ of an existing payload,
+e.g. unpacked from a release ZIP).
 """
+import argparse
 import hashlib
 import json
 import shutil
@@ -42,17 +47,48 @@ FILES = [
 ]
 
 
+def built_files(built, pem_dir):
+    """FILES with the sources replaced by a scripts/build_all.py output folder."""
+    programs, resources = built / 'programs', built / 'plugin-resources'
+    result = []
+    for source, name, target, mode in FILES:
+        leaf = Path(name).name
+        if leaf.endswith('.pem'):
+            source = pem_dir / leaf
+        elif name.startswith('plugin/') and leaf != 'libNbtAndroidAuto.so':
+            source = resources / leaf
+        elif leaf in ('boot.sh', 'restart.sh'):
+            pass  # straight from scripts/
+        else:
+            source = programs / leaf
+        result.append((source, name, target, mode))
+    return result
+
+
 def main():
-    version = sys.argv[1] if len(sys.argv) > 1 else time.strftime('%Y.%m.%d')
-    plugin_src = REPO / 'src' / 'idrive' / 'aa_entry_plugin.cpp'
-    plugin_bin = ENTRY / 'NbtAndroidAuto' / 'libNbtAndroidAuto.so'
-    if plugin_bin.stat().st_mtime < plugin_src.stat().st_mtime:
-        sys.exit('libNbtAndroidAuto.so is older than aa_entry_plugin.cpp: rebuild it in the QNX VM first.')
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('version', nargs='?', default=time.strftime('%Y.%m.%d'))
+    parser.add_argument('--built', type=Path, help='output folder of scripts/build_all.py')
+    parser.add_argument('--pem-dir', type=Path, default=OUT / 'rt', help='folder with cert.pem, key.pem, ca.pem')
+    args = parser.parse_args()
+    version = args.version
+    if args.built:
+        files = built_files(args.built.resolve(), args.pem_dir.resolve())
+        pems = {}
+        for source, name, _, _ in files:   # read the PEMs before OUT is replaced (they may live in it)
+            if name.endswith('.pem'):
+                pems[name] = source.read_bytes()
+    else:
+        files, pems = FILES, {}
+        plugin_src = REPO / 'src' / 'idrive' / 'aa_entry_plugin.cpp'
+        plugin_bin = ENTRY / 'NbtAndroidAuto' / 'libNbtAndroidAuto.so'
+        if plugin_bin.stat().st_mtime < plugin_src.stat().st_mtime:
+            sys.exit('libNbtAndroidAuto.so is older than aa_entry_plugin.cpp: rebuild it in the QNX VM first.')
     if OUT.exists():
         shutil.rmtree(OUT)
     entries = []
-    for source, name, target, mode in FILES:
-        data = source.read_bytes()
+    for source, name, target, mode in files:
+        data = pems[name] if name in pems else source.read_bytes()
         if name.endswith('.sh'):
             data = data.replace(b'\r\n', b'\n')     # the car's shell does not accept CR
         destination = OUT / name
