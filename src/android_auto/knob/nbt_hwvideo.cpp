@@ -105,10 +105,11 @@ void onInfo(uint32_t id, const uint8_t* p, uint32_t len, void*) {
 // replies of VideoApp to OUR requests (dst = our device): ResultAck (op D) of BuildVideoConnection / StartVideo, errors
 // (op 9 ErrorAck, op F Error), and the CurrentVideoSource status we ask for every 5 s
 volatile int g_ack060 = 0, g_ackC01 = 0, g_err = 0, g_curSrc = -1;
+volatile long long g_srcAnswerMs = 0;   // when VideoApp last answered the CurrentVideoSource Get (0 = never)
 volatile unsigned g_myDev = 0;
 void onReply(const nbt::most::View& m, nbt::most::MsgClass, void*) {
     if (m.fblock != 0xD7 && m.fblock != 0xD8) return;
-    if (m.fblock == 0xD8 && m.fkt == 0xC05 && m.op == 0xC && m.len >= 1 && (!g_myDev || m.dst == g_myDev)) g_curSrc = m.data[0];
+    if (m.fblock == 0xD8 && m.fkt == 0xC05 && m.op == 0xC && m.len >= 1 && (!g_myDev || m.dst == g_myDev)) { g_curSrc = m.data[0]; g_srcAnswerMs = nowMs(); }
     if (g_myDev && m.dst != g_myDev) return;
     if (m.op == 0xD || m.op == 0xF || m.op == 0x9) {
         printf("[hw] reply %02X fkt=%03X op=%X len=%u%s\n", m.fblock, m.fkt, m.op, (unsigned)m.len, m.op == 0xD ? "" : " (ERROR)");
@@ -162,7 +163,7 @@ int main(int argc, char** argv) {
     for (int w = 0; w < 50 && most.state() != nbt::most::kUp && !g_stop; ++w) usleep(100000);
     if (most.state() != nbt::most::kUp) { printf("[hw] MOST link not up\n"); return 3; }
     for (int w = 0; w < 30 && (!g_addrD7 || !g_addrD8) && !g_stop; ++w) usleep(100000);
-    const uint16_t aD7 = (uint16_t)(g_addrD7 ? g_addrD7 : 0x2008), aD8 = (uint16_t)(g_addrD8 ? g_addrD8 : 0x2007);
+    uint16_t aD7 = (uint16_t)(g_addrD7 ? g_addrD7 : 0x2008), aD8 = (uint16_t)(g_addrD8 ? g_addrD8 : 0x2007);
     printf("[hw] VideoConnectionMaster D7 -> 0x%04X, VideoSink D8 -> 0x%04X%s\n", aD7, aD8,
            g_addrD7 && g_addrD8 ? "" : " (registry incomplete: old defaults)");
     if (registryOnly) { fflush(stdout); _exit(g_addrD7 && g_addrD8 ? 0 : 4); }
@@ -196,8 +197,18 @@ int main(int argc, char** argv) {
     const long long t0 = nowMs();
     int shown = -1;
     long long nextApply = t0 + 1000, hiddenSince = 0, nextSrcCheck = t0 + 8000;
+    bool silentLogged = false;
+    long long askedSince = 0;   // first CurrentVideoSource Get that is still unanswered (0 = none)
     while (!g_stop) {
         const long long t = nowMs();
+        // VideoApp's addresses change when it starts again (see onInfo): follow a newer registry instead of talking to the
+        // old addresses for the rest of the session (review 2026-11-11, "connected but no picture" until a reboot)
+        if (g_addrD7 && g_addrD8 && (g_addrD7 != aD7 || g_addrD8 != aD8)) {
+            printf("[hw] VideoApp moved: D7 0x%04X -> 0x%04X, D8 0x%04X -> 0x%04X (registry update)\n", aD7, g_addrD7,
+                   aD8, g_addrD8);
+            aD7 = (uint16_t)g_addrD7; aD8 = (uint16_t)g_addrD8;
+            g_curSrc = -1; g_srcAnswerMs = 0; silentLogged = false; askedSince = 0;
+        }
         // hide only when the page has been away for 400 ms (BACK / side panels are put right back by the plugin)
         bool visible = access("/fs/ram3/nbt-aa-hidden", F_OK) != 0;
         if (visible) hiddenSince = 0;
@@ -214,7 +225,20 @@ int main(int argc, char** argv) {
                 be16(b, (uint16_t)vp[0]); be16(b + 2, (uint16_t)vp[1]); be16(b + 4, (uint16_t)vp[2]); be16(b + 6, (uint16_t)vp[3]); most.send(req(aD8, 0xD8, 0xC04, 0x0, b, 8));
                 shown = -1;                                  // re-apply DisplayManager and WAL settings
             }
+            // no answer to the queries of the last 15 s: only logged. Whether VideoApp answers this Get on every car is
+            // not known yet, so a silent VideoApp is not taken as a reason to rebuild (that could break a working picture).
+            const long long answered = g_srcAnswerMs;
+            if (!askedSince || answered >= askedSince) askedSince = t;   // the previous query was answered
             most.send(req(aD8, 0xD8, 0xC05, 0x1, b, 0));     // Get CurrentVideoSource (answer -> g_curSrc)
+            const long long since = t - askedSince;
+            if (since > 15000 && !silentLogged) {
+                printf("[hw] no CurrentVideoSource answer from 0x%04X for %lld s%s\n", aD8, since / 1000,
+                       answered ? " (it answered before)" : " (never answered)");
+                silentLogged = true;
+            } else if (since <= 15000 && silentLogged) {
+                printf("[hw] CurrentVideoSource answers again\n");
+                silentLogged = false;
+            }
         }
         if ((int)visible != shown || (t - t0 < 12000 && t >= nextApply)) {
             if ((int)visible != shown) printf("[hw] %s\n", visible ? "show (Android Auto page)" : "hide (iDrive page)");
