@@ -13,7 +13,9 @@
 //   AASession video callback --> save() --> live queue --> live_writer thread --> annexb.fifo --> fifo_http --> decoder
 //   input.fifo (nbt_knob) --> handle_input() --> AASession key / rotary events
 //   AASession navigation callback --> nav_status() --> /fs/ram3/nbt-aa-native/nav.state
+//   AASession audio callbacks --> aa_audio (only with NBT_AUDIO_MODE=browser, live mode; aa_audio.hpp)
 #include "aa_video_capture.h"
+#include "aa_audio.hpp"
 #include "aa_session.hpp"
 #include <sys/socket.h>
 #include <sys/select.h>
@@ -352,10 +354,15 @@ struct LiveQueue {
     pthread_mutex_t m;
     pthread_cond_t cv;
     std::deque<std::vector<uint8_t> > items; // H.264 access units
+    std::deque<long long> arrived;           // monotonic ms each item was queued (same order as items)
     size_t bytes;                            // total size of items
     bool stop, dropping;                     // dropping: skipping frames until the next IDR / config
     unsigned dropped, drops;                 // dropped frames, number of drop runs
-    LiveQueue() : bytes(0), stop(false), dropping(false), dropped(0), drops(0)
+    // statistics since the last AA_LIVE_QUEUE_STATS line (review 2026-11-11: is the queue behind the controller lag?)
+    size_t peak_items, peak_bytes;
+    long long peak_wait_ms;                  // longest time an item waited before the writer took it
+    LiveQueue()
+        : bytes(0), stop(false), dropping(false), dropped(0), drops(0), peak_items(0), peak_bytes(0), peak_wait_ms(0)
     {
         pthread_mutex_init(&m, 0);
         pthread_cond_init(&cv, 0);
@@ -367,6 +374,21 @@ struct LiveQueue {
     }
 };
 const size_t kLiveBudget = 3 * 1024 * 1024; // queue limit in bytes
+// Every access unit is padded to NBT_AA_PAD (8 KB), so the byte budget alone allows ~380 frames (13-16 s) of backlog.
+// NBT_AA_QUEUE_FRAMES (default 0 = off, not car-tested): also start dropping (up to the next IDR / config) when this many
+// frames are queued. Caution: the phone sends IDR pictures rarely, so dropping can freeze the picture until the next one.
+size_t queue_frame_limit()
+{
+    static long limit = -1;
+    if (limit < 0) {
+        const char* e = getenv("NBT_AA_QUEUE_FRAMES");
+        limit = e ? strtol(e, 0, 10) : 0;
+        if (limit < 0 || limit > 100000)
+            limit = 0;
+    }
+    return (size_t)limit;
+}
+long long now_ms();
 
 struct Capture {
     pthread_mutex_t mutex;
@@ -396,6 +418,13 @@ bool has_idr(const uint8_t* p, size_t n)
     return false;
 }
 
+// queued item that starts with a sequence / picture parameter set (codec config: SPS 7, PPS 8)?
+bool is_param_set(const std::vector<uint8_t>& v)
+{
+    size_t i = v.size() >= 4 && !v[0] && !v[1] && v[2] == 1 ? 3 : v.size() >= 5 && !v[0] && !v[1] && !v[2] && v[3] == 1 ? 4 : 0;
+    return i && i < v.size() && ((v[i] & 0x1f) == 7 || (v[i] & 0x1f) == 8);
+}
+
 // session thread: never blocks on the decoder
 void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
 {
@@ -407,7 +436,29 @@ void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
         pthread_mutex_unlock(&q.m);
         return;
     }
-    if (q.bytes + n > kLiveBudget) {
+    const size_t frame_limit = queue_frame_limit();
+    const bool over = q.bytes + n > kLiveBudget || (frame_limit && q.items.size() >= frame_limit);
+    if (!config && (q.dropping || over) && has_idr(p, n)) {
+        // review 2026-11-11: a key frame after a drop run (or over the limit) makes everything queued before it useless:
+        // drop all queued pictures instead of only as many as needed to fit, so the decoder does not first play seconds
+        // of old frames. Parameter sets stay (the decoder needs them for this picture).
+        std::deque<std::vector<uint8_t> > keep;
+        std::deque<long long> keep_t;
+        while (!q.items.empty()) {
+            if (is_param_set(q.items.front())) {
+                keep.push_back(std::vector<uint8_t>());
+                keep.back().swap(q.items.front());
+                keep_t.push_back(q.arrived.front());
+            } else {
+                q.bytes -= q.items.front().size();
+                ++q.dropped;
+            }
+            q.items.pop_front();
+            q.arrived.pop_front();
+        }
+        q.items.swap(keep);
+        q.arrived.swap(keep_t);
+    } else if (over) {
         if (!restart) {
             q.dropping = true;
             ++q.drops;
@@ -416,9 +467,10 @@ void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
             return;
         }
         // a fresh IDR/config does not fit: throw away the old backlog, the decoder restarts on this picture
-        while (!q.items.empty() && q.bytes + n > kLiveBudget) {
+        while (!q.items.empty() && (q.bytes + n > kLiveBudget || (frame_limit && q.items.size() >= frame_limit))) {
             q.bytes -= q.items.front().size();
             q.items.pop_front();
+            q.arrived.pop_front();
             ++q.dropped;
         }
     }
@@ -443,11 +495,14 @@ void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
         v.push_back(0x80); // rbsp trailing bits
     }
     q.bytes += q.items.back().size();
+    q.arrived.push_back(now_ms());
+    if (q.items.size() > q.peak_items)
+        q.peak_items = q.items.size();
+    if (q.bytes > q.peak_bytes)
+        q.peak_bytes = q.bytes;
     pthread_cond_signal(&q.cv);
     pthread_mutex_unlock(&q.m);
 }
-
-long long now_ms();
 
 // write everything; a non-blocking descriptor may stay full for at most 2 s
 bool write_all(int fd, const unsigned char* p, size_t n)
@@ -574,6 +629,10 @@ void* live_writer(void* v)
         item.swap(q.items.front());
         q.items.pop_front();
         q.bytes -= item.size();
+        const long long waited = now_ms() - q.arrived.front();
+        q.arrived.pop_front();
+        if (waited > q.peak_wait_ms)
+            q.peak_wait_ms = waited;
         pthread_mutex_unlock(&q.m);
         size_t off = 0;
         while (off < item.size()) {
@@ -740,10 +799,12 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
         g_refocus_at = 0;
         session.setVideoFocusCallback(focus_request, 0);
     }
+    const bool audio = c.live && aa_audio::setup(session);
     setenv("NBT_VID_RES", "1", 0); // 800x480 unless the service asks for 1280x720 (res720)
-    printf("AA_VIDEO_CAPTURE_BEGIN max_seconds=%u max_bytes=8388608 max_frames=%u no_display=1 no_audio_playback=1\n",
-           seconds, c.frame_limit);
+    printf("AA_VIDEO_CAPTURE_BEGIN max_seconds=%u max_bytes=8388608 max_frames=%u no_display=1 no_audio_playback=%d\n",
+           seconds, c.frame_limit, audio ? 0 : 1);
     if (!session.start(pair[0])) {
+        aa_audio::shutdown();
         close(pair[1]);
         close(c.data);
         close(c.index);
@@ -754,6 +815,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     if (c.live) {
         if (pthread_create(&writer, 0, live_writer, &c)) {
             session.stop();
+            aa_audio::shutdown();
             close(pair[1]);
             close(c.data);
             return 3;
@@ -769,6 +831,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
             pthread_join(writer, 0);
         }
         session.stop();
+        aa_audio::shutdown();
         close(pair[1]);
         close(c.data);
         close(c.index);
@@ -795,6 +858,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     // stopping, a ByeByeRequest goes out and the session keeps pumping both directions for up to 1 s until the phone's
     // ByeByeResponse ends it.
     long long bye_until = 0;
+    long long next_stats = start + 10000;
 
     // ---- main loop: socket pair -> USB, controller FIFO -> session, focus and shutdown handling ----
     while (start >= 0 && session.isActive()) {
@@ -810,6 +874,17 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
         if (bye_until && now_ms() >= bye_until) {
             printf("AA_BYEBYE no answer within 1 s\n");
             break;
+        }
+        if (have_writer && now_ms() >= next_stats) {
+            next_stats = now_ms() + 10000;
+            pthread_mutex_lock(&c.queue.m);
+            printf("AA_LIVE_QUEUE_STATS peak_frames=%u peak_kb=%u peak_wait_ms=%lld now_frames=%u dropped=%u drop_runs=%u\n",
+                   (unsigned)c.queue.peak_items, (unsigned)(c.queue.peak_bytes / 1024), c.queue.peak_wait_ms,
+                   (unsigned)c.queue.items.size(), c.queue.dropped, c.queue.drops);
+            c.queue.peak_items = c.queue.items.size();
+            c.queue.peak_bytes = c.queue.bytes;
+            c.queue.peak_wait_ms = 0;
+            pthread_mutex_unlock(&c.queue.m);
         }
         if (!bye_until && g_refocus_at && now_ms() >= g_refocus_at) {
             g_refocus_at = 0;
@@ -856,6 +931,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
         printf("AA_BYEBYE %s\n", session.isActive() ? "session still open: closing it" : "session ended cleanly");
     shutdown(c.socket, SHUT_RDWR);
     session.stop();
+    aa_audio::shutdown(); // after the session thread ended: no more frames come in
     if (c.live)
         unlink("/fs/ram3/nbt-aa-native/nav.state");
     // USB reader's individual transfer is bounded; no cancellation of a live URB.

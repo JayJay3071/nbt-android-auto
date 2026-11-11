@@ -38,3 +38,29 @@
      von nbt_knob/nbt_hwvideo (`Client::send`).
 5. **Am Auto testen** mit dem Pieptest über libasound und gebauter Verbindung, danach mit AA-Musik. Jeder Sendetest nur mit
    Freigabe.
+
+## Stand 11.11.2026: AA-Seite gebaut, Route offen
+
+- **Gebaut (nicht am Auto getestet):** `oneplus_native` enthält jetzt den Browser-Audio-Modus von NBT-AAD
+  (`audio/browser_audio.*` mit Mixer, Resampler, Drift-Regelung, verzögerten Audio-Acks, Ausgabe über
+  `/opt/mm/lib/libasound/libasound.so`). Die Verdrahtung steht in `src/android_auto/aa_audio.cpp`.
+  - Die Upstream-Audiotests (Mixer, Resampler, Acks, Route-Policy, SDR) laufen auf dem Host grün.
+  - Der QNX-Build ist noch nicht in der VM geprüft.
+- **Schalter:** `touch /var/opt/hmi/data/rw/NbtAndroidAutoRT/aa-audio`, dann iDrive neu starten (oder Restart-Knopf).
+  - `native_service` setzt dann `NBT_AUDIO_MODE=browser`, `NBT_SDR_DROP=2,4` (Kanal 9 bleibt drin) und
+    `NBT_BROWSER_CONN=0` (ohne Route abspielen).
+  - Ohne die Datei ändert sich nichts: Ton weiter über Bluetooth.
+  - Zurück: `rm .../aa-audio`, neu starten.
+- **Route:** BrowserAudio ruft für den Verbindungsaufbau ein `audioconn`-kompatibles Programm auf
+  (`audioconn -b 0x<id>` / `-r 0x<id>`, Exit 0 = gewährt; Pfad `NBT_AUDIOCONN`).
+  - Erste Zeile von `aa-audio` = Verbindungs-ID (z. B. `0xb8`), wirkt nur mit einem Programm unter
+    `NbtAndroidAutoRT/audioconn`.
+  - Ein eigener Ersatz (MOST `BuildHighSyncConnection` an 0x100E oder DSI AudioManagement `requestFocus`) fehlt noch.
+- **Nächster Schritt am Auto (nur lesend):** `scripts/car-audio-route-probe.sh`.
+  - Prüft, ob es `audioconn` doch gibt, ob der libasound-Shim und `dev-libasound` laufen.
+  - Sucht, welche Binärdateien die Routing-Schnittstellen tragen (Strings aus `HmiMain3D` und den Audio-Bibliotheken).
+  - Gibt das Systemlog zu Audio-Verbindungen aus.
+- **Erster Hörtest danach (mit Freigabe):** `aa-audio` an, Musik in AA starten.
+  - Hörbar, ohne dass eine Route gebaut wurde: Bluetooth-/Radioquelle hört dann ggf. mit.
+  - Sonst im Log `capture-*.log` nach `[Browser] PCM open`, `device setup` und den 10-s-Statistiken schauen.
+  - Erwartung laut Pieptest vom 7.11.: still, bis die Route gebaut wird.

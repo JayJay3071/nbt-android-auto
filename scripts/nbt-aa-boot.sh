@@ -23,6 +23,15 @@ touch $R/hw.mode
 # optional sharper picture: phone sends 1280x720 (touch $P/res720 to enable, rm to go back to 800x480)
 rm -f $R/res720
 if test -e $P/res720; then touch $R/res720; echo 'res720 on'; fi
+# experimental: Android Auto sound over the AA connection instead of Bluetooth (docs/AA-AUDIO-PLAN.md).
+# Enable: touch $P/aa-audio (optional first line: connection id such as 0xb8, used only with an audioconn-compatible
+# program at $P/audioconn). rm $P/aa-audio goes back to Bluetooth.
+rm -f $R/aa-audio $R/audioconn
+if test -e $P/aa-audio; then
+  cp $P/aa-audio $R/aa-audio
+  if test -f $P/audioconn; then cp $P/audioconn $R/audioconn && chmod 700 $R/audioconn; fi
+  echo "aa-audio on (`sed 1q $R/aa-audio`)"
+fi
 rm -f $R/wal.args $R/shadow.path
 # the plugin page exists: the phone is only switched after the page was opened once
 if test -e /fs/ram3/nbt-aa-hidden -o -e /fs/ram3/nbt-aa-request; then touch $R/gate.mode; fi
