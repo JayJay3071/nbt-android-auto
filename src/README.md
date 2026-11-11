@@ -20,6 +20,7 @@ boot.sh (scripts/nbt-aa-boot.sh, started by the HMI plugin 15 s after the HMI)
  │             USB ▶ TLS/protocol (NBT-AAD core) ▶ H.264 ▶ annexb.fifo
  │             input.fifo ▶ key events ▶ phone
  │             navigation status ▶ nav.state
+ │             (aa-audio flag only) audio ▶ BrowserAudio ▶ libasound (browser audio source)
  └─ nbt_cluster ............... nav.state ▶ instrument cluster (MOST HUDTerminal): arrow, distance, street, shields
 libNbtAndroidAuto.so (HMI plugin) ▶ menu entry, status page (reads /fs/ram3/nbt-aa-state), picture mode, restart button
 ```
@@ -32,7 +33,7 @@ Runtime directory: `/fs/ram3/nbt-aa-native` (RAM). Installed package: `/var/opt/
 | Program | Sources | Notes |
 |---|---|---|
 | `native_service` | `android_auto/nbt_native_service.c` | Start here: the file header explains the whole session flow and the mode files. |
-| `oneplus_native` | `android_auto/oneplus_aoa.c` (main, USB/AOA), `android_auto/tls_usb_probe.cpp` (TLS over USB), `android_auto/aa_video_capture.cpp` (session glue: video queue, controller input, navigation), `android_auto/aa_cryptor_mbedtls.cpp` + the NBT-AAD core | Built with `-DNBT_AA_TLS_HANDSHAKE -DNBT_AA_CAPTURE`. |
+| `oneplus_native` | `android_auto/oneplus_aoa.c` (main, USB/AOA), `android_auto/tls_usb_probe.cpp` (TLS over USB), `android_auto/aa_video_capture.cpp` (session glue: video queue, controller input, navigation), `android_auto/aa_audio.cpp` (experimental AA audio, off unless the `aa-audio` flag exists), `android_auto/aa_cryptor_mbedtls.cpp` + the NBT-AAD core | Built with `-DNBT_AA_TLS_HANDSHAKE -DNBT_AA_CAPTURE`. |
 | `fifo_http` | `android_auto/nbt_fifo_http.c` | |
 | `decode_runner` | `android_auto/nbt_decode_runner.c` | Explains the NmeCmdLine options and why decoding stays in software. |
 | `accessory_window` | `android_auto/accessory_window.c` | Adapted from NBT-AAD. |

@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import subprocess
 import tarfile
+import tempfile
 import time
 import uuid
 from aa_session_overlay import harden_session
@@ -22,6 +23,22 @@ REVISION = "41975f269b065dbdbc77af9f568387cd22b9ed27"
 def run(args, **kwargs):
     return subprocess.run(args, check=True, stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT, **kwargs).stdout
+
+
+def apply_patches(files):
+    """Apply patches/*.patch (paths milestone-7/src/...) to the reference/src files, as build_all.py does."""
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        for name, data in files.items():
+            if name.startswith("reference/src/"):
+                target = work / "milestone-7" / name[len("reference/"):]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+        for patch in sorted((ROOT / "patches").glob("*.patch")):
+            subprocess.run(["git", "apply", "--whitespace=nowarn", str(patch)], cwd=work, check=True)
+        for path in (work / "milestone-7" / "src").rglob("*"):
+            if path.is_file():
+                files["reference/" + path.relative_to(work / "milestone-7").as_posix()] = path.read_bytes()
 
 
 def main():
@@ -77,6 +94,8 @@ def main():
         raise RuntimeError("Reference must remain clean")
     for name in ["src/crash_handler.cpp", "tests/test_session_lifecycle.cpp"]:
         files["reference/" + name] = (reference / "milestone-7" / name).read_bytes().replace(b"\r\n", b"\n")
+    for path in sorted((reference / "milestone-7" / "third_party" / "speexdsp").glob("*")):
+        files["reference/third_party/speexdsp/" + path.name] = path.read_bytes().replace(b"\r\n", b"\n")
     lifecycle_path = "reference/tests/test_session_lifecycle.cpp"
     lifecycle = files[lifecycle_path].decode()
     start = lifecycle.index("static int countFds() {")
@@ -111,10 +130,12 @@ static int endedAdd(int value) {
     files["reference/src/aa_cryptor.cpp"] = (ROOT / "src/android_auto/aa_cryptor_mbedtls.cpp").read_bytes()
     session_path = "reference/src/aa_session.cpp"
     files[session_path] = harden_session(files[session_path].decode().replace("\r\n", "\n")).encode()
+    apply_patches(files)
     files["test_tls_memory.c"] = (ROOT / "src/android_auto/test_tls_memory.c").read_bytes()
     files["test_session_protocol.cpp"] = (ROOT / "src/android_auto/test_session_protocol.cpp").read_bytes()
     for name in ['tls_usb_probe.h', 'tls_usb_probe.cpp', 'test_tls_usb_probe.cpp', 'oneplus_aoa.c',
-                 'aa_video_capture.h', 'aa_video_capture.cpp', 'test_video_capture.cpp']:
+                 'aa_video_capture.h', 'aa_video_capture.cpp', 'aa_audio.hpp', 'aa_audio.cpp',
+                 'test_video_capture.cpp']:
         files[name] = (ROOT / 'src/android_auto' / name).read_bytes()
     cxx = "qcc -V4.4.2,gcc_ntox86_cpp -lang-c++ -O1 -Wall -D_QNX_SOURCE -Wc,-std=gnu++0x -Imbedtls-3.6.7/include -Ireference/src -Ireference/include"
     libs = "lib/libmbedtls.a lib/libmbedx509.a lib/libmbedcrypto.a -lsocket -lm"
@@ -123,16 +144,23 @@ static int endedAdd(int value) {
                 cxx + " -DNBT_TLS_BACKEND_TEST test_tls_memory.c reference/src/aa_cryptor.cpp " + libs + " -o test_backend",
                 "./test_backend", "mkdir objects"]
     components = ["aa_session", "aa_cryptor", "audio/audio_acks", "sdr_builder", "crash_handler"]
+    # browser audio mode, as in build-qnx.sh (objects named audio_<name>.o there and here)
+    audio = ["browser_audio", "asound_device", "audio_route", "mixer", "resampler", "drift", "config", "stream_rate",
+             "pcm_ring", "playout"]
     for component in components:
         commands.append(cxx + " -c reference/src/" + component + ".cpp -o objects/" + Path(component).name + ".o")
-    commands += ["ntox86-ar rcs libnbt_aa_core.a " + " ".join("objects/" + Path(n).name + ".o" for n in components),
+    for name in audio:
+        commands.append(cxx + " -c reference/src/audio/" + name + ".cpp -o objects/audio_" + name + ".o")
+    commands.append("qcc -V4.4.2,gcc_ntox86 -O1 -Ireference/src -c reference/src/audio/speex.c -o objects/audio_speex.o")
+    objects = ["objects/" + Path(n).name + ".o" for n in components] + ["objects/audio_" + n + ".o" for n in audio + ["speex"]]
+    commands += ["ntox86-ar rcs libnbt_aa_core.a " + " ".join(objects),
                  cxx + " reference/tests/test_session_lifecycle.cpp libnbt_aa_core.a " + libs + " -o test_session",
                  "./test_session",
                  cxx + " test_session_protocol.cpp libnbt_aa_core.a " + libs + " -o test_protocol",
                  "./test_protocol",
                  cxx + " test_tls_usb_probe.cpp tls_usb_probe.cpp reference/src/aa_cryptor.cpp " + libs + " -o test_tls_usb_probe",
                  "./test_tls_usb_probe",
-                 cxx + " test_video_capture.cpp aa_video_capture.cpp libnbt_aa_core.a " + libs + " -o test_video_capture",
+                 cxx + " test_video_capture.cpp aa_video_capture.cpp aa_audio.cpp libnbt_aa_core.a " + libs + " -o test_video_capture",
                  "./test_video_capture",
                  "qcc -V4.4.2,gcc_ntox86 -Wall -Wextra -DNBT_AA_TLS_HANDSHAKE -c oneplus_aoa.c -o oneplus_aoa.o",
                  cxx + " tls_usb_probe.cpp reference/src/aa_cryptor.cpp oneplus_aoa.o " + libs + " -lusbdi -o oneplus_tls",
@@ -140,7 +168,7 @@ static int endedAdd(int value) {
                  "if ./oneplus_tls --tls-handshake 0 2; then exit 1; else test $? -eq 3; fi",
                  "if ./oneplus_tls --discover 0 2; then exit 1; else test $? -eq 3; fi",
                  "qcc -V4.4.2,gcc_ntox86 -Wall -Wextra -DNBT_AA_TLS_HANDSHAKE -DNBT_AA_CAPTURE -c oneplus_aoa.c -o oneplus_capture.o",
-                 cxx + " aa_video_capture.cpp tls_usb_probe.cpp oneplus_capture.o libnbt_aa_core.a " + libs + " -lusbdi -o oneplus_capture",
+                 cxx + " aa_video_capture.cpp aa_audio.cpp tls_usb_probe.cpp oneplus_capture.o libnbt_aa_core.a " + libs + " -lusbdi -o oneplus_capture",
                  "./oneplus_capture --selftest",
                  "if ./oneplus_capture --capture-video 0 2; then exit 1; else test $? -eq 3; fi",
                  "echo AA_SESSION_VM_TEST_OK"]

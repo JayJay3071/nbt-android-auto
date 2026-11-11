@@ -107,7 +107,7 @@ def add_nbt_aad(archive, checkout):
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         base = checkout / "milestone-7"
-        for folder in ("src", "include"):
+        for folder in ("src", "include", "third_party/speexdsp"):
             for path in (base / folder).rglob("*"):
                 if path.is_file():
                     target = work / "milestone-7" / path.relative_to(base)

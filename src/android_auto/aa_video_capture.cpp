@@ -13,7 +13,9 @@
 //   AASession video callback --> save() --> live queue --> live_writer thread --> annexb.fifo --> fifo_http --> decoder
 //   input.fifo (nbt_knob) --> handle_input() --> AASession key / rotary events
 //   AASession navigation callback --> nav_status() --> /fs/ram3/nbt-aa-native/nav.state
+//   AASession audio callbacks --> aa_audio (only with NBT_AUDIO_MODE=browser, live mode; aa_audio.hpp)
 #include "aa_video_capture.h"
+#include "aa_audio.hpp"
 #include "aa_session.hpp"
 #include <sys/socket.h>
 #include <sys/select.h>
@@ -740,10 +742,12 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
         g_refocus_at = 0;
         session.setVideoFocusCallback(focus_request, 0);
     }
+    const bool audio = c.live && aa_audio::setup(session);
     setenv("NBT_VID_RES", "1", 0); // 800x480 unless the service asks for 1280x720 (res720)
-    printf("AA_VIDEO_CAPTURE_BEGIN max_seconds=%u max_bytes=8388608 max_frames=%u no_display=1 no_audio_playback=1\n",
-           seconds, c.frame_limit);
+    printf("AA_VIDEO_CAPTURE_BEGIN max_seconds=%u max_bytes=8388608 max_frames=%u no_display=1 no_audio_playback=%d\n",
+           seconds, c.frame_limit, audio ? 0 : 1);
     if (!session.start(pair[0])) {
+        aa_audio::shutdown();
         close(pair[1]);
         close(c.data);
         close(c.index);
@@ -754,6 +758,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     if (c.live) {
         if (pthread_create(&writer, 0, live_writer, &c)) {
             session.stop();
+            aa_audio::shutdown();
             close(pair[1]);
             close(c.data);
             return 3;
@@ -769,6 +774,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
             pthread_join(writer, 0);
         }
         session.stop();
+        aa_audio::shutdown();
         close(pair[1]);
         close(c.data);
         close(c.index);
@@ -856,6 +862,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
         printf("AA_BYEBYE %s\n", session.isActive() ? "session still open: closing it" : "session ended cleanly");
     shutdown(c.socket, SHUT_RDWR);
     session.stop();
+    aa_audio::shutdown(); // after the session thread ended: no more frames come in
     if (c.live)
         unlink("/fs/ram3/nbt-aa-native/nav.state");
     // USB reader's individual transfer is bounded; no cancellation of a live URB.

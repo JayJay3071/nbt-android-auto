@@ -20,6 +20,7 @@
  *   center800   phone canvas 800x480 1:1 in the middle of the display      split800  same, at the left edge
  *   anamorph    phone canvas 800x480 stretched 1.6x horizontally ("wide")  res720    1280x720 canvas, cropped
  *   gate.mode   only touch the phone after the HMI page was opened
+ *   aa-audio    Android Auto sound over the AA connection instead of Bluetooth (experimental, see set_audio_mode())
  *   peer.pin    pin the phone's TLS certificate instead of checking the chain
  *   shadow.path, wal.args   old experimental modes (see experiments/), not used by the installed package
  *
@@ -57,6 +58,40 @@ static long long ms(void)
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (long long)t.tv_sec * 1000 + t.tv_nsec / 1000000;
+}
+
+/* aa-audio mode file (experimental, docs/AA-AUDIO-PLAN.md): the phone sends media, guidance and system audio over Android
+ * Auto and oneplus_native plays it through the car's browser audio front end (NBT-AAD browser mode). Without the file
+ * nothing changes: the media sink (ch 9) is not offered and the phone keeps playing over Bluetooth.
+ * Optional first line: the ConnectionMaster connection to request (e.g. 0xb8), only useful together with an
+ * audioconn-compatible program named audioconn in the runtime directory. Default 0 = play without asking for a route. */
+static void set_audio_mode(void)
+{
+    FILE* f = fopen("aa-audio", "r");
+    char line[32] = "";
+    char* end = 0;
+    unsigned long conn = 0;
+    if (!f) {
+        setenv("NBT_AUDIO_MODE", "bt", 1);
+        setenv("NBT_SDR_DROP", "2,4,9", 1); /* services not offered to the phone (see NBT-AAD sdr_builder) */
+        return;
+    }
+    if (fgets(line, sizeof(line), f)) {
+        conn = strtoul(line, &end, 0);
+        if (end == line || conn > 0xffff || (*end && *end != '\n' && *end != '\r'))
+            conn = 0;
+    }
+    fclose(f);
+    if (access("audioconn", X_OK))
+        conn = 0; /* nothing can build the connection: say so plainly (BrowserAudio would also just play unrouted) */
+    snprintf(line, sizeof(line), "0x%lx", conn);
+    setenv("NBT_AUDIO_MODE", "browser", 1);
+    setenv("NBT_SDR_DROP", "2,4", 1); /* keep the media sink (ch 9) */
+    setenv("NBT_BROWSER_CONN", line, 1);
+    if (conn)
+        setenv("NBT_AUDIOCONN", RUNTIME_DIR "/audioconn", 1);
+    else
+        unsetenv("NBT_AUDIOCONN");
 }
 
 /* ---- child processes ------------------------------------------------------------------------------------------- */
@@ -422,7 +457,7 @@ int main(int argc, char** argv)
     setenv("NBT_AA_PAD", "8192", 0);
     setenv("NBT_CAR_YEAR", "2014", 1);
     setenv("NBT_HU_MODEL", "HU_NBT", 1);
-    setenv("NBT_SDR_DROP", "2,4,9", 1); /* services not offered to the phone (see NBT-AAD sdr_builder) */
+    set_audio_mode();
     setenv("NBT_RX_TIMEOUT_S", "5", 1);
 
     /* ---- mode switches (files in the runtime directory) ---- */
