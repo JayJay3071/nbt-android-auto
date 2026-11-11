@@ -1,6 +1,7 @@
-// "Android Auto" entry under Multimedia (prototype, built in the VM, NOT yet run on the car).
+// libNbtAndroidAuto.so - the "Android Auto" entry under Multimedia (HMI plugin, in the installed package).
 //
-// The picture is not drawn by this page: nbt_wal_present puts it in front of the HMI as a WAL sprite. This page
+// The picture is not drawn by this page: nbt_hwvideo shows the hardware video window in front of the HMI (the very
+// first version used a WAL sprite, see experiments/wal-overlay; some comments below still say so). This page
 //   - starts the connection: opening it creates /fs/ram3/nbt-aa-request (native_service waits for it with gate.mode)
 //   - shows the connection status (from /fs/ram3/nbt-aa-state, written by native_service at least every 2 s):
 //       no phone / phone found, starting / replug needed / device without Android Auto / several devices / service down
@@ -13,7 +14,7 @@
 //   - MENU / MEDIA / NAV / COM / MAP / OPTION leave the page the iDrive way: the overlay hides, the session keeps running
 //     in the background. Multimedia -> Android Auto then brings the running session to the front at once.
 // Hold states 13..20 are nested (see "hold states" below). Loop guard: at most 10 hold events per minute.
-// ABI as in dynamic_image_plugin.cpp (vehicle-tested PluginApp ctor, addHandler(state,1,...) focus events, post()).
+// ABI as in experiments/png-pipeline/dynamic_image_plugin.cpp (vehicle-tested PluginApp ctor, addHandler(state,1,...) focus events, post()).
 // Checked in this car's libraries: PluginApp::triggerEvent(unsigned), updateModel(unsigned, TextID const&),
 // TextID(unsigned) = ID(id, 0x28) (libCoreFramework.A.so); focusEvent/parentId are known to this HmiMain3D.
 #include "nbt_image_abi.hpp"

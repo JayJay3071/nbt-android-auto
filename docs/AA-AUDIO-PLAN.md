@@ -1,7 +1,7 @@
 # Android-Auto-Ton ohne Bluetooth – Stand 7.11.2026
 
 ## Befunde
-- **Pieptest über A2I** (`nbt_a2i_beep`):
+- **Pieptest über A2I** (`nbt_a2i_beep`, Quelle und Skripte in `experiments/audio/`):
   - In `input_stereo_1` bis `_5` wurde geschrieben, aber nichts war hörbar.
   - `input_stereo_0` blieb beim Öffnen hängen, weil er belegt ist (BT/Media).
   - Ergebnis: Ein Eingang ist nur hörbar, wenn die zugehörige Quelle beim Audio-Management aktiv ist.

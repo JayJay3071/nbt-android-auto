@@ -111,6 +111,10 @@ are kept in [docs/history/](docs/history/) for reference.
 | `tools/` | SSH session helper for development on the car |
 | `patches/` | Small patches to the upstream NBT-AAD core |
 | `docs/` | Technical documentation; `docs/history/` = development log |
+| `experiments/` | Past experiments, not part of the product (some crashed the head unit), kept for reference |
+
+**Where to start reading the code:** [src/README.md](src/README.md) maps every program on the head unit to its source
+files and shows how they work together.
 
 ## Contributing
 

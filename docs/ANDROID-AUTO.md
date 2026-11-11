@@ -1,5 +1,9 @@
 # Android Auto on original HU_NBT: USB bring-up
 
+> Development log of the USB/TLS/protocol bring-up (state of 2026-11-06). The video tools mentioned here
+> (`Inspect-NbtVideoCapture.py`, `Test-CinemoPixels.py`, `Prepare-NbtVideoFixture.py`, `test_cinemo_*.c`) now live in
+> [experiments/png-pipeline/](../experiments/png-pipeline/). For the current structure see [src/README.md](../src/README.md).
+
 Status: 2026-11-06. User selected USB and a OnePlus 7 Pro running OxygenOS 12
 (Android 12). Hello NBT menu and text page are visually confirmed on the car.
 The protocol core now builds as a QNX x86 static library with an alternative

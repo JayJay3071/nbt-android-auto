@@ -128,7 +128,7 @@ Pin the NBT host key in `.local/nbt_known_hosts` first. The NBT shell lacks many
 ### Safety rules (learned the hard way)
 
 - **Never stop or restart stock processes** such as `io-nme` or `HmiMain3D`. Stop only your own processes, with SIGTERM.
-- **Do not revive the WAL sprite overlay** (`nbt_wal_*`, see `docs/history/`): unpaced sprite uploads deadlocked the
+- **Do not revive the WAL sprite overlay** (`experiments/wal-overlay/`): unpaced sprite uploads deadlocked the
   `WalServer` and crashed the NVIDIA driver, which restarted the head unit.
 - **No standalone EGL experiments** on the car; one crashed it. Never copy VM-only libraries to the car.
 - Write files as `.tmp`, compare, then rename. Do not blindly repeat a command whose result is unknown.

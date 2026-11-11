@@ -1,4 +1,5 @@
-// nbt_knob - iDrive controller -> Android Auto key events for the original NBT (prototype, NOT yet run on the car).
+// nbt_knob - iDrive controller -> Android Auto key events for the original NBT (in the installed package, car-proven
+// since 2026-11-07).
 //
 // Observe-only: it registers one DSI client on the MOST server and receives COPIES of the controller's status messages
 // (FBlock 0xE5). Nothing is ever sent to the controller or any other function block; the HMI keeps receiving every event.

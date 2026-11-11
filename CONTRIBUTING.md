@@ -26,6 +26,8 @@ Questions or suggestions that do not fit an issue: **androidauto.nbt@proton.me**
 
 ## Before you start
 
+- Get an overview first: [src/README.md](src/README.md) shows which source file becomes which program on the head unit.
+
 - To build anything for the head unit you need **QNX 6.5.0** in a VM. You can download it from QNX; the setup (video
   walkthrough and a BIOS date tip) is in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#setting-up-qnx-650).
 

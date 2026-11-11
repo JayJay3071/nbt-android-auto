@@ -1,4 +1,7 @@
-/* Bounded AOA probe for the observed OnePlus 7 Pro, never a device-wide scan.
+/* oneplus_aoa: the main() of the oneplus_native program (the name is historical: it started as a probe for the
+ * developer's OnePlus 7 Pro; it works with any Android phone now). Bounded: one given bus/device, never a device-wide scan.
+ * native_service calls it as --switch-aa <bus> <device> and --capture-video <bus> <device> (the live session, built
+ * with -DNBT_AA_CAPTURE, see aa_video_capture.cpp).
  * Control-transfer implementation adapted from NBT-AAD usb_direct.cpp.
  * SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
  * Required Notice: Copyright (c) 2026 nanaisu - NBT-AAD (https://github.com/Sq00ky/Supra-iDrive6-Android-Auto)
