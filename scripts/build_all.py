@@ -43,7 +43,7 @@ MBEDTLS_DISABLED = ["MBEDTLS_AESNI_C", "MBEDTLS_HAVE_ASM", "MBEDTLS_PADLOCK_C"]
 # payload binaries built here (installer/payload/<name>)
 PROGRAMS = {"oneplus_native": "rt", "native_service": "rt", "decode_runner": "rt", "fifo_http": "rt",
             "accessory_window": "rt", "nbt_knob": "rt", "nbt_hwvideo": "rt", "nbt_cluster": "rt",
-            "libNbtAndroidAuto.so": "plugin"}
+            "libNbtAndroidAuto.so": "plugin", "nbt_reset": "reboot", "libNbtReboot.so": "reboot"}
 
 
 def git(*args, cwd=None):
@@ -207,10 +207,14 @@ def main():
             print("not built:", name)
     resources = out / "plugin-resources"
     subprocess.run([sys.executable, str(ROOT / "src/idrive/make_aa_entry_resources.py"), str(resources)], check=True)
+    # NbtReboot plugin: "Restart iDrive" entry; its folder gets these four files plus nbt_reset and libNbtReboot.so
+    subprocess.run([sys.executable, str(ROOT / "src/idrive/reboot/make_reboot_resources.py"), str(out / "reboot-resources")],
+                   check=True)
     shutil.copy(ROOT / "scripts/nbt-aa-boot.sh", programs / "boot.sh")
     shutil.copy(ROOT / "scripts/nbt-aa-restart.sh", programs / "restart.sh")
     print("programs:", programs)
     print("plugin XML/manifest/texts:", resources)
+    print("reboot plugin XML/manifest/texts:", out / "reboot-resources")
     return 0
 
 

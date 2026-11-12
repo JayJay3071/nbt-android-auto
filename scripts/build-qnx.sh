@@ -67,6 +67,16 @@ else
   echo "SKIPPED: no libAppFramework.A.so / libCoreFramework.A.so in $HMI_LIBS (copy them from your NBT)"
 fi
 
+echo "== reboot plugin: nbt_reset, libNbtReboot.so"
+cd $W/src/idrive/reboot
+$CC -O2 -Wall -Wextra nbt_reset.c -lsocket -o $OUT/nbt_reset
+if test -f $HMI_LIBS/libAppFramework.A.so -a -f $HMI_LIBS/libCoreFramework.A.so; then
+  qcc -V4.4.2,gcc_ntox86_cpp-ne -O2 -Wall -Wextra -shared -fPIC -fno-exceptions -fno-rtti -Wl,-z,defs \
+    reboot_plugin.cpp -o $OUT/libNbtReboot.so -L$HMI_LIBS -lAppFramework.A -lCoreFramework.A
+else
+  echo "SKIPPED: libNbtReboot.so (no HMI libraries)"
+fi
+
 cd $W
 echo "== built"
 ls -l $OUT

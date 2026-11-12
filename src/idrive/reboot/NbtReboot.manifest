@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Same connector and layout as the car-confirmed NbtAndroidAuto / HelloNbt manifests. -->
+<plugin>
+  <name>NbtReboot</name>
+  <type>App</type>
+  <file>{pluginDir}/libNbtReboot.so</file>
+  <config>
+    <autoStart>yes</autoStart>
+    <dependencies>
+      <pluginAppConnector>
+        <type>Etch</type>
+        <id>211</id>
+        <asyncCallbacks>yes</asyncCallbacks>
+      </pluginAppConnector>
+    </dependencies>
+    <parameters>
+      <DescFile>{pluginDir}/NbtReboot.xml</DescFile>
+      <TextDBFile>{pluginDir}/NbtReboot_ALL_Texts.zip</TextDBFile>
+      <ImageDBFile>{pluginDir}/NbtReboot_ALL_Images.zip</ImageDBFile>
+    </parameters>
+  </config>
+</plugin>

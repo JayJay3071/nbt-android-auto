@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- "Restart iDrive" entry under Multimedia (2026-11-12). Page 10 asks, its only button leads to the inert page 20; when
+     page 20 gets the focus, libNbtReboot.so runs nbt_reset (UDS 11 01 to the head unit through the gateway). Two
+     deliberate clicks, nothing happens on opening the entry. Structure as the car-confirmed Hello NBT / Android Auto
+     pages. -->
+<pluginApps>
+  <pluginApp applicationType="Multimedia" applicationWeight="210" text="iDrive neu starten">
+    <entryButton id="1" action="2" model="3"/>
+    <actions>
+      <hmiAction id="2" target="10" targetModel="5"/>
+      <hmiAction id="30" target="20"/>
+    </actions>
+    <models>
+      <textIdModel id="3" textId="1" preinst="false"/>
+      <textIdModel id="4" textId="2" preinst="false"/>
+      <raIntModel id="5" value="10"/>
+      <textIdModel id="6" textId="3" preinst="false"/>
+      <textIdModel id="7" textId="4" preinst="false"/>
+    </models>
+    <hmiStates>
+      <hmiState id="10" textModel="3" text="iDrive neu starten">
+        <components>
+          <label id="11" model="4" text="Head Unit jetzt neu starten?"><properties><property id="2" value="false"/></properties></label>
+          <button id="12" action="30" model="6" text="Jetzt neu starten"/>
+        </components>
+      </hmiState>
+      <!-- nothing selectable: reaching it starts the restart -->
+      <hmiState id="20" parentId="10" textModel="3" text="iDrive neu starten">
+        <components>
+          <label id="21" model="7" text="Startet neu ..."/>
+        </components>
+      </hmiState>
+    </hmiStates>
+  </pluginApp>
+</pluginApps>
