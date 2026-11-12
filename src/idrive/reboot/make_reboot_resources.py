@@ -18,12 +18,24 @@ GERMAN = {
     2: 'Head Unit jetzt neu starten?',
     3: 'Jetzt neu starten',
     4: 'Startet neu ...',
+    5: 'Erst 30 s nach dem Start',
+    6: 'Neustart laeuft bereits',
+    7: 'Eintrag erneut oeffnen',
+    8: 'Gateway nicht erreichbar',
+    9: 'Neustart abgelehnt',
+    10: 'Keine Antwort vom Gateway',
 }
 ENGLISH = {
     1: 'Restart iDrive',
     2: 'Restart the head unit now?',
     3: 'Restart now',
     4: 'Restarting ...',
+    5: 'Not yet: 30 s after boot',
+    6: 'Restart already running',
+    7: 'Open the entry again',
+    8: 'Gateway not reachable',
+    9: 'Reset refused by the unit',
+    10: 'No answer from gateway',
 }
 languages = ['de', 'en-UK', 'en-US', 'es-US', 'es-ES', 'fr-FR', 'fr-CA', 'it', 'pt', 'ru']
 with zipfile.ZipFile(output / 'NbtReboot_ALL_Texts.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
