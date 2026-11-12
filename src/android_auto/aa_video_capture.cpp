@@ -617,12 +617,14 @@ void stop_live(int)
 //
 // nbt_knob writes "R <key> <delta>" (rotary) / "K <key> <0|1>" (key up/down) lines into this FIFO.
 // Opened O_RDWR so the FIFO never reports EOF when nbt_knob is not running. Only the keys declared on input channel 7
-// are accepted: HOME 3, BACK 4, CALL 5, DPAD 19..23, SEARCH 84, ROTARY 65536, MEDIA 65537, NAVIGATION 65538.
+// are accepted: HOME 3, BACK 4, CALL 5, DPAD 19..23, SEARCH 84, ROTARY 65536, MEDIA 65537, NAVIGATION 65538, and the
+// media keys PLAY_PAUSE 85, NEXT 87, PREVIOUS 88 (steering wheel, 2026-11-12; all in the DHU template's keycodes_supported).
 const char* const kInputFifo = "/fs/ram3/nbt-aa-native/input.fifo";
 
 bool allowed_key(unsigned k)
 {
-    return k == 3 || k == 4 || k == 5 || (k >= 19 && k <= 23) || k == 84 || k == 65536 || k == 65537 || k == 65538;
+    return k == 3 || k == 4 || k == 5 || (k >= 19 && k <= 23) || k == 84 || k == 85 || k == 87 || k == 88 ||
+           k == 65536 || k == 65537 || k == 65538;
 }
 
 struct InputLines {

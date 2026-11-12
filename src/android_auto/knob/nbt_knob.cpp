@@ -25,6 +25,15 @@
 // its counter. Only for C20 controllers (C46/C47 ones: not implemented). The BACK arrives here too: it is not forwarded
 // to the phone (600 ms window).
 //
+// Steering wheel roller (2026-11-12, user: phone audio over AUX, so the wheel's skip buttons did nothing): MOST FBlock
+// 0x15 instance 02, op Status, src 3002, one byte each (car trace 2026-11-12, every message arrives twice, once per HMI
+// receiver):
+//   fkt C30  0x80 = one step up, 0x7e = one step down, 0x7f = no step (also sent with every press)
+//   fkt C31  01 pressed, 00 released
+// Forwarded as Android Auto media keys, also while the Android Auto page is not on screen: up -> NEXT 87,
+// down -> PREVIOUS 88, press -> PLAY_PAUSE 85. Override / switch off with NBT_WHEEL_UP / _DOWN / _PUSH = keycode / 0.
+// iDrive still gets the roller too.
+//
 // usage: nbt_knob --probe                 only dlopen the DSI library and resolve its symbols (no connection)
 //        nbt_knob [--seconds N] [--fifo PATH]   observe and forward (default FIFO /fs/ram3/nbt-aa-native/input.fifo)
 // Environment: NBT_MOST_ROLE / NBT_MOST_MAJOR / NBT_MOST_MINOR, NBT_DSI_LIB, NBT_KNOB_INST, NBT_KNOB_CCS_INST,
@@ -95,6 +104,43 @@ nbt::most::Msg backMsg(uint16_t src, uint16_t dst, uint8_t counter, bool down) {
     const uint8_t d[7] = { 0x01, 0x1D, counter, (uint8_t)(down ? 1 : 0), 0x00, 0x00, 0x02 };   // hard key, sensor BACK
     m.data.assign(d, d + 7);
     return m;
+}
+
+// --- steering wheel roller -> media keys (see the header) ---
+unsigned wheelKey(const char* name, unsigned dflt) {
+    const char* v = getenv(name);
+    return v && *v ? (unsigned)strtoul(v, 0, 10) : dflt;
+}
+unsigned g_wheelUp = 87, g_wheelDown = 88, g_wheelPush = 85;
+bool g_wheelPushDown = false;
+uint16_t g_wheelLastFkt = 0;
+uint8_t g_wheelLastVal = 0;
+long long g_wheelLastMs = 0;
+
+void wheelKeyLine(unsigned key, int down, const char* what) {
+    char line[48];
+    const int n = snprintf(line, sizeof(line), "K %u %d\n", key, down);
+    if (n <= 0 || n >= (int)sizeof(line)) return;
+    printf("[Wheel->AA] %s %s", what, line);
+    forward(line, (size_t)n);
+}
+
+void onWheel(const nbt::most::View& m, void*) {
+    if (m.len < 1 || (m.fkt != 0xC30 && m.fkt != 0xC31)) return;
+    const uint8_t v = m.data[0];
+    const long long t = nowMs();
+    // the same message once per HMI receiver, ~1 ms apart: take the first copy only
+    if (m.fkt == g_wheelLastFkt && v == g_wheelLastVal && t - g_wheelLastMs < 40) return;
+    g_wheelLastFkt = m.fkt; g_wheelLastVal = v; g_wheelLastMs = t;
+    if (m.fkt == 0xC30) {
+        const unsigned key = v > 0x7f ? g_wheelUp : v < 0x7f ? g_wheelDown : 0;
+        if (!key) return;
+        wheelKeyLine(key, 1, v > 0x7f ? "WHEEL_UP" : "WHEEL_DOWN");
+        wheelKeyLine(key, 0, v > 0x7f ? "WHEEL_UP" : "WHEEL_DOWN");
+    } else if (g_wheelPush) {
+        if (v == 1 && !g_wheelPushDown) { g_wheelPushDown = true; wheelKeyLine(g_wheelPush, 1, "WHEEL_PUSH"); }
+        else if (v == 0 && g_wheelPushDown) { g_wheelPushDown = false; wheelKeyLine(g_wheelPush, 0, "WHEEL_PUSH"); }
+    }
 }
 
 // main thread: never send from the DSI callback thread
@@ -244,6 +290,8 @@ int main(int argc, char** argv) {
     static nbt::car::CcsInput ccs;
     if (!ccs.attach(most, nbt::car::readCcsConfig(), &onKnob, NULL)) return 3;
     if (!most.addRoute(0xE5, 0x01, 0xC20, 0xC, &onC20, NULL)) printf("[Knob] no room for the split-screen BACK route\n");
+    g_wheelUp = wheelKey("NBT_WHEEL_UP", 87); g_wheelDown = wheelKey("NBT_WHEEL_DOWN", 88); g_wheelPush = wheelKey("NBT_WHEEL_PUSH", 85);
+    if (!most.addRoute(0x15, 0x02, nbt::most::kAny, 0xC, &onWheel, NULL)) printf("[Knob] no room for the steering wheel route\n");
     if (trace && !most.setTap(&onTap, NULL)) return 3;
     if (!most.start("NBTPROJ_KNOB")) return 3;
     printf("nbt_knob: observing the iDrive controller, forwarding to %s%s\n", g_fifo, seconds ? "" : " until SIGTERM");
