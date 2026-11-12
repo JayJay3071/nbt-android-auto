@@ -209,6 +209,7 @@ def main():
     subprocess.run([sys.executable, str(ROOT / "src/idrive/make_aa_entry_resources.py"), str(resources)], check=True)
     shutil.copy(ROOT / "scripts/nbt-aa-boot.sh", programs / "boot.sh")
     shutil.copy(ROOT / "scripts/nbt-aa-restart.sh", programs / "restart.sh")
+    shutil.copy(ROOT / "scripts/nbt-aa-claim-phone.sh", programs / "claim-phone.sh")
     print("programs:", programs)
     print("plugin XML/manifest/texts:", resources)
     return 0
