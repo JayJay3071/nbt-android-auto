@@ -122,16 +122,15 @@ static void roundtrip(const char* const* paths, unsigned count, int termination)
 int main(int argc, char** argv) {
     static const char* const vehicle_paths[] = {
         "/opt/mm/bin/aoap-switch", "/fs/sda0/opt/mm/bin/aoap-switch",
-        "/opt/mm/bin/devc-serusb-aoap", "/fs/sda0/opt/mm/bin/devc-serusb-aoap",
-        "/opt/share/bin/io-fs-media", "/fs/sda0/opt/share/bin/io-fs-media"
-    };
+        "/opt/mm/bin/devc-serusb-aoap", "/fs/sda0/opt/mm/bin/devc-serusb-aoap"
+    };   /* not io-fs-media: /opt/conn/bin/io-fs-media_BT links to it (Bluetooth audio, car 2026-11-12) */
     setvbuf(stdout, NULL, _IOLBF, 0);
     if (argc == 2 && (!strcmp(argv[1], "--phone-window-90s") || !strcmp(argv[1],"--owned-window"))) {
         unsigned i; struct stat st;
         if (geteuid() != 0) { fputs("Vehicle window requires root.\n", stderr); return 2; }
-        for (i = 0; i < 6; ++i) if (stat(vehicle_paths[i], &st) != 0 || !S_ISREG(st.st_mode)) return 3;
+        for (i = 0; i < 4; ++i) if (stat(vehicle_paths[i], &st) != 0 || !S_ISREG(st.st_mode)) return 3;
         if(!strcmp(argv[1],"--owned-window")&&getppid()<=1)return 2;
-        return serve(vehicle_paths, 6, !strcmp(argv[1],"--owned-window")?0:90, -1);
+        return serve(vehicle_paths, 4, !strcmp(argv[1],"--owned-window")?0:90, -1);
     }
     if (argc == 1) {
         char dir[96], path[6][256];
