@@ -46,6 +46,13 @@
 // so restarting Android Auto presses nothing), and not while the file start-at-boot.off exists in the package
 // (/var/opt/hmi/data/rw/NbtAndroidAutoRT; the menu creates / deletes it, read when the session starts).
 //
+// Pause on source change (2026-11-12, user: phone audio over AUX; music should stop when iDrive switches away from AUX).
+// Car trace 2026-11-12 (AUX -> Bluetooth -> AUX -> Radio -> AUX): on every source switch 100E sends FBlock 03 inst 00
+// fkt C03 op Status to the HMI (and 2011 / 2038): first "00 00" (2 bytes, the old source off), then 5 bytes with the new
+// source in byte 3: BB = AUX, C7 = Bluetooth audio, 01 = radio. When the source leaves AUX while Android Auto runs,
+// nbt_knob sends MEDIA_PAUSE (127) to the phone; when it comes back to AUX and that pause was ours, MEDIA_PLAY (126).
+// NBT_AUX_SOURCE = source byte of AUX (hex, default BB), NBT_AUX_PAUSE=0 off, NBT_AUX_RESUME=0 pause only.
+//
 // usage: nbt_knob --probe                 only dlopen the DSI library and resolve its symbols (no connection)
 //        nbt_knob [--seconds N] [--fifo PATH]   observe and forward (default FIFO /fs/ram3/nbt-aa-native/input.fifo)
 // Environment: NBT_MOST_ROLE / NBT_MOST_MAJOR / NBT_MOST_MINOR, NBT_DSI_LIB, NBT_KNOB_INST, NBT_KNOB_CCS_INST,
@@ -152,6 +159,39 @@ void onWheel(const nbt::most::View& m, void*) {
     } else if (g_wheelPush) {
         if (v == 1 && !g_wheelPushDown) { g_wheelPushDown = true; wheelKeyLine(g_wheelPush, 1, "WHEEL_PUSH"); }
         else if (v == 0 && g_wheelPushDown) { g_wheelPushDown = false; wheelKeyLine(g_wheelPush, 0, "WHEEL_PUSH"); }
+    }
+}
+
+// --- pause / resume Android Auto when the audio source leaves / returns to AUX (see the header) ---
+unsigned g_auxSource = 0xBB;
+bool g_auxPause = true, g_auxResume = true;
+int g_lastSource = -1;          // unknown until the first switch
+bool g_wePaused = false;        // the last pause came from us (resume only then)
+
+bool sessionRunning() {
+    char buf[160];
+    FILE* f = fopen("/fs/ram3/nbt-aa-state", "r");
+    if (!f) return false;
+    const size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = 0;
+    return strstr(buf, "state=running") != 0;
+}
+
+void onSource(const nbt::most::View& m, void*) {
+    if (m.fkt != 0xC03 || m.len < 5) return;             // the 2-byte "00 00" is only the old source going off
+    const int s = m.data[3];
+    if (s == g_lastSource) return;                        // the same status once per receiver
+    const int prev = g_lastSource;
+    g_lastSource = s;
+    printf("[Source] %02X -> %02X\n", prev < 0 ? 0xFF : prev, s);
+    if (!g_auxPause || prev < 0) return;
+    if (prev == (int)g_auxSource && s != (int)g_auxSource) {
+        g_wePaused = sessionRunning();
+        if (g_wePaused) { wheelKeyLine(127, 1, "AUX_LEFT_PAUSE"); wheelKeyLine(127, 0, "AUX_LEFT_PAUSE"); }
+    } else if (s == (int)g_auxSource && g_wePaused) {
+        g_wePaused = false;
+        if (g_auxResume && sessionRunning()) { wheelKeyLine(126, 1, "AUX_BACK_PLAY"); wheelKeyLine(126, 0, "AUX_BACK_PLAY"); }
     }
 }
 
@@ -372,6 +412,13 @@ int main(int argc, char** argv) {
     if (g_auxButton > 8 || trace) g_auxButton = 0;   // a --trace copy (tests, boot.sh trace) never presses anything
     if (g_aaButton > 8 || trace) g_aaButton = 0;
     if (!most.addRoute(0xE5, 0x0F, 0xC06, 0xC, &onE5Periodic, NULL)) printf("[Knob] no room for the HMI address route\n");
+    {
+        const char* v = getenv("NBT_AUX_SOURCE");
+        if (v && *v) g_auxSource = (unsigned)strtoul(v, 0, 16) & 0xFF;
+        g_auxPause = wheelKey("NBT_AUX_PAUSE", 1) != 0 && !trace;   // a --trace copy never sends keys
+        g_auxResume = wheelKey("NBT_AUX_RESUME", 1) != 0;
+    }
+    if (!most.addRoute(0x03, 0x00, 0xC03, 0xC, &onSource, NULL)) printf("[Knob] no room for the audio source route\n");
     if (trace && !most.setTap(&onTap, NULL)) return 3;
     if (!most.start("NBTPROJ_KNOB")) return 3;
     printf("nbt_knob: observing the iDrive controller, forwarding to %s%s\n", g_fifo, seconds ? "" : " until SIGTERM");
