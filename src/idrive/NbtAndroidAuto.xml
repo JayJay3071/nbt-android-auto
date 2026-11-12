@@ -26,7 +26,9 @@
       <textIdModel id="23" textId="18" preinst="false"/>
       <textIdModel id="24" textId="10" preinst="false"/>
       <textIdModel id="25" textId="19" preinst="false"/>
-      <textIdModel id="26" textId="20" preinst="false"/>
+      <!-- 70, not 26: id 26 is the 16:9 button's action; with a model of the same id the 16:9 button did nothing (car
+           2026-11-12: only "mode page widescreen" ever reached the plugin) -->
+      <textIdModel id="70" textId="20" preinst="false"/>
     </models>
     <events>
       <focusEvent id="52" target="20"/>
@@ -60,7 +62,7 @@
       </hmiState>
       <hmiState id="32" parentId="10" textModel="3" text="Android Auto">
         <components>
-          <label id="69" model="26" text="Android Auto startet neu"/>
+          <label id="69" model="70" text="Android Auto startet neu"/>
         </components>
       </hmiState>
       <!-- hold states 13..20, each nested in the previous one: nothing selectable, so controller turns / pushes / tilts do
