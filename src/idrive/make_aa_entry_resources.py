@@ -45,6 +45,10 @@ GERMAN = {
     28: 'Gateway nicht erreichbar',
     29: 'Neustart abgelehnt',
     30: 'Keine Antwort vom Gateway',
+    31: 'Start at boot: on',
+    32: 'Start at boot: off',
+    33: 'Setting saved',
+    34: 'Start at boot',
 }
 ENGLISH = {
     1: 'Android Auto',
@@ -77,6 +81,10 @@ ENGLISH = {
     28: 'Gateway not reachable',
     29: 'Reset refused by the unit',
     30: 'No answer from gateway',
+    31: 'Start at boot: on',
+    32: 'Start at boot: off',
+    33: 'Setting saved',
+    34: 'Start at boot',
 }
 languages = ['de', 'en-UK', 'en-US', 'es-US', 'es-ES', 'fr-FR', 'fr-CA', 'it', 'pt', 'ru']
 with zipfile.ZipFile(output / 'NbtAndroidAuto_ALL_Texts.zip', 'w', zipfile.ZIP_DEFLATED) as archive:

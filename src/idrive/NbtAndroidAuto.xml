@@ -17,6 +17,9 @@
            every id in this file must be unique, see model 70) -->
       <hmiAction id="80" target="33"/>
       <hmiAction id="81" target="34"/>
+      <!-- "Start at boot" on/off (favourite 7 = AUX, then 8 = Android Auto, see nbt_knob.cpp) -> inert page 35, whose
+           focus switches the flag file start-at-boot.off and sends focus event 53 back to 10 -->
+      <hmiAction id="90" target="35"/>
     </actions>
     <models>
       <textIdModel id="3" textId="1" preinst="false"/>
@@ -38,6 +41,9 @@
       <textIdModel id="83" textId="22" preinst="false"/>
       <textIdModel id="84" textId="23" preinst="false"/>
       <textIdModel id="85" textId="24" preinst="false"/>
+      <textIdModel id="91" textId="31" preinst="false"/>
+      <textIdModel id="94" textId="33" preinst="false"/>
+      <textIdModel id="95" textId="34" preinst="false"/>
     </models>
     <events>
       <focusEvent id="52" target="20"/>
@@ -52,6 +58,7 @@
           <label id="11" model="4" text="Telefon per USB verbinden"><properties><property id="2" value="false"/></properties></label>
           <button id="61" action="26" model="6" text="Split screen"/>
           <button id="62" action="27" model="7" text="Full width"/>
+          <button id="92" action="90" model="91" text="Start at boot: on"/>
           <button id="68" action="28" model="25" text="Android Auto neu starten"/>
           <button id="86" action="80" model="82" text="System neu starten"/>
         </components>
@@ -65,6 +72,11 @@
       <hmiState id="31" parentId="10" textModel="24" text="Bildmodus">
         <components>
           <label id="67" model="23" text="Bildmodus gespeichert"/>
+        </components>
+      </hmiState>
+      <hmiState id="35" parentId="10" textModel="95" text="Start at boot">
+        <components>
+          <label id="93" model="94" text="Setting saved"/>
         </components>
       </hmiState>
       <hmiState id="32" parentId="10" textModel="3" text="Android Auto">

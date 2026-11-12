@@ -18,6 +18,8 @@
 //     belonged to the phone, so iDrive is put straight back on 13 (the presenter waits 300 ms before hiding: no blink).
 //   - MENU / MEDIA / NAV / COM / MAP / OPTION leave the page the iDrive way: the overlay hides, the session keeps running
 //     in the background. Multimedia -> Android Auto then brings the running session to the front at once.
+//   - "Start at boot: on/off" (inert page 35): switches the flag file start-at-boot.off in the package; nbt_knob reads it
+//     when the first session of a boot runs and then presses favourite 7 (AUX) and 8 (Android Auto) - or not.
 //   - "Restart system" (page 33 asks, its button leads to the inert page 34): reboots the head unit with nbt_reset
 //     (UDS 11 01 through the gateway), formerly the separate NbtReboot plugin ("Restart iDrive" under Multimedia).
 // Hold states 13..20 are nested (see "hold states" below). Loop guard: at most 10 hold events per minute.
@@ -73,10 +75,14 @@ const unsigned kEntryState=10, kHoldState=13, kEvHold=52, kFocus=1, kVisible=11,
 // focus handler stores the mode, restarts the service and sends focus event 53 back to page 10
 const unsigned kMode169State=30, kModeWideState=31, kEvEntry=53, kModel169=6, kModelWide=7;
 const unsigned kRestartState=32;                     // "Android Auto neu starten" -> inert page 32, back to 10
+const unsigned kBootState=35, kBootModel=91;         // "Start at boot" -> inert page 35, back to 10
+const char* const kBootOff="/var/opt/hmi/data/rw/NbtAndroidAutoRT/start-at-boot.off";
+bool bootOn() { return access(kBootOff,F_OK)!=0; }   // default: on (no file)
 const unsigned kEvHoldAlt=54;                        // focus event to hold state 13 (fallback when 52 is ignored)
 // text ids in NbtAndroidAuto_ALL_Texts.zip (make_aa_entry_resources.py)
 enum { kTxtConnectUsb=2, kTxtNoPhone=3, kTxtStarting=4, kTxtRunning=5, kTxtReplug=6, kTxtUnsupported=7,
-       kTxtServiceDown=8, kTxtSeveral=9, kTxt169=11, kTxtWide=12, kTxt169On=16, kTxtWideOn=17 };
+       kTxtServiceDown=8, kTxtSeveral=9, kTxt169=11, kTxtWide=12, kTxt169On=16, kTxtWideOn=17,
+       kTxtBootOn=31, kTxtBootOff=32 };
 void touch(const char* path) { int fd=open(path,O_WRONLY|O_CREAT|O_TRUNC,0644); if(fd>=0)close(fd); }
 // --- automatic start of the Android Auto service (boot.sh of the persistent package), like the NBT-AAD reference:
 // QNX spawn() into a new process group, no zombie, stdin/out/err /dev/null. Rate-limited to one start per 30 s.
@@ -231,14 +237,14 @@ public:
     bmw::PluginApp* app;
     bool stopping, polling, entryFocused, running;
     unsigned focusMask, visibleMask;
-    unsigned shownText; int shownMode; long window; unsigned holds, ignoredHolds; long lastSideHold, lastAutoHold; long long lastSideHoldMs, lastHoldMs, lastFocusMs;
+    unsigned shownText; int shownMode, shownBoot; long long lastBootToggleMs; long window; unsigned holds, ignoredHolds; long lastSideHold, lastAutoHold; long long lastSideHoldMs, lastHoldMs, lastFocusMs;
     Checker checker;
     Verifier verifier;
     BackToEntry back;
     TargetPoll target;
     HoldSlot slots[kHoldCount];
     Entry():app(0),stopping(false),polling(false),entryFocused(false),running(false),focusMask(0),visibleMask(0),
-            shownText(0),shownMode(0),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0) {
+            shownText(0),shownMode(0),shownBoot(0),lastBootToggleMs(-100000),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0) {
         checker.e=this; verifier.e=this; target.e=this;
         for(unsigned i=0;i<kHoldCount;++i){slots[i].e=this;slots[i].idx=i;}
     }
@@ -279,6 +285,8 @@ public:
             bmw::TextID a(mode==1?kTxt169On:kTxt169),b(mode==2?kTxtWideOn:kTxtWide);
             app->updateModel(kModel169,a);app->updateModel(kModelWide,b);shownMode=mode;
         }
+        int boot=bootOn()?1:2;
+        if(boot!=shownBoot){bmw::TextID tb(boot==1?kTxtBootOn:kTxtBootOff);app->updateModel(kBootModel,tb);shownBoot=boot;}
         long t=now_s();
         if(running&&entryFocused&&!holdFocused()&&t-lastAutoHold>=10){lastAutoHold=t;hold("hold (entry page, retry)");}
         app->post(this,500);
@@ -306,6 +314,23 @@ public:
         bool focused=false;p.readBool(focused);
         plog(split?"mode page split screen focus":"mode page full width focus",focused);
         if(focused&&!e->stopping){setMode(split);e->shownMode=0;e->app->post(&e->back,400);}
+        return true;
+    }
+    // page 35: switch "Start at boot", back to page 10 (not for a page the HMI restores at boot, not twice within 2 s)
+    static bool bootFocus(void* self,const bmw::Parcel& p) {
+        Entry* e=static_cast<Entry*>(self);
+        bool focused=false;p.readBool(focused);
+        plog("start at boot page focus",focused);
+        if(!focused||e->stopping)return true;
+        const long long tm=now_ms();
+        if(!g_entrySeen)plog("start at boot ignored: page 10 not opened in this boot (restored state)",0);
+        else if(tm-e->lastBootToggleMs<2000)plog("start at boot ignored: switched just before",0);
+        else{
+            e->lastBootToggleMs=tm;
+            if(bootOn())touch(kBootOff); else unlink(kBootOff);
+            plog("start at boot now",bootOn()?1:0);
+        }
+        e->shownBoot=0;e->app->post(&e->back,400);
         return true;
     }
     static bool restartFocus(void* self,const bmw::Parcel& p) {
@@ -495,6 +520,9 @@ bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& 
     app->addHandler(kModeWideState,kFocus,onWide);
     bmw::ActionDelegate onRestart={&entry,&Entry::restartFocus};
     app->addHandler(kRestartState,kFocus,onRestart);
+    bmw::ActionDelegate onBoot={&entry,&Entry::bootFocus};
+    app->addHandler(kBootState,kFocus,onBoot);
+    entry.shownBoot=0;
     for(unsigned i=0;i<kHoldCount;++i){
         bmw::ActionDelegate onHold={&entry.slots[i],&Entry::holdFocus};
         bmw::ActionDelegate onHoldVisible={&entry.slots[i],&Entry::holdVisibility};
