@@ -39,12 +39,11 @@ struct tls_usb_context {
 static int window_active(void) {
     static const char* const paths[] = {
         "/opt/mm/bin/aoap-switch", "/fs/sda0/opt/mm/bin/aoap-switch",
-        "/opt/mm/bin/devc-serusb-aoap", "/fs/sda0/opt/mm/bin/devc-serusb-aoap",
-        "/opt/share/bin/io-fs-media", "/fs/sda0/opt/share/bin/io-fs-media"
-    };
+        "/opt/mm/bin/devc-serusb-aoap", "/fs/sda0/opt/mm/bin/devc-serusb-aoap"
+    };   /* the paths accessory_window always covers (io-fs-media no longer: car 2026-11-12, Bluetooth audio) */
     unsigned i;
     if (geteuid() != 0) return 0;
-    for (i = 0; i < 6; ++i) {
+    for (i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
         int fd = open(paths[i], O_RDONLY);
         if (fd >= 0) { close(fd); return 0; }
         if (errno != EACCES) return 0;
