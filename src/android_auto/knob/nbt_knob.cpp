@@ -17,6 +17,14 @@
 // While /fs/ram3/nbt-aa-hidden exists (Android Auto page not on screen) presses are not forwarded; releases always are,
 // so the phone never keeps a key held down.
 //
+// Split-screen mode (2026-11-12, user: "pressing BACK right after fixes it"): iDrive also sees every tilt RIGHT and puts its
+// focus into the split screen (menu on the right). When a tilt right is released while Android Auto is on screen in the
+// split800 mode, nbt_knob answers it with a BACK sent to the HMI as if the controller had sent it (the one place this
+// program sends anything). Car-tested with nbt_key: this controller speaks the older CCS protocol, E5/01 fkt C20 from
+// 3002 to 2025, one event per message, [2] = message counter; the BACK copies the controller's addresses and continues
+// its counter. Only for C20 controllers (C46/C47 ones: not implemented). The BACK arrives here too: it is not forwarded
+// to the phone (600 ms window).
+//
 // usage: nbt_knob --probe                 only dlopen the DSI library and resolve its symbols (no connection)
 //        nbt_knob [--seconds N] [--fifo PATH]   observe and forward (default FIFO /fs/ram3/nbt-aa-native/input.fifo)
 // Environment: NBT_MOST_ROLE / NBT_MOST_MAJOR / NBT_MOST_MINOR, NBT_DSI_LIB, NBT_KNOB_INST, NBT_KNOB_CCS_INST,
@@ -56,9 +64,66 @@ void forward(const char* line, size_t n) {
     pthread_mutex_unlock(&g_mx);
 }
 
+long long nowMs() { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (long long)t.tv_sec * 1000 + t.tv_nsec / 1000000; }
+
+// --- BACK after a tilt right (split-screen mode), see the header ---
+const char* const kSplitFlag = "/fs/ram3/nbt-aa-native/split800";   // boot.sh: picture mode split800
+pthread_mutex_t g_backMx = PTHREAD_MUTEX_INITIALIZER;
+uint16_t g_ccsSrc = 0, g_ccsDst = 0;   // addresses of the controller's last C20
+uint8_t g_ccsCounter = 0;              // its last counter
+bool g_tiltRightDown = false;
+bool g_backPending = false;            // tilt right released: the main loop sends BACK
+long long g_ignoreBackUntil = 0;       // our own BACK coming back: not for the phone
+
+void onC20(const nbt::most::View& m, void*) {
+    if (m.len < 7) return;
+    pthread_mutex_lock(&g_backMx);
+    if (m.data[2] != 0xFF) { g_ccsSrc = m.src; g_ccsDst = m.dst; g_ccsCounter = m.data[2]; }
+    if (m.data[5] == 0x1D && m.data[3] == 1 && m.data[4] == 2) g_tiltRightDown = true;
+    else if (m.data[5] == 0x1D && m.data[3] == 0 && g_tiltRightDown) {
+        g_tiltRightDown = false;
+        if (access("/fs/ram3/nbt-aa-hidden", F_OK) != 0 && access(kSplitFlag, F_OK) == 0) g_backPending = true;
+    }
+    pthread_mutex_unlock(&g_backMx);
+}
+
+uint8_t nextCounter(uint8_t c) { c = (uint8_t)(c + 1); return c == 0xFF ? 0 : c; }   // 0xFF = "ignore" (firmware)
+
+nbt::most::Msg backMsg(uint16_t src, uint16_t dst, uint8_t counter, bool down) {
+    nbt::most::Msg m;
+    m.txType = 0; m.varTag = 1; m.varVal = 0;      // as nbt_hwvideo sends (vehicle-tested)
+    m.dst = dst; m.src = src; m.fblock = 0xE5; m.inst = 0x01; m.fkt = 0xC20; m.opType = 0xC; m.hdrTag = 0xFFFFu;
+    const uint8_t d[7] = { 0x01, 0x1D, counter, (uint8_t)(down ? 1 : 0), 0x00, 0x00, 0x02 };   // hard key, sensor BACK
+    m.data.assign(d, d + 7);
+    return m;
+}
+
+// main thread: never send from the DSI callback thread
+void sendBackIfPending(nbt::most::Client& most) {
+    pthread_mutex_lock(&g_backMx);
+    if (!g_backPending) { pthread_mutex_unlock(&g_backMx); return; }
+    g_backPending = false;
+    const uint16_t src = g_ccsSrc, dst = g_ccsDst;
+    const uint8_t c1 = nextCounter(g_ccsCounter), c2 = nextCounter(c1);
+    g_ccsCounter = c2;
+    g_ignoreBackUntil = nowMs() + 600;
+    pthread_mutex_unlock(&g_backMx);
+    if (!src || !dst) return;
+    printf("[Knob] tilt right in split screen: BACK to iDrive (%04X->%04X, counters %02x %02x)\n", src, dst, c1, c2);
+    most.send(backMsg(src, dst, c1, true));
+    usleep(100000);
+    most.send(backMsg(src, dst, c2, false));
+}
+
 void onKnob(const nbt::car::CcsEvent& ev, void*) {
     char line[48];
     int n;
+    if (ev.keycode == nbt::AAK_BACK) {
+        pthread_mutex_lock(&g_backMx);
+        const bool ours = nowMs() < g_ignoreBackUntil;
+        pthread_mutex_unlock(&g_backMx);
+        if (ours) { printf("[Knob] %s %s: our own BACK, not for the phone\n", ev.what, ev.down ? "down" : "up"); return; }
+    }
     // a hard key that stays with iDrive (MENU, OPTION, COM, MEDIA, NAV, MAP: keycode 0) while Android Auto is on
     // screen: tell the HMI page (aa_entry_plugin) that the driver wants iDrive, so it does not pull the page back
     if (!ev.keycode && ev.kind == 1 && ev.down && !ev.cancel && access("/fs/ram3/nbt-aa-hidden", F_OK) != 0) {
@@ -179,6 +244,7 @@ int main(int argc, char** argv) {
     static nbt::most::Client most;
     static nbt::car::CcsInput ccs;
     if (!ccs.attach(most, nbt::car::readCcsConfig(), &onKnob, NULL)) return 3;
+    if (!most.addRoute(0xE5, 0x01, 0xC20, 0xC, &onC20, NULL)) printf("[Knob] no room for the split-screen BACK route\n");
     if (trace && !most.setTap(&onTap, NULL)) return 3;
     if (!most.start("NBTPROJ_KNOB")) return 3;
     printf("nbt_knob: observing the iDrive controller, forwarding to %s%s\n", g_fifo, seconds ? "" : " until SIGTERM");
@@ -196,7 +262,8 @@ int main(int argc, char** argv) {
         g_mydev = most.deviceId();
     }
     while (!g_stop) {
-        usleep(200000);
+        usleep(20000);
+        sendBackIfPending(most);
         clock_gettime(CLOCK_MONOTONIC, &t);
         long el = (long)(t.tv_sec - t0.tv_sec);
         if (seconds && el >= seconds) break;
