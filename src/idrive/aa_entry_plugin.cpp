@@ -99,12 +99,17 @@ void launchService() {
 const char* const kPkg="/var/opt/hmi/data/rw/NbtAndroidAutoRT";
 bool modeIs169() { return access("/var/opt/hmi/data/rw/NbtAndroidAutoRT/split800",F_OK)==0; }
 long g_lastMode=0;
+// set when page 10 got the focus in this boot: the mode / restart buttons sit on it, so a real press always comes after
+// it, while a mode page the HMI restores at boot does not (replaces the former "nothing in the first 60 s" guard)
+bool g_entrySeen=false;
+void plog(const char* what,int a);
 // restart of the Android Auto service (not the head unit): stop native_service, wait for its lock to go, run boot.sh.
 // flag = new picture mode flag file, or 0 to keep the mode (restart button, user request 2026-11-08: recovery when
 // Android Auto shows "connected" but the picture does not come)
 void restartService(const char* flag) {
     long t=mono_s();
-    if(t<60||(g_lastMode&&t-g_lastMode<10))return;     // not right after boot (restored state) or in a burst
+    if(!g_entrySeen){plog("restart ignored: page 10 not opened in this boot (restored state)",0);return;}
+    if(g_lastMode&&t-g_lastMode<10){plog("restart ignored: less than 10 s after the last one",0);return;}
     g_lastMode=t;
     int nul=open("/dev/null",O_RDWR);
     if(nul<0)return;
@@ -264,6 +269,7 @@ public:
         bool focused=false;p.readBool(focused);
         e->entryFocused=focused;e->lastFocusMs=now_ms();
         plog("entry focus",focused);
+        if(focused)g_entrySeen=true;
         if(focused&&!e->stopping){
             unlink(kLeave);                    // the driver came back on purpose
             touch(kRequest);
@@ -277,7 +283,7 @@ public:
     static bool modeWideFocus(void* self,const bmw::Parcel& p) { return modeFocus(static_cast<Entry*>(self),p,false); }
     static bool modeFocus(Entry* e,const bmw::Parcel& p,bool split) {
         bool focused=false;p.readBool(focused);
-        plog(split?"mode page 16:9 focus":"mode page widescreen focus",focused);
+        plog(split?"mode page split screen focus":"mode page full width focus",focused);
         if(focused&&!e->stopping){setMode(split);e->shownMode=0;e->app->post(&e->back,400);}
         return true;
     }

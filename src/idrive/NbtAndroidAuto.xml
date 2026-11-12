@@ -41,12 +41,9 @@
       <hmiState id="10" textModel="3" text="Android Auto">
         <components>
           <label id="11" model="4" text="Telefon per USB verbinden"><properties><property id="2" value="false"/></properties></label>
-          <button id="61" action="26" model="6" text="16:9"/>
-          <button id="62" action="27" model="7" text="Breitbild"/>
+          <button id="61" action="26" model="6" text="Split screen"/>
+          <button id="62" action="27" model="7" text="Full width"/>
           <button id="68" action="28" model="25" text="Android Auto neu starten"/>
-          <label id="63" model="8" text="Tipp"><properties><property id="2" value="false"/></properties></label>
-          <label id="64" model="9" text="Breitbild"><properties><property id="2" value="false"/></properties></label>
-          <label id="65" model="22" text="Wechsel"><properties><property id="2" value="false"/></properties></label>
         </components>
       </hmiState>
       <!-- picture mode pages: nothing selectable, the plugin returns to page 10 at once -->
