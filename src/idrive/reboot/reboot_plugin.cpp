@@ -22,6 +22,7 @@
 #include <spawn.h>
 #include <signal.h>
 #include <new>
+extern char** environ;
 namespace bmw {
 class IDispatcher; class Bundle; class IPluginApp;
 class Parcel { public: bool readBool(bool&) const; };
@@ -82,8 +83,9 @@ void runReset() {
     sigfillset(&inh.sigdefault);
     sigemptyset(&inh.sigmask);
     char* argv[]={(char*)kTool,gw[0]?gw:0,0};
-    char* envp[]={(char*)"PATH=/bin:/usr/bin:/sbin:/usr/sbin:/opt/sys/bin",0};
-    if(spawn(kTool,3,fdmap,&inh,argv,envp)<0)plog("could not start nbt_reset");
+    // the HMI's own environment: its LD_LIBRARY_PATH finds libsocket.so.3 (car 2026-11-12: with PATH only, the loader
+    // failed with "Could not load library libsocket.so.3"; HmiMain3D has it loaded)
+    if(spawn(kTool,3,fdmap,&inh,argv,environ)<0)plog("could not start nbt_reset");
     close(nul);
     if(out>=0)close(out);
 }

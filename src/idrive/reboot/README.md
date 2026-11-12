@@ -20,4 +20,7 @@ Folder `/var/opt/hmi/data/rw/Plugins/NbtReboot/`:
 | `NbtReboot.manifest` | `build/.../reboot-resources/` - write it last | 644 |
 
 The entry appears after the next HMI start. Remove: delete the folder. Log: `/fs/ram3/nbt-reboot.log`.
-Test the tool without a reset: `nbt_reset -n <gateway>`.
+Test the tool without a reset: `nbt_reset -n <gateway>`. It needs `libsocket.so.3`, which a command run directly
+through `ssh host "..."` does not find (no login profile); there, prefix the HMI's library path:
+`LD_LIBRARY_PATH=/lib:/opt/sys/lib:/boot/lib:/opt/hmi/lib nbt_reset -n <gateway>`. The plugin passes the HMI's
+environment.
