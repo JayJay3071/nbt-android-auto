@@ -13,6 +13,8 @@
 //     belonged to the phone, so iDrive is put straight back on 13 (the presenter waits 300 ms before hiding: no blink).
 //   - MENU / MEDIA / NAV / COM / MAP / OPTION leave the page the iDrive way: the overlay hides, the session keeps running
 //     in the background. Multimedia -> Android Auto then brings the running session to the front at once.
+//   - "Restart system" (page 33 asks, its button leads to the inert page 34): reboots the head unit with nbt_reset
+//     (UDS 11 01 through the gateway), formerly the separate NbtReboot plugin ("Restart iDrive" under Multimedia).
 // Hold states 13..20 are nested (see "hold states" below). Loop guard: at most 10 hold events per minute.
 // ABI as in experiments/png-pipeline/dynamic_image_plugin.cpp (vehicle-tested PluginApp ctor, addHandler(state,1,...) focus events, post()).
 // Checked in this car's libraries: PluginApp::triggerEvent(unsigned), updateModel(unsigned, TextID const&),
@@ -28,6 +30,7 @@
 #include <signal.h>
 #include <pthread.h>
 #include <new>
+extern char** environ;
 namespace bmw {
 class IDispatcher; class Bundle; class IPluginApp;
 class Parcel { public: bool readBool(bool&) const; };
@@ -341,6 +344,114 @@ void Verifier::run() {
     ++e->ignoredHolds;
     touch(kHidden);
 }
+// --- "Restart system" (moved from the NbtReboot plugin, 2026-11-12) ---------------------------------------------------
+// Page 33 asks ("Restart the head unit now?"), its only button leads to the inert page 34. When page 34 gets the focus,
+// nbt_reset from the package sends UDS 11 01 (hardReset) to the head unit through the gateway's HSFZ port, the same
+// request as Tool32's STEUERGERAETE_RESET (car 2026-11-12: accepted, the head unit rebooted). No HMI process is touched.
+// Guards (the HMI may restore the last page after a reboot, which must never restart the head unit again):
+//   - nothing within the first 30 s after boot (kept here: a mistake would be a reboot loop)
+//   - only when page 33 got the focus less than 2 minutes before (the driver opened it and pushed the button)
+//   - at most one start per 30 s (lifted again when the attempt failed)
+// Page 34 says why nothing happens: a guard's reason, or nbt_reset's result. nbt_reset runs through /bin/sh, which
+// writes its exit code to /fs/ram3/nbt-reboot.rc; a Runnable on the HMI thread polls that file every 500 ms for 20 s.
+// The gateway address comes from the file "gateway" in the package (one line, e.g. 169.254.102.32); without it
+// nbt_reset tries the HSFZ broadcast. nbt_reset's output: /fs/ram3/nbt-reboot.log.
+const unsigned kSysAskState=33, kSysGoState=34, kSysModel=85;
+enum { kTxtSysRestarting=24, kTxtSysTooEarly=25, kTxtSysRunning=26, kTxtSysOpenAgain=27, kTxtSysNoGateway=28,
+       kTxtSysRefused=29, kTxtSysNoAnswer=30 };
+const char* const kSysRc="/fs/ram3/nbt-reboot.rc";
+const char* const kSysLog="/fs/ram3/nbt-reboot.log";
+const char* const kSysTool="/var/opt/hmi/data/rw/NbtAndroidAutoRT/nbt_reset";
+const char* const kSysGatewayFile="/var/opt/hmi/data/rw/NbtAndroidAutoRT/gateway";
+const long kSysBootGuard=30, kSysAskWindow=120, kSysRepeatGuard=30;
+long g_sysAsk=-100000, g_sysLastRun=-100000;
+bmw::PluginApp* g_sysApp=0;
+void sysShow(unsigned text) { if(g_sysApp){bmw::TextID tx(text);g_sysApp->updateModel(kSysModel,tx);} }
+
+// first line of the gateway file, digits and dots only; empty if missing
+void sysGateway(char* out,size_t size) {
+    out[0]=0;
+    int fd=open(kSysGatewayFile,O_RDONLY);
+    if(fd<0)return;
+    char buf[32]; ssize_t n=read(fd,buf,sizeof(buf)-1); close(fd);
+    if(n<=0)return;
+    size_t i=0;
+    while(i<(size_t)n&&i+1<size&&((buf[i]>='0'&&buf[i]<='9')||buf[i]=='.')){out[i]=buf[i];++i;}
+    out[i]=0;
+}
+
+bool sysRunReset() {
+    char gw[20]; sysGateway(gw,sizeof(gw));
+    int out=open(kSysLog,O_WRONLY|O_CREAT|O_APPEND,0644);
+    int nul=open("/dev/null",O_RDWR);
+    if(nul<0){if(out>=0)close(out);return false;}
+    int fdmap[3]={nul,out>=0?out:nul,out>=0?out:nul};
+    struct inheritance inh;
+    memset(&inh,0,sizeof(inh));
+    inh.flags=SPAWN_SETGROUP|SPAWN_SETSIGDEF|SPAWN_SETSIGMASK|SPAWN_NOZOMBIE;
+    inh.pgroup=SPAWN_NEWPGROUP;
+    sigfillset(&inh.sigdefault);
+    sigemptyset(&inh.sigmask);
+    // through /bin/sh only to get the exit code into kSysRc (gw: digits and dots only, see sysGateway)
+    char cmd[256];
+    snprintf(cmd,sizeof(cmd),"%s %s; echo $? > %s",kSysTool,gw,kSysRc);
+    char* argv[]={(char*)"/bin/sh",(char*)"-c",cmd,0};
+    // the HMI's own environment: its LD_LIBRARY_PATH finds libsocket.so.3 (car 2026-11-12: with PATH only, the loader
+    // failed with "Could not load library libsocket.so.3")
+    bool ok=spawn("/bin/sh",3,fdmap,&inh,argv,environ)>=0;
+    close(nul);
+    if(out>=0)close(out);
+    return ok;
+}
+
+// HMI thread: waits for nbt_reset's exit code and shows the result on page 34
+class SysPoll : public bmw::Runnable {
+public:
+    long started; bool active;
+    SysPoll():started(0),active(false) {}
+    void start() { started=mono_s(); if(!active&&g_sysApp){active=true;g_sysApp->post(this,500);} }
+    void run() {
+        active=false;
+        if(!g_sysApp)return;
+        int fd=open(kSysRc,O_RDONLY);
+        if(fd<0){
+            if(mono_s()-started<20){active=true;g_sysApp->post(this,500);return;}
+            plog("system restart: no result from nbt_reset within 20 s",0);
+            sysShow(kTxtSysNoAnswer);g_sysLastRun=-100000;
+            return;
+        }
+        char buf[8]; ssize_t n=read(fd,buf,sizeof(buf)-1); close(fd);
+        int rc=n>0&&buf[0]>='0'&&buf[0]<='9'?buf[0]-'0':-1;
+        if(rc==0){plog("system restart: reset accepted",0);return;}     // the head unit restarts: "Restarting ..." stays
+        plog("system restart failed, nbt_reset exit",rc);
+        sysShow(rc==2?kTxtSysRefused:rc==3?kTxtSysNoAnswer:kTxtSysNoGateway);
+        g_sysLastRun=-100000;                                          // failed: a new attempt is allowed at once
+    }
+};
+SysPoll g_sysPoll;
+
+int g_sysHandlerObject=0;   // a null delegate object makes the HMI skip the handler (car 2026-11-12)
+bool sysAskFocus(void*,const bmw::Parcel& p) {
+    bool focused=false;p.readBool(focused);
+    if(focused){g_sysAsk=mono_s();plog("system restart page focus",1);}
+    return true;
+}
+bool sysGoFocus(void*,const bmw::Parcel& p) {
+    bool focused=false;p.readBool(focused);
+    if(!focused)return true;
+    const long t=mono_s();
+    if(t<kSysBootGuard){plog("system restart ignored: less than 30 s after boot",0);sysShow(kTxtSysTooEarly);return true;}
+    if(t-g_sysAsk>kSysAskWindow){plog("system restart ignored: page 33 not opened just before",0);sysShow(kTxtSysOpenAgain);return true;}
+    if(t-g_sysLastRun<kSysRepeatGuard){plog("system restart ignored: already started",0);sysShow(kTxtSysRunning);return true;}
+    g_sysLastRun=t;
+    plog("system restart requested, running nbt_reset",0);
+    sysShow(kTxtSysRestarting);
+    unlink(kSysRc);
+    if(!sysRunReset()){plog("system restart: could not start nbt_reset",0);sysShow(kTxtSysNoGateway);g_sysLastRun=-100000;return true;}
+    g_sysPoll.start();
+    return true;
+}
+
 Entry entry;
 bool created=false;
 bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& p,const bmw::Bundle& c) {
@@ -363,6 +474,11 @@ bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& 
         app->addHandler(kHoldState+i,kFocus,onHold);
         app->addHandler(kHoldState+i,kVisible,onHoldVisible);  // type 11 = VISIBLE, as BMW's ActiveSeating registers it
     }
+    g_sysApp=app;
+    bmw::ActionDelegate onSysAsk={&g_sysHandlerObject,&sysAskFocus};
+    bmw::ActionDelegate onSysGo={&g_sysHandlerObject,&sysGoFocus};
+    app->addHandler(kSysAskState,kFocus,onSysAsk);
+    app->addHandler(kSysGoState,kFocus,onSysGo);
     created=true;
     touch(kHidden);   // nothing is shown before the page is opened
     {
@@ -377,7 +493,7 @@ void destroy(bmw::IPluginApp* p) {
     if(!created)return;
     entry.stopping=true;
     touch(kHidden);
-    entry.checker.e=0;entry.verifier.e=0;entry.back.app=0;
+    entry.checker.e=0;entry.verifier.e=0;entry.back.app=0;g_sysApp=0;
     delete reinterpret_cast<bmw::PluginApp*>(p);   // native handler drops the queued runnable (entry is static)
     entry.app=0;
     created=false;

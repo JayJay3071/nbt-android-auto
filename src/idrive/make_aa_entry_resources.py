@@ -35,6 +35,16 @@ GERMAN = {
     18: 'Bildmodus gespeichert',
     19: 'Android Auto neu starten',
     20: 'Android Auto startet neu',
+    21: 'System neu starten',
+    22: 'Head Unit jetzt neu starten?',
+    23: 'Jetzt neu starten',
+    24: 'Startet neu ...',
+    25: 'Erst 30 s nach dem Start',
+    26: 'Neustart laeuft bereits',
+    27: 'Seite erneut oeffnen',
+    28: 'Gateway nicht erreichbar',
+    29: 'Neustart abgelehnt',
+    30: 'Keine Antwort vom Gateway',
 }
 ENGLISH = {
     1: 'Android Auto',
@@ -57,6 +67,16 @@ ENGLISH = {
     18: 'Picture mode saved',
     19: 'Restart Android Auto',
     20: 'Android Auto restarting',
+    21: 'Restart system',
+    22: 'Restart the head unit now?',
+    23: 'Restart now',
+    24: 'Restarting ...',
+    25: 'Not yet: 30 s after boot',
+    26: 'Restart already running',
+    27: 'Open the page again',
+    28: 'Gateway not reachable',
+    29: 'Reset refused by the unit',
+    30: 'No answer from gateway',
 }
 languages = ['de', 'en-UK', 'en-US', 'es-US', 'es-ES', 'fr-FR', 'fr-CA', 'it', 'pt', 'ru']
 with zipfile.ZipFile(output / 'NbtAndroidAuto_ALL_Texts.zip', 'w', zipfile.ZIP_DEFLATED) as archive:

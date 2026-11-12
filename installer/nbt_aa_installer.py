@@ -220,7 +220,7 @@ def install(nbt, log, root=''):
     # the manifest of the plugin goes last: the HMI must never see a half package
     files = sorted(manifest['files'], key=lambda e: e['target'].endswith('.manifest'))
     for directory in sorted({(root + e['target']).rsplit('/', 1)[0] for e in files}):
-        nbt.run("mkdir -p '%s'" % directory)     # e.g. Plugins/NbtReboot from a build_all.py payload
+        nbt.run("mkdir -p '%s'" % directory)     # every target directory exists before the first write
     for entry in files:
         target = root + entry['target']
         log('  write %-46s %8d bytes' % (entry['target'].split('/')[-1], len(entry['data'])))

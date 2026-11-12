@@ -13,6 +13,10 @@
       <hmiAction id="27" target="31"/>
       <!-- restart of the Android Auto service only (not the head unit) -> inert page 32, then back to 10 -->
       <hmiAction id="28" target="32"/>
+      <!-- "Restart system": page 33 asks, its button leads to the inert page 34, whose focus runs nbt_reset (ids 80-89:
+           every id in this file must be unique, see model 70) -->
+      <hmiAction id="80" target="33"/>
+      <hmiAction id="81" target="34"/>
     </actions>
     <models>
       <textIdModel id="3" textId="1" preinst="false"/>
@@ -29,6 +33,10 @@
       <!-- 70, not 26: id 26 is the 16:9 button's action; with a model of the same id the 16:9 button did nothing (car
            2026-11-12: only "mode page widescreen" ever reached the plugin) -->
       <textIdModel id="70" textId="20" preinst="false"/>
+      <textIdModel id="82" textId="21" preinst="false"/>
+      <textIdModel id="83" textId="22" preinst="false"/>
+      <textIdModel id="84" textId="23" preinst="false"/>
+      <textIdModel id="85" textId="24" preinst="false"/>
     </models>
     <events>
       <focusEvent id="52" target="20"/>
@@ -44,6 +52,7 @@
           <button id="61" action="26" model="6" text="Split screen"/>
           <button id="62" action="27" model="7" text="Full width"/>
           <button id="68" action="28" model="25" text="Android Auto neu starten"/>
+          <button id="86" action="80" model="82" text="System neu starten"/>
         </components>
       </hmiState>
       <!-- picture mode pages: nothing selectable, the plugin returns to page 10 at once -->
@@ -60,6 +69,18 @@
       <hmiState id="32" parentId="10" textModel="3" text="Android Auto">
         <components>
           <label id="69" model="70" text="Android Auto startet neu"/>
+        </components>
+      </hmiState>
+      <hmiState id="33" parentId="10" textModel="82" text="System neu starten">
+        <components>
+          <label id="87" model="83" text="Head Unit jetzt neu starten?"><properties><property id="2" value="false"/></properties></label>
+          <button id="88" action="81" model="84" text="Jetzt neu starten"/>
+        </components>
+      </hmiState>
+      <!-- nothing selectable: reaching it starts the restart; model 85 shows the result -->
+      <hmiState id="34" parentId="33" textModel="82" text="System neu starten">
+        <components>
+          <label id="89" model="85" text="Startet neu ..."/>
         </components>
       </hmiState>
       <!-- hold states 13..20, each nested in the previous one: nothing selectable, so controller turns / pushes / tilts do
