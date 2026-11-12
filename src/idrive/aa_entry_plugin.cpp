@@ -9,6 +9,11 @@
 //     where controller turns / pushes / tilts do nothing in iDrive (nbt_knob forwards them to the phone), and the overlay
 //     is shown (/fs/ram3/nbt-aa-hidden removed). Same idea as the NBT-AAD reference rhmiapp state 13 and iDrive's own
 //     ST_CarPlay state.
+//   - while Android Auto runs, the menu entry itself leads straight to the deepest hold state (2026-11-12): its action
+//     takes the target from model 5 (raIntModel), which a poller sets to 20 or 10. Car 2026-11-12: after a while iDrive
+//     ignored every focus event 52/54 (the entry page lost the focus, no hold state got it, until a reboot), so opening
+//     the entry no longer depends on them. The poller starts with the first focus event of one of our pages (posts from
+//     create() did not run on this HMI); until then the entry page and its focus event do the job as before.
 //   - BACK (or a tilt iDrive treats as back) pops iDrive from 13 to the entry page 10: while Android Auto runs the press
 //     belonged to the phone, so iDrive is put straight back on 13 (the presenter waits 300 ms before hiding: no blink).
 //   - MENU / MEDIA / NAV / COM / MAP / OPTION leave the page the iDrive way: the overlay hides, the session keeps running
@@ -52,6 +57,7 @@ public:
     void post(Runnable*,unsigned);
     void triggerEvent(unsigned);
     void updateModel(unsigned,const TextID&);
+    void updateModel(unsigned,int);   // _ZN3bmw9PluginApp11updateModelEji (in this car's libAppFramework.A.so)
     void addHandler(unsigned,unsigned,const ActionDelegate&);
 private:
     uint32_t opaque_[1024];
@@ -211,6 +217,15 @@ public:
     BackToEntry():app(0) {}
     void run() { if(app){plog("mode chosen -> back to page 10");app->triggerEvent(kEvEntry);} }
 };
+// HMI thread, every second once started: the entry's target (model 5) follows the service state
+const unsigned kTargetModel=5;
+class TargetPoll : public bmw::Runnable {
+public:
+    bmw::PluginApp* app; Entry* e; bool active; int target;
+    TargetPoll():app(0),e(0),active(false),target(10) {}
+    void start() { if(!active&&app){active=true;app->post(this,0);} }
+    void run();
+};
 class Entry : public bmw::Runnable {
 public:
     bmw::PluginApp* app;
@@ -220,10 +235,11 @@ public:
     Checker checker;
     Verifier verifier;
     BackToEntry back;
+    TargetPoll target;
     HoldSlot slots[kHoldCount];
     Entry():app(0),stopping(false),polling(false),entryFocused(false),running(false),focusMask(0),visibleMask(0),
             shownText(0),shownMode(0),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0) {
-        checker.e=this; verifier.e=this;
+        checker.e=this; verifier.e=this; target.e=this;
         for(unsigned i=0;i<kHoldCount;++i){slots[i].e=this;slots[i].idx=i;}
     }
     bool holdFocused() const { return focusMask!=0; }
@@ -272,6 +288,7 @@ public:
         Entry* e=static_cast<Entry*>(self);
         bool focused=false;p.readBool(focused);
         e->entryFocused=focused;e->lastFocusMs=now_ms();
+        e->target.start();
         plog("entry focus",focused);
         if(focused)g_entrySeen=true;
         if(focused&&!e->stopping){
@@ -308,7 +325,8 @@ public:
         if(focused)e->focusMask|=1u<<s->idx; else e->focusMask&=~(1u<<s->idx);
         e->lastFocusMs=now_ms();
         plog(focused?"hold focus 1, level":"hold focus 0, level",(int)s->idx);
-        if(focused){unlink(kLeave);unlink(kHidden);e->ignoredHolds=0;e->startPolling(500);}
+        e->target.start();
+        if(focused){unlink(kLeave);unlink(kHidden);touch(kRequest);e->ignoredHolds=0;e->startPolling(500);}
         else e->check(150);            // decide after the HMI has finished its transition (see Checker)
         return true;
     }
@@ -319,6 +337,14 @@ public:
         return true;
     }
 };
+void TargetPoll::run() {
+    if(!app||!e||e->stopping){active=false;return;}
+    bool running=false;
+    readStatus(&running);
+    const int want=running?(int)(kHoldState+kHoldCount-1):(int)kEntryState;
+    if(want!=target){app->updateModel(kTargetModel,want);target=want;plog("entry target ->",want);}
+    app->post(this,1000);
+}
 void Checker::run() {
     pending=false;
     if(!e||e->stopping||!e->app||e->holdFocused())return;    // BACK only climbed one hold level: nothing to do
@@ -462,6 +488,7 @@ bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& 
     bmw::ActionDelegate onEntry={&entry,&Entry::entryFocus};
     app->addHandler(kEntryState,kFocus,onEntry);
     entry.back.app=app;entry.shownMode=0;
+    entry.target.app=app;entry.target.e=&entry;entry.target.active=false;entry.target.target=kEntryState;
     bmw::ActionDelegate on169={&entry,&Entry::mode169Focus};
     bmw::ActionDelegate onWide={&entry,&Entry::modeWideFocus};
     app->addHandler(kMode169State,kFocus,on169);
@@ -493,7 +520,7 @@ void destroy(bmw::IPluginApp* p) {
     if(!created)return;
     entry.stopping=true;
     touch(kHidden);
-    entry.checker.e=0;entry.verifier.e=0;entry.back.app=0;g_sysApp=0;
+    entry.checker.e=0;entry.verifier.e=0;entry.back.app=0;entry.target.app=0;g_sysApp=0;
     delete reinterpret_cast<bmw::PluginApp*>(p);   // native handler drops the queued runnable (entry is static)
     entry.app=0;
     created=false;

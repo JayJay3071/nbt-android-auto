@@ -21,6 +21,7 @@
     <models>
       <textIdModel id="3" textId="1" preinst="false"/>
       <textIdModel id="4" textId="2" preinst="false"/>
+      <!-- target of the menu entry: 10, or 20 (hold) while Android Auto runs, set by the plugin -->
       <raIntModel id="5" value="10"/>
       <textIdModel id="6" textId="11" preinst="false"/>
       <textIdModel id="7" textId="12" preinst="false"/>
