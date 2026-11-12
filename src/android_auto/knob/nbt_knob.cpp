@@ -50,7 +50,10 @@
 // Car trace 2026-11-12 (AUX -> Bluetooth -> AUX -> Radio -> AUX): on every source switch 100E sends FBlock 03 inst 00
 // fkt C03 op Status to the HMI (and 2011 / 2038): first "00 00" (2 bytes, the old source off), then 5 bytes with the new
 // source in byte 3: BB = AUX, C7 = Bluetooth audio, 01 = radio. When the source leaves AUX while Android Auto runs,
-// nbt_knob sends MEDIA_PAUSE (127) to the phone; when it comes back to AUX and that pause was ours, MEDIA_PLAY (126).
+// nbt_knob sends PLAY_PAUSE (85) to the phone; when it comes back to AUX and that pause was ours, PLAY_PAUSE again.
+// Not MEDIA_PAUSE 127 / MEDIA_PLAY 126: car 2026-11-13, after a 127 the phone dropped the session and reconnected; 85 is
+// the key the steering wheel push has sent without trouble. Drawback: 85 toggles, so music that was already paused when
+// AUX was left starts (unheard, the source is not AUX) and is paused again on the way back.
 // NBT_AUX_SOURCE = source byte of AUX (hex, default BB), NBT_AUX_PAUSE=0 off, NBT_AUX_RESUME=0 pause only.
 //
 // usage: nbt_knob --probe                 only dlopen the DSI library and resolve its symbols (no connection)
@@ -188,10 +191,10 @@ void onSource(const nbt::most::View& m, void*) {
     if (!g_auxPause || prev < 0) return;
     if (prev == (int)g_auxSource && s != (int)g_auxSource) {
         g_wePaused = sessionRunning();
-        if (g_wePaused) { wheelKeyLine(127, 1, "AUX_LEFT_PAUSE"); wheelKeyLine(127, 0, "AUX_LEFT_PAUSE"); }
+        if (g_wePaused) { wheelKeyLine(85, 1, "AUX_LEFT_PAUSE"); wheelKeyLine(85, 0, "AUX_LEFT_PAUSE"); }
     } else if (s == (int)g_auxSource && g_wePaused) {
         g_wePaused = false;
-        if (g_auxResume && sessionRunning()) { wheelKeyLine(126, 1, "AUX_BACK_PLAY"); wheelKeyLine(126, 0, "AUX_BACK_PLAY"); }
+        if (g_auxResume && sessionRunning()) { wheelKeyLine(85, 1, "AUX_BACK_PLAY"); wheelKeyLine(85, 0, "AUX_BACK_PLAY"); }
     }
 }
 

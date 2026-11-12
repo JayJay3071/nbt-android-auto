@@ -624,7 +624,6 @@ const char* const kInputFifo = "/fs/ram3/nbt-aa-native/input.fifo";
 bool allowed_key(unsigned k)
 {
     return k == 3 || k == 4 || k == 5 || (k >= 19 && k <= 23) || k == 84 || k == 85 || k == 87 || k == 88 ||
-           k == 126 || k == 127 || /* MEDIA_PLAY / MEDIA_PAUSE (nbt_knob: audio source left / back on AUX) */
            k == 65536 || k == 65537 || k == 65538;
 }
 
