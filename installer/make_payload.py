@@ -37,7 +37,6 @@ FILES = [
     (PROTO / 'ca.pem', 'rt/ca.pem', RT + '/ca.pem', '600'),
     (REPO / 'scripts' / 'nbt-aa-boot.sh', 'rt/boot.sh', RT + '/boot.sh', '700'),
     (REPO / 'scripts' / 'nbt-aa-restart.sh', 'rt/restart.sh', RT + '/restart.sh', '700'),
-    (REPO / 'scripts' / 'nbt-aa-claim-phone.sh', 'rt/claim-phone.sh', RT + '/claim-phone.sh', '700'),
     (ENTRY / 'NbtAndroidAuto' / 'libNbtAndroidAuto.so', 'plugin/libNbtAndroidAuto.so', PLUGIN + '/libNbtAndroidAuto.so', '755'),
     (ENTRY / 'NbtAndroidAuto' / 'NbtAndroidAuto.xml', 'plugin/NbtAndroidAuto.xml', PLUGIN + '/NbtAndroidAuto.xml', '644'),
     (ENTRY / 'NbtAndroidAuto' / 'NbtAndroidAuto_ALL_Texts.zip', 'plugin/NbtAndroidAuto_ALL_Texts.zip',
@@ -59,7 +58,7 @@ def built_files(built, pem_dir):
             source = pem_dir / leaf
         elif name.startswith('plugin/') and leaf != 'libNbtAndroidAuto.so':
             source = resources / leaf
-        elif leaf in ('boot.sh', 'restart.sh', 'claim-phone.sh'):
+        elif leaf in ('boot.sh', 'restart.sh'):
             pass  # straight from scripts/
         else:
             source = programs / leaf

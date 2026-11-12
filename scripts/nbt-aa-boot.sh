@@ -52,12 +52,6 @@ echo "picture mode $MODE, dpi $DPI"
 cd $R
 NBT_VID_DPI=$DPI NBT_VID_INSETS=0,180,0,0 LD_LIBRARY_PATH=/opt/mm/lib:/opt/mm/lib/cinemo:/lib:/usr/lib ./native_service </dev/null >/dev/null 2>&1 &
 echo "native_service started pid=$!"
-# a phone left plugged in is grabbed at boot by the stock USB stack (aoap-switch, MTP io-fs-media): free it for
-# Android Auto (claim-phone.sh, once per boot)
-if test -f $P/claim-phone.sh; then
-  sh $P/claim-phone.sh </dev/null >/dev/null 2>&1 &
-  echo 'claim-phone started'
-fi
 
 # Android Auto turn-by-turn in the instrument cluster (arrow, distance, street, road shield, lanes; nbt_cluster draws only
 # while the phone guides and yields to the iDrive navigation). Disable: touch $P/cluster-off
