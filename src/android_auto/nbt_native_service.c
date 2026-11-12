@@ -314,6 +314,32 @@ static int log_has(const char* path, const char* token)
     return hit;
 }
 
+/* USB reset of the phone through oneplus_native --reset (see oneplus_aoa.c); log of the last one in reset.log */
+static void reset_phone(int bus, int device, int type, int n)
+{
+    char bus_text[16], device_text[16];
+    char* args[] = {"./oneplus_native", "--reset", bus_text, device_text, 0};
+    Child c;
+    long long limit;
+    snprintf(bus_text, sizeof(bus_text), "%d", bus);
+    snprintf(device_text, sizeof(device_text), "%d", device);
+    if (type == PHONE_ACCESSORY)
+        setenv("NBT_RESET_AOA", "1", 1);
+    else {
+        char id[16];
+        snprintf(id, sizeof(id), "%04x:%04x", found_v, found_p);
+        setenv("NBT_PHONE_ID", id, 1);
+        unsetenv("NBT_RESET_AOA");
+    }
+    printf("native_service: failed attempt, USB reset %d of 3 (bus %d device %d)\n", n, bus, device);
+    c = spawn(args, 0, "reset.log");
+    limit = ms() + 10000;
+    while (alive(&c) && ms() < limit)
+        usleep(100000);
+    end(&c);
+    unsetenv("NBT_RESET_AOA");
+}
+
 /* read and discard everything currently in a non-blocking descriptor */
 static void drain(int fd)
 {
@@ -362,7 +388,8 @@ int main(int argc, char** argv)
     Child knob = {0, 0};    /* nbt_knob: iDrive controller -> input.fifo */
     Child hwv = {0, 0};     /* nbt_hwvideo: shows the video window in front of iDrive */
     (void)argv;
-    int guard = -1, lock = -1, bus, device, type, attempts = 0;
+    int guard = -1, lock = -1, bus, device, type, attempts = 0, resets = 0;
+    long long absent_since = 0;
     int live = 0, wal = 0, gate = 0, hw = 0, res720 = 0, center = 0, ana = 0, right = 0; /* mode switches */
     unsigned session = 0;
     char bus_text[16], device_text[16], shadow[200], walargs[160], *wargv[16];
@@ -546,13 +573,30 @@ int main(int argc, char** argv)
         type = find_phone(&bus, &device);
         if (!type) {
             attempts = 0;
+            /* gone for more than 10 s: really unplugged (a USB reset of ours only makes it vanish for a moment) */
+            if (!absent_since)
+                absent_since = ms();
+            if (ms() - absent_since > 10000)
+                resets = 0;
             report(g_phone_present ? "several_devices" : "waiting_for_phone", session);
             sleep(1);
             continue;
         }
-        if (attempts >= 3) {
-            report("replug_required", session);
-            sleep(2);
+        absent_since = 0;
+        /* The last attempt failed (user 2026-11-12: after "Restart Android Auto" the phone often did not come back until
+         * it was replugged): reset its USB port, the software version of pulling the cable, and try again. "Reconnect the
+         * phone" only after 3 resets in a row; a real unplug (> 10 s) or a good session starts the count again. */
+        if (attempts > 0) {
+            if (resets >= 3) {
+                report("replug_required", session);
+                sleep(2);
+                continue;
+            }
+            ++resets;
+            report("connecting", session);
+            reset_phone(bus, device, type, resets);
+            attempts = 0;
+            sleep(3);
             continue;
         }
 
@@ -669,7 +713,7 @@ int main(int argc, char** argv)
                  * the counter was only reset by unplugging, so the third normal session end of a drive showed
                  * "replug the phone") */
                 if (ms() - began >= 60000)
-                    attempts = 0;
+                    attempts = resets = 0;
             }
         }
 

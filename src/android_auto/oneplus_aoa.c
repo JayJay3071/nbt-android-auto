@@ -10,6 +10,9 @@
  * --tls-inspect adds one fresh ClientHello, records the public server flight,
  * then closes. It never completes TLS or sends AUTH_COMPLETE/application data.
  * No SET_AUDIO_MODE, reset, configuration change, driver stop or retry.
+ * --reset (2026-11-12) is the one exception: usbd_reset_device() on the given device, the software version of pulling
+ * the cable (native_service after a failed attempt). The phone's identity: NBT_PHONE_ID, or the accessory ids when
+ * NBT_RESET_AOA=1. usbd_reset_device is looked up at run time, so an io-usb without it only fails the reset.
  */
 #include <sys/usbdi.h>
 #include <pthread.h>
@@ -20,6 +23,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <time.h>
+#include <dlfcn.h>
 #ifdef NBT_AA_CAPTURE
 #include "aa_video_capture.h"
 #endif
@@ -313,7 +317,7 @@ int main(int argc, char** argv) {
     unsigned char* buffer = NULL;
     usbd_device_instance_t instance;
     _Uint32t actual;
-    int bus, dev, switching, versioning = 0, inspecting = 0, rc, result = 3;
+    int bus, dev, switching, versioning = 0, inspecting = 0, resetting = 0, rc, result = 3;
     unsigned matches, removed_already, protocol, i;
     static const char* const identity[] = {
         "Android", "Android Auto", "Android Auto", "2.0.1", "", "NBT-AA-TEST"
@@ -349,9 +353,10 @@ int main(int argc, char** argv) {
         (inspecting = !strcmp(argv[1], "--tls-handshake") ? 2 : 0) == 0 &&
 #endif
         (inspecting = !strcmp(argv[1], "--tls-inspect")) == 0 &&
-        (versioning = !strcmp(argv[1], "--version")) == 0 && strcmp(argv[1], "--query")) ||
+        (versioning = !strcmp(argv[1], "--version")) == 0 && (resetting = !strcmp(argv[1], "--reset")) == 0 &&
+        strcmp(argv[1], "--query")) ||
         (bus = number(argv[2])) < 0 || (dev = number(argv[3])) < 1) {
-        fputs("Usage: oneplus_aoa --query|--switch-aa|--version|--tls-inspect bus device\n", stderr); return 2;
+        fputs("Usage: oneplus_aoa --query|--switch-aa|--version|--tls-inspect|--reset bus device\n", stderr); return 2;
     }
     alarm(inspecting==4 ? (getenv("NBT_AA_LIVE_FIFO") ? 0 : 75) : 20); setvbuf(stdout, NULL, _IOLBF, 0);
     if ((switching || versioning || inspecting) && !window_active()) {
@@ -368,7 +373,7 @@ int main(int argc, char** argv) {
         const char *id = getenv("NBT_PHONE_ID"), *aoa = getenv("NBT_AOA_PRODUCT");
         unsigned v, p;
         if (id && sscanf(id, "%4x:%4x", &v, &p) == 2 && v && p) { target_vendor = v; target_product = p; }
-        if (versioning || inspecting) {
+        if (versioning || inspecting || (resetting && getenv("NBT_RESET_AOA"))) {
             target_vendor = 0x18d1;
             target_product = aoa && !strcmp(aoa, "2d01") ? 0x2d01 : 0x2d00;
         }
@@ -392,6 +397,16 @@ int main(int argc, char** argv) {
     rc = usbd_attach(connection, &instance, 0, &device);
     if (rc != EOK) { device = NULL; printf("AOA_ATTACH_FAILED code=%d\n", rc); goto done; }
     if (versioning || inspecting) { result = version_probe(device, &instance, inspecting); goto done; }
+    if (resetting) {
+        void* self = dlopen(NULL, RTLD_NOW);
+        int (*reset_device)(struct usbd_device*) =
+            self ? (int (*)(struct usbd_device*))dlsym(self, "usbd_reset_device") : NULL;
+        if (!reset_device) { puts("USB_RESET_UNAVAILABLE"); result = 5; goto done; }
+        rc = reset_device(device);
+        printf("USB_RESET rc=%d %04x:%04x bus=%u device=%u\n", rc, target_vendor, target_product, target_bus, target_device);
+        result = rc == EOK ? 0 : 5;
+        goto done;
+    }
     descriptor = usbd_parse_descriptors(device, NULL, USB_DESC_DEVICE, 0, &node);
     if (!descriptor || usbd_open_pipe(device, descriptor, &pipe) != EOK) { pipe = NULL; goto done; }
     urb = usbd_alloc_urb(NULL); buffer = (unsigned char*)usbd_alloc(256);
