@@ -53,7 +53,9 @@
 // nbt_knob sends PLAY_PAUSE (85) to the phone; when it comes back to AUX and that pause was ours, PLAY_PAUSE again.
 // Not MEDIA_PAUSE 127 / MEDIA_PLAY 126: car 2026-11-13, after a 127 the phone dropped the session and reconnected; 85 is
 // the key the steering wheel push has sent without trouble. Drawback: 85 toggles, so music that was already paused when
-// AUX was left starts (unheard, the source is not AUX) and is paused again on the way back.
+// AUX was left starts (unheard, the source is not AUX) and is paused again on the way back. So the key goes out only
+// while the phone reports "playing": the session writes the phone's media state to /fs/ram3/nbt-aa-media (2 = playing,
+// 3 = paused, car 2026-11-13; patches/nbt-aad-aa_session-media-state.patch); no file = unknown = as before.
 // NBT_AUX_SOURCE = source byte of AUX (hex, default BB), NBT_AUX_PAUSE=0 off, NBT_AUX_RESUME=0 pause only.
 //
 // usage: nbt_knob --probe                 only dlopen the DSI library and resolve its symbols (no connection)
@@ -181,6 +183,15 @@ bool sessionRunning() {
     return strstr(buf, "state=running") != 0;
 }
 
+int mediaState() {   // 2 = playing, 3 = paused, 0 = unknown
+    FILE* f = fopen("/fs/ram3/nbt-aa-media", "r");
+    if (!f) return 0;
+    int st = 0;
+    if (fscanf(f, "%d", &st) != 1) st = 0;
+    fclose(f);
+    return st;
+}
+
 void onSource(const nbt::most::View& m, void*) {
     if (m.fkt != 0xC03 || m.len < 5) return;             // the 2-byte "00 00" is only the old source going off
     const int s = m.data[3];
@@ -190,11 +201,15 @@ void onSource(const nbt::most::View& m, void*) {
     printf("[Source] %02X -> %02X\n", prev < 0 ? 0xFF : prev, s);
     if (!g_auxPause || prev < 0) return;
     if (prev == (int)g_auxSource && s != (int)g_auxSource) {
-        g_wePaused = sessionRunning();
+        const int st = mediaState();
+        g_wePaused = sessionRunning() && st != 3;          // already paused: nothing to do, nothing to resume
+        printf("[Source] AUX left, phone media state %d\n", st);
         if (g_wePaused) { wheelKeyLine(85, 1, "AUX_LEFT_PAUSE"); wheelKeyLine(85, 0, "AUX_LEFT_PAUSE"); }
     } else if (s == (int)g_auxSource && g_wePaused) {
         g_wePaused = false;
-        if (g_auxResume && sessionRunning()) { wheelKeyLine(85, 1, "AUX_BACK_PLAY"); wheelKeyLine(85, 0, "AUX_BACK_PLAY"); }
+        const int st = mediaState();
+        printf("[Source] back on AUX, phone media state %d\n", st);
+        if (g_auxResume && sessionRunning() && st != 2) { wheelKeyLine(85, 1, "AUX_BACK_PLAY"); wheelKeyLine(85, 0, "AUX_BACK_PLAY"); }
     }
 }
 

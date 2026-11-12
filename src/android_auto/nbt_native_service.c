@@ -699,6 +699,7 @@ int main(int argc, char** argv)
             {
                 char capname[40];
                 snprintf(capname, sizeof(capname), "capture-%u.log", session);
+                unlink("/fs/ram3/nbt-aa-media"); /* the phone's media state, written anew by this session */
                 capture = spawn(args, 0, capname);
             }
             report("running", session);

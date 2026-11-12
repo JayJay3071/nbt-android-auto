@@ -1,0 +1,18 @@
+NBT-Project patch: the session writes the phone's media playback state to /fs/ram3/nbt-aa-media
+(one line, 2 = playing, 3 = paused; car 2026-11-13) each time it changes. Read by nbt_knob.
+Apply AFTER scripts/aa_session_overlay.py; scripts/build_all.py does both.
+
+diff --git a/milestone-7/src/aa_session.cpp b/milestone-7/src/aa_session.cpp
+index a2e1b34..b002717 100644
+--- a/milestone-7/src/aa_session.cpp
++++ b/milestone-7/src/aa_session.cpp
+@@ -1160,6 +1160,9 @@ void AASession::sessionLoop() {
+                     if (st != last_state) {
+                         last_state = st;
+                         printf("[AASession] media status ch12: state %u\n", st);
++                        // NBT-Project (2026-11-13): for nbt_knob (pause on source change only while playing).
++                        // Car 2026-11-13: 2 = playing, 3 = paused.
++                        if (FILE* mf = fopen("/fs/ram3/nbt-aa-media", "w")) { fprintf(mf, "%u\n", st); fclose(mf); }
+                     }
+                 }
+             } else if (msg_id == 0x8000) { // AV SETUP_REQUEST (Phone requests AV configuration on Video/Audio channel)
