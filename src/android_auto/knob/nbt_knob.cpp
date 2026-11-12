@@ -34,6 +34,15 @@
 // down -> PREVIOUS 88, press -> PLAY_PAUSE 85. Override / switch off with NBT_WHEEL_UP / _DOWN / _PUSH = keycode / 0.
 // iDrive still gets the roller too.
 //
+// AUX source + Android Auto in front (2026-11-12, user: phone audio over AUX; favourite button 7 = the AUX page, which
+// switches the source; favourite button 8 = the Android Auto entry, which leads straight to the picture while the
+// session runs): when the first session of this service is running, nbt_knob presses favourite 7, waits 1.5 s, then
+// presses favourite 8. So the car starts into Android Auto with AUX as the source. Later sessions (replug, drop-out)
+// press nothing. Car trace 2026-11-12: favourite keypad = FBlock 15 instance 0C fkt C02 op Status, from 3002 to the
+// HMI, 8 bytes = one per button, byte N-1: 02 -> 01 (~110 ms) -> 00 (~60 ms). The HMI's address is the destination of
+// the controller's periodic E5/0F C06 (every 2 s). NBT_AUX_FAVORITE / NBT_AA_FAVORITE = button 1..8, 0 = off
+// (defaults 7 / 8: what these buttons hold in THIS car; a favourite can also hold a phone number).
+//
 // usage: nbt_knob --probe                 only dlopen the DSI library and resolve its symbols (no connection)
 //        nbt_knob [--seconds N] [--fifo PATH]   observe and forward (default FIFO /fs/ram3/nbt-aa-native/input.fifo)
 // Environment: NBT_MOST_ROLE / NBT_MOST_MAJOR / NBT_MOST_MINOR, NBT_DSI_LIB, NBT_KNOB_INST, NBT_KNOB_CCS_INST,
@@ -140,6 +149,64 @@ void onWheel(const nbt::most::View& m, void*) {
     } else if (g_wheelPush) {
         if (v == 1 && !g_wheelPushDown) { g_wheelPushDown = true; wheelKeyLine(g_wheelPush, 1, "WHEEL_PUSH"); }
         else if (v == 0 && g_wheelPushDown) { g_wheelPushDown = false; wheelKeyLine(g_wheelPush, 0, "WHEEL_PUSH"); }
+    }
+}
+
+// --- AUX source through a favourite button (see the header) ---
+uint16_t g_hmiDev = 0, g_hmiSrc = 0;   // from the controller's periodic E5/0F C06: HMI address, controller-side sender
+void onE5Periodic(const nbt::most::View& m, void*) {
+    pthread_mutex_lock(&g_backMx);
+    g_hmiDev = m.dst; g_hmiSrc = m.src;
+    pthread_mutex_unlock(&g_backMx);
+}
+
+nbt::most::Msg favMsg(uint16_t src, uint16_t dst, unsigned button, uint8_t v) {
+    nbt::most::Msg m;
+    m.txType = 0; m.varTag = 1; m.varVal = 0;      // as nbt_hwvideo sends (vehicle-tested)
+    m.dst = dst; m.src = src; m.fblock = 0x15; m.inst = 0x0C; m.fkt = 0xC02; m.opType = 0xC; m.hdrTag = 0xFFFFu;
+    m.data.assign(8, 0);
+    m.data[button - 1] = v;
+    return m;
+}
+
+unsigned g_auxButton = 7, g_aaButton = 8;
+bool g_favDone = false;          // once per service life
+long long g_favNextCheck = 0;
+
+void pressFavourite(nbt::most::Client& most, uint16_t src, uint16_t dst, unsigned button) {
+    most.send(favMsg(src, dst, button, 2));
+    usleep(110000);
+    most.send(favMsg(src, dst, button, 1));
+    usleep(60000);
+    most.send(favMsg(src, dst, button, 0));
+}
+
+// main thread, once a second until done: the service's public state (native_service rewrites it every 2 s)
+void favouritesIfNeeded(nbt::most::Client& most) {
+    if (g_favDone || (!g_auxButton && !g_aaButton)) return;
+    const long long now = nowMs();
+    if (now < g_favNextCheck) return;
+    g_favNextCheck = now + 1000;
+    char buf[160];
+    FILE* f = fopen("/fs/ram3/nbt-aa-state", "r");
+    if (!f) return;
+    const size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = 0;
+    if (!strstr(buf, "state=running")) return;
+    pthread_mutex_lock(&g_backMx);
+    const uint16_t dst = g_hmiDev, src = g_hmiSrc;
+    pthread_mutex_unlock(&g_backMx);
+    if (!dst || !src) return;                                     // HMI address not known yet
+    g_favDone = true;
+    if (g_auxButton) {
+        printf("[Knob] session running: favourite %u (AUX) %04X->%04X\n", g_auxButton, src, dst);
+        pressFavourite(most, src, dst, g_auxButton);
+        if (g_aaButton) usleep(1500000);                          // let iDrive switch the source first
+    }
+    if (g_aaButton) {
+        printf("[Knob] favourite %u (Android Auto)\n", g_aaButton);
+        pressFavourite(most, src, dst, g_aaButton);
     }
 }
 
@@ -292,6 +359,11 @@ int main(int argc, char** argv) {
     if (!most.addRoute(0xE5, 0x01, 0xC20, 0xC, &onC20, NULL)) printf("[Knob] no room for the split-screen BACK route\n");
     g_wheelUp = wheelKey("NBT_WHEEL_UP", 87); g_wheelDown = wheelKey("NBT_WHEEL_DOWN", 88); g_wheelPush = wheelKey("NBT_WHEEL_PUSH", 85);
     if (!most.addRoute(0x15, 0x02, nbt::most::kAny, 0xC, &onWheel, NULL)) printf("[Knob] no room for the steering wheel route\n");
+    g_auxButton = wheelKey("NBT_AUX_FAVORITE", 7);
+    g_aaButton = wheelKey("NBT_AA_FAVORITE", 8);
+    if (g_auxButton > 8 || trace) g_auxButton = 0;   // a --trace copy (tests, boot.sh trace) never presses anything
+    if (g_aaButton > 8 || trace) g_aaButton = 0;
+    if (!most.addRoute(0xE5, 0x0F, 0xC06, 0xC, &onE5Periodic, NULL)) printf("[Knob] no room for the HMI address route\n");
     if (trace && !most.setTap(&onTap, NULL)) return 3;
     if (!most.start("NBTPROJ_KNOB")) return 3;
     printf("nbt_knob: observing the iDrive controller, forwarding to %s%s\n", g_fifo, seconds ? "" : " until SIGTERM");
@@ -310,7 +382,8 @@ int main(int argc, char** argv) {
     }
     while (!g_stop) {
         usleep(20000);
-        sendBackIfPending(most);
+        if (!trace) sendBackIfPending(most);
+        favouritesIfNeeded(most);
         clock_gettime(CLOCK_MONOTONIC, &t);
         long el = (long)(t.tv_sec - t0.tv_sec);
         if (seconds && el >= seconds) break;
