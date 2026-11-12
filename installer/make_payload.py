@@ -3,7 +3,8 @@ Usage: python installer/make_payload.py [version]
        python installer/make_payload.py [version] --built build/qnx-build-<time> [--pem-dir <folder>]
 The payload contains binaries and the head-unit TLS identity; it is not committed (see .gitignore) but bundled into the
 release builds. Rebuild libNbtAndroidAuto.so in the QNX VM after any change to src/idrive/aa_entry_plugin.cpp first.
---built takes the programs and plugin files from a scripts/build_all.py run instead of the developer's build folders;
+--built takes the programs and plugin files from a scripts/build_all.py run instead of the developer's build folders,
+plus the NbtReboot plugin ("Restart iDrive", /var/opt/hmi/data/rw/Plugins/NbtReboot);
 the PEM files (public NBT-AAD head-unit identity) then come from --pem-dir (default: rt/ of an existing payload,
 e.g. unpacked from a release ZIP).
 """
@@ -19,6 +20,7 @@ REPO = Path(__file__).resolve().parent.parent
 OUT = REPO / 'installer' / 'payload'
 RT = '/var/opt/hmi/data/rw/NbtAndroidAutoRT'
 PLUGIN = '/var/opt/hmi/data/rw/Plugins/NbtAndroidAuto'
+REBOOT = '/var/opt/hmi/data/rw/Plugins/NbtReboot'
 ENTRY = REPO / 'build' / 'aa-entry-20261106'
 PROTO = REPO / 'build' / 'native-prototype-20261106' / 'package'
 # (local source, payload name, target path on the car, mode)
@@ -62,6 +64,12 @@ def built_files(built, pem_dir):
         else:
             source = programs / leaf
         result.append((source, name, target, mode))
+    # "Restart iDrive" plugin (src/idrive/reboot); its car-specific "gateway" file is left as it is on the car
+    for leaf, mode in (('nbt_reset', '755'), ('libNbtReboot.so', '755'), ('NbtReboot.xml', '644'),
+                       ('NbtReboot_ALL_Texts.zip', '644'), ('NbtReboot_ALL_Images.zip', '644'),
+                       ('NbtReboot.manifest', '644')):
+        folder = programs if leaf in ('nbt_reset', 'libNbtReboot.so') else built / 'reboot-resources'
+        result.append((folder / leaf, 'reboot/' + leaf, REBOOT + '/' + leaf, mode))
     return result
 
 
