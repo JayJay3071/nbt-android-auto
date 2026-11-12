@@ -2,7 +2,7 @@
 //
 // The picture is not drawn by this page: nbt_hwvideo shows the hardware video window in front of the HMI (the very
 // first version used a WAL sprite, see experiments/wal-overlay; some comments below still say so). This page
-//   - starts the connection: opening it creates /fs/ram3/nbt-aa-request (native_service waits for it with gate.mode)
+//   - opening it creates /fs/ram3/nbt-aa-request (native_service waits for it only with gate.mode, now opt-in: $P/gate-on)
 //   - shows the connection status (from /fs/ram3/nbt-aa-state, written by native_service at least every 2 s):
 //       no phone / phone found, starting / replug needed / device without Android Auto / several devices / service down
 //   - brings Android Auto to the front as soon as it runs: iDrive is moved to the inert hold state 13 (focusEvent 52),

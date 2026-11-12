@@ -24,8 +24,11 @@ touch $R/hw.mode
 rm -f $R/res720
 if test -e $P/res720; then touch $R/res720; echo 'res720 on'; fi
 rm -f $R/wal.args $R/shadow.path
-# the plugin page exists: the phone is only switched after the page was opened once
-if test -e /fs/ram3/nbt-aa-hidden -o -e /fs/ram3/nbt-aa-request; then touch $R/gate.mode; fi
+# No gate (user 2026-11-12): the phone is taken at once, the session runs in the background and the picture stays hidden
+# (/fs/ram3/nbt-aa-hidden) until the Android Auto page is opened. The old behaviour (phone only after the page was opened
+# once): touch $P/gate-on
+rm -f $R/gate.mode
+if test -e $P/gate-on; then touch $R/gate.mode; echo 'gate on'; fi
 DPI=140
 if test -f $P/vid.dpi; then DPI=`sed 1q $P/vid.dpi`; fi
 # picture mode (car-tested 2026-11-08), one flag file in $P, none = classic 800x300 stretched to the whole display:
