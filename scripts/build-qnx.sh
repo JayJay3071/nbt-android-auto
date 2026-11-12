@@ -57,6 +57,7 @@ cd $A/knob
 $CXX -Iref nbt_knob.cpp ref/dsi_client.cpp ref/most/client.cpp ref/car/ccs_input.cpp -o $OUT/nbt_knob
 $CXX -Iref nbt_hwvideo.cpp ref/dsi_client.cpp ref/most/client.cpp -o $OUT/nbt_hwvideo
 $CXX -Iref nbt_cluster.cpp ref/dsi_client.cpp ref/most/client.cpp -o $OUT/nbt_cluster -lm
+$CXX -Iref nbt_key.cpp ref/dsi_client.cpp ref/most/client.cpp -o $OUT/nbt_key
 
 echo "== HMI plugin libNbtAndroidAuto.so"
 cd $W/src/idrive
