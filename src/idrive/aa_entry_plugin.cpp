@@ -137,7 +137,8 @@ void restartService(const char* flag) {
 }
 void setMode(bool split) { restartService(split?"split800":"anamorph"); }
 // started once from create(): factory-time posts did not run on this HMI (2026-11-06), so a detached thread waits
-void* autostartThread(void*) { sleep(15); launchService(); return 0; }
+// no delay (user 2026-11-12): boot.sh is started as soon as the HMI has created the plugin
+void* autostartThread(void*) { launchService(); return 0; }
 long now_s() { struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t); return (long)t.tv_sec; }
 long long now_ms() { struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t); return (long long)t.tv_sec*1000+t.tv_nsec/1000000; }
 // small diagnostic log (car 2026-11-07: after a while MENU no longer left Android Auto); bounded to 64 KB
