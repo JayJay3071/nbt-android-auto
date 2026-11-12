@@ -110,11 +110,15 @@ bool goFocus(void*,const bmw::Parcel& p) {
 }
 
 bmw::PluginApp* g_app=0;
+// car 2026-11-12: with a null delegate object the focus handlers never ran (no log line at all), while the Android Auto
+// plugin's handlers, registered with a real object, do: the HMI apparently treats a null object as an empty delegate
+int g_handlerObject=0;
 bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& p,const bmw::Bundle& c) {
     if(g_app)return 0;
     g_app=new bmw::PluginApp(d,bmw::BasicString<char>(name),p,c);
-    bmw::ActionDelegate onAsk={0,&askFocus};
-    bmw::ActionDelegate onGo={0,&goFocus};
+    plog("plugin created");
+    bmw::ActionDelegate onAsk={&g_handlerObject,&askFocus};
+    bmw::ActionDelegate onGo={&g_handlerObject,&goFocus};
     g_app->addHandler(kAskState,kFocus,onAsk);
     g_app->addHandler(kGoState,kFocus,onGo);
     return reinterpret_cast<bmw::IPluginApp*>(g_app);
