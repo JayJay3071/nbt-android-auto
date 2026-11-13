@@ -33,6 +33,9 @@
 // Forwarded as Android Auto media keys, also while the Android Auto page is not on screen: up -> NEXT 87,
 // down -> PREVIOUS 88, press -> PLAY_PAUSE 85. Override / switch off with NBT_WHEEL_UP / _DOWN / _PUSH = keycode / 0.
 // iDrive still gets the roller too.
+// 2026-11-13 (user): only while the audio source is AUX (the phone's audio); on Bluetooth / radio the roller is left to
+// iDrive alone. Source from the C03 status below; unknown until the first switch after boot = treated as AUX.
+// NBT_WHEEL_AUX_ONLY=0: always forward, as before.
 //
 // AUX source + Android Auto in front (2026-11-12, user: phone audio over AUX; favourite button 7 = the AUX page, which
 // switches the source; favourite button 8 = the Android Auto entry, which leads straight to the picture while the
@@ -151,6 +154,16 @@ void wheelKeyLine(unsigned key, int down, const char* what) {
     forward(line, (size_t)n);
 }
 
+unsigned g_auxSource = 0xBB;
+int g_lastSource = -1;          // unknown until the first switch
+bool g_wheelAuxOnly = true;
+
+bool wheelAllowed(const char* what) {
+    if (!g_wheelAuxOnly || g_lastSource < 0 || g_lastSource == (int)g_auxSource) return true;
+    printf("[Wheel] %s ignored: source %02X is not AUX\n", what, g_lastSource);
+    return false;
+}
+
 void onWheel(const nbt::most::View& m, void*) {
     if (m.len < 1 || (m.fkt != 0xC30 && m.fkt != 0xC31)) return;
     const uint8_t v = m.data[0];
@@ -160,19 +173,17 @@ void onWheel(const nbt::most::View& m, void*) {
     g_wheelLastFkt = m.fkt; g_wheelLastVal = v; g_wheelLastMs = t;
     if (m.fkt == 0xC30) {
         const unsigned key = v > 0x7f ? g_wheelUp : v < 0x7f ? g_wheelDown : 0;
-        if (!key) return;
+        if (!key || !wheelAllowed(v > 0x7f ? "WHEEL_UP" : "WHEEL_DOWN")) return;
         wheelKeyLine(key, 1, v > 0x7f ? "WHEEL_UP" : "WHEEL_DOWN");
         wheelKeyLine(key, 0, v > 0x7f ? "WHEEL_UP" : "WHEEL_DOWN");
     } else if (g_wheelPush) {
-        if (v == 1 && !g_wheelPushDown) { g_wheelPushDown = true; wheelKeyLine(g_wheelPush, 1, "WHEEL_PUSH"); }
+        if (v == 1 && !g_wheelPushDown) { if (!wheelAllowed("WHEEL_PUSH")) return; g_wheelPushDown = true; wheelKeyLine(g_wheelPush, 1, "WHEEL_PUSH"); }
         else if (v == 0 && g_wheelPushDown) { g_wheelPushDown = false; wheelKeyLine(g_wheelPush, 0, "WHEEL_PUSH"); }
     }
 }
 
 // --- pause / resume Android Auto when the audio source leaves / returns to AUX (see the header) ---
-unsigned g_auxSource = 0xBB;
 bool g_auxPause = true, g_auxResume = true;
-int g_lastSource = -1;          // unknown until the first switch
 bool g_wePaused = false;        // the last pause came from us (resume only then)
 
 bool sessionRunning() {
@@ -437,6 +448,7 @@ int main(int argc, char** argv) {
         if (v && *v) g_auxSource = (unsigned)strtoul(v, 0, 16) & 0xFF;
         g_auxPause = wheelKey("NBT_AUX_PAUSE", 1) != 0 && !trace;   // a --trace copy never sends keys
         g_auxResume = wheelKey("NBT_AUX_RESUME", 1) != 0;
+        g_wheelAuxOnly = wheelKey("NBT_WHEEL_AUX_ONLY", 1) != 0;
     }
     if (!most.addRoute(0x03, 0x00, 0xC03, 0xC, &onSource, NULL)) printf("[Knob] no room for the audio source route\n");
     if (trace && !most.setTap(&onTap, NULL)) return 3;
