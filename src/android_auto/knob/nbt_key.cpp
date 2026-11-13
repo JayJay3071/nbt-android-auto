@@ -17,6 +17,11 @@
 //   nbt_key --watch [N]     print every E5 message for N s (default 15)
 //   nbt_key back [N]        wait up to N s (default 20) for a tilt right; when it is released, send BACK (pressed,
 //                           100 ms later released) with the controller's addresses and the next counters.
+//   nbt_key source [N]      2026-11-13 TEST: ask the audio source master for the current source and print every
+//                           FBlock 03 message for N s (default 5). Source status as seen on the car: 100E -> HMI,
+//                           03/00 fkt C03 op Status, 5 bytes, byte 3 = source (BB AUX, C7 Bluetooth, 01 radio). Sends
+//                           (a) Get 03/00 C03 and (b) a notification registration 03/00 fkt 001 {01, our id, 0C 03},
+//                           both to 100E from our own device id, so the answer comes back to us. Reads only.
 // Needs LD_LIBRARY_PATH=/opt/sys/lib:/lib:/usr/lib (DSI library).
 #include "most/client.hpp"
 #include <pthread.h>
@@ -53,6 +58,22 @@ void onE5(const nbt::most::View& m, void*) {
     pthread_mutex_unlock(&g_mx);
 }
 
+void onFb03(const nbt::most::View& m, void*) {
+    printf("%6lld ms  03/%02X fkt=%03X op=%X src=%04X dst=%04X len=%u:", nowMs() - g_t0, m.inst, m.fkt, m.op, m.src, m.dst,
+           (unsigned)m.len);
+    for (size_t i = 0; i < m.len && i < 16; ++i) printf(" %02x", m.data[i]);
+    if (m.fkt == 0xC03 && m.len >= 5) printf("   <- source %02X%s", m.data[3], m.data[3] == 0xBB ? " (AUX)" : "");
+    printf("\n");
+}
+
+nbt::most::Msg fb03Msg(uint16_t src, uint16_t fkt, uint8_t op, const uint8_t* d, size_t n) {
+    nbt::most::Msg m;
+    m.txType = 0; m.varTag = 1; m.varVal = 0;
+    m.dst = 0x100E; m.src = src; m.fblock = 0x03; m.inst = 0x00; m.fkt = fkt; m.opType = op; m.hdrTag = 0xFFFFu;
+    m.data.assign(d, d + n);
+    return m;
+}
+
 uint8_t nextCounter(uint8_t c) { c = (uint8_t)(c + 1); return c == 0xFF ? 0 : c; }   // 0xFF = "ignore" (firmware)
 
 nbt::most::Msg backMsg(uint16_t src, uint16_t dst, uint8_t counter, bool down) {
@@ -65,7 +86,7 @@ nbt::most::Msg backMsg(uint16_t src, uint16_t dst, uint8_t counter, bool down) {
 }
 
 int usage() {
-    printf("usage: nbt_key --watch [seconds] | nbt_key back [seconds]\n");
+    printf("usage: nbt_key --watch [seconds] | nbt_key back [seconds] | nbt_key source [seconds]\n");
     return 1;
 }
 }
@@ -74,14 +95,16 @@ int main(int argc, char** argv) {
     setvbuf(stdout, NULL, _IOLBF, 0);
     signal(SIGTERM, onSignal); signal(SIGINT, onSignal); signal(SIGPIPE, SIG_IGN);
     if (argc < 2 || argc > 3) return usage();
-    const bool watch = !strcmp(argv[1], "--watch"), back = !strcmp(argv[1], "back");
-    if (!watch && !back) return usage();
-    const int seconds = argc == 3 ? atoi(argv[2]) : (watch ? 15 : 20);
+    const bool watch = !strcmp(argv[1], "--watch"), back = !strcmp(argv[1], "back"), source = !strcmp(argv[1], "source");
+    if (!watch && !back && !source) return usage();
+    const int seconds = argc == 3 ? atoi(argv[2]) : (watch ? 15 : source ? 5 : 20);
 
     static nbt::most::Client most;
     // the same device controller keys nbt_knob registers, so the E5 messages are delivered to us
     static const uint16_t keys[] = { 0xE510, 0xE503, 0xE505, 0xE512, 0xE514, 0xE501, 0xE502 };
-    if (!most.addRoute(0xE5, nbt::most::kAny, nbt::most::kAny, nbt::most::kAny, &onE5, NULL)) return 3;
+    if (source) {
+        if (!most.addRoute(0x03, nbt::most::kAny, nbt::most::kAny, nbt::most::kAny, &onFb03, NULL)) return 3;
+    } else if (!most.addRoute(0xE5, nbt::most::kAny, nbt::most::kAny, nbt::most::kAny, &onE5, NULL)) return 3;
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) most.addDevCtrl(keys[i]);
     g_t0 = nowMs();
     if (!most.start("NBTPROJ_KEY")) { printf("DSI start failed\n"); return 3; }
@@ -89,6 +112,14 @@ int main(int argc, char** argv) {
     if (most.state() != nbt::most::kUp) { printf("MOST link not up\n"); return 3; }
     printf("our device id %04X%s\n", most.deviceId(), back ? "; tilt the controller right now" : "");
 
+    if (source) {
+        const uint16_t me = (uint16_t)most.deviceId();
+        printf("Get 03/00 C03 -> 100E: %s\n", most.send(fb03Msg(me, 0xC03, 0x1, NULL, 0)) ? "sent" : "FAILED");
+        usleep(500000);
+        const uint8_t reg[5] = { 0x01, (uint8_t)(me >> 8), (uint8_t)me, 0x0C, 0x03 };
+        printf("notification 03/00 001 {01 %04X 0C03} -> 100E: %s\n", me,
+               most.send(fb03Msg(me, 0x001, 0x0, reg, 5)) ? "sent" : "FAILED");
+    }
     const long long end = nowMs() + seconds * 1000LL;
     while (!g_stop && nowMs() < end) {
         if (back && g_trigger) {
