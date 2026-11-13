@@ -19,7 +19,7 @@
 //   - MENU / MEDIA / NAV / COM / MAP / OPTION leave the page the iDrive way: the overlay hides, the session keeps running
 //     in the background. Multimedia -> Android Auto then brings the running session to the front at once.
 //   - "Start at boot: on/off" (inert page 35): switches the flag file start-at-boot.off in the package; nbt_knob reads it
-//     when the first session of a boot runs and then presses favourite 7 (AUX) and 8 (Android Auto) - or not.
+//     when the first session of a boot runs and then presses favourite 8 (Android Auto) - or not.
 //   - "Restart system" (page 33 asks, its button leads to the inert page 34): reboots the head unit with nbt_reset
 //     (UDS 11 01 through the gateway), formerly the separate NbtReboot plugin ("Restart iDrive" under Multimedia).
 // Hold states 13..20 are nested (see "hold states" below). Loop guard: at most 10 hold events per minute.

@@ -42,6 +42,8 @@
 // HMI, 8 bytes = one per button, byte N-1: 02 -> 01 (~110 ms) -> 00 (~60 ms). The HMI's address is the destination of
 // the controller's periodic E5/0F C06 (every 2 s). NBT_AUX_FAVORITE / NBT_AA_FAVORITE = button 1..8, 0 = off
 // (defaults 7 / 8: what these buttons hold in THIS car; a favourite can also hold a phone number).
+// 2026-11-13 (user): only favourite 8, as soon as the session runs - AUX is usually the source already, and another
+// source may be wanted. NBT_AUX_FAVORITE now defaults to 0 (set it to 7 for the old AUX press).
 // Switch (2026-11-12, "Start at boot" in the Android Auto menu): only once per boot (marker /fs/ram3/nbt-aa-fav-done,
 // so restarting Android Auto presses nothing), and not while the file start-at-boot.off exists in the package
 // (/var/opt/hmi/data/rw/NbtAndroidAutoRT; the menu creates / deletes it, read when the session starts).
@@ -244,12 +246,12 @@ void pressFavourite(nbt::most::Client& most, uint16_t src, uint16_t dst, unsigne
     most.send(favMsg(src, dst, button, 0));
 }
 
-// main thread, once a second until done: the service's public state (native_service rewrites it every 2 s)
+// main thread, every 200 ms until done: the service's public state
 void favouritesIfNeeded(nbt::most::Client& most) {
     if (g_favDone || (!g_auxButton && !g_aaButton)) return;
     const long long now = nowMs();
     if (now < g_favNextCheck) return;
-    g_favNextCheck = now + 1000;
+    g_favNextCheck = now + 200;                     // native_service writes "running" as soon as a session starts
     char buf[160];
     FILE* f = fopen("/fs/ram3/nbt-aa-state", "r");
     if (!f) return;
@@ -425,7 +427,7 @@ int main(int argc, char** argv) {
     if (!most.addRoute(0xE5, 0x01, 0xC20, 0xC, &onC20, NULL)) printf("[Knob] no room for the split-screen BACK route\n");
     g_wheelUp = wheelKey("NBT_WHEEL_UP", 87); g_wheelDown = wheelKey("NBT_WHEEL_DOWN", 88); g_wheelPush = wheelKey("NBT_WHEEL_PUSH", 85);
     if (!most.addRoute(0x15, 0x02, nbt::most::kAny, 0xC, &onWheel, NULL)) printf("[Knob] no room for the steering wheel route\n");
-    g_auxButton = wheelKey("NBT_AUX_FAVORITE", 7);
+    g_auxButton = wheelKey("NBT_AUX_FAVORITE", 0);
     g_aaButton = wheelKey("NBT_AA_FAVORITE", 8);
     if (g_auxButton > 8 || trace) g_auxButton = 0;   // a --trace copy (tests, boot.sh trace) never presses anything
     if (g_aaButton > 8 || trace) g_aaButton = 0;
