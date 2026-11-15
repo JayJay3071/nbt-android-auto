@@ -29,6 +29,7 @@ FILES = [
     (ENTRY / 'nbt_hwvideo', 'rt/nbt_hwvideo', RT + '/nbt_hwvideo', '700'),
     (ENTRY / 'decode_runner', 'rt/decode_runner', RT + '/decode_runner', '700'),
     (ENTRY / 'nbt_cluster', 'rt/nbt_cluster', RT + '/nbt_cluster', '700'),
+    (ENTRY / 'audioconn', 'rt/audioconn', RT + '/audioconn', '700'),   # nbt_audioconn (AA audio route, 2026-11-15)
     (PROTO / 'accessory_window', 'rt/accessory_window', RT + '/accessory_window', '700'),
     (PROTO / 'fifo_http', 'rt/fifo_http', RT + '/fifo_http', '700'),
     (PROTO / 'cert.pem', 'rt/cert.pem', RT + '/cert.pem', '600'),

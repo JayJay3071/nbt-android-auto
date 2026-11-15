@@ -27,7 +27,10 @@ iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrum
 
 ## Known limitations
 
-- **No Android Auto audio yet.** Music runs over Bluetooth as before, calls work. Plan: [docs/AA-AUDIO-PLAN.md](docs/AA-AUDIO-PLAN.md).
+- **Android Auto audio over USB** (music, navigation voice, system sounds; no Bluetooth needed for them) is on by
+  default and falls back to Bluetooth by itself if the car refuses the audio route. `touch NbtAndroidAutoRT/bt-audio`
+  forces Bluetooth. Calls and the microphone still use Bluetooth. Verified on one car (F07 2014); see
+  [docs/AA-AUDIO-PLAN.md](docs/AA-AUDIO-PLAN.md).
 - **800x480 only.** The hardware capture (`dev-nvideocapture`) is limited to WVGA. 720p was tested: not sharper, more
   input lag.
 - The controller has a noticeable delay because of the video buffer.
@@ -164,8 +167,8 @@ So sieht es im Auto aus: [Video auf Instagram](https://www.instagram.com/reel/Df
   [Forum-Thread](https://www.supramkv.com/threads/ssh-access-guide-supra-nbtevo-headunit.24190/).
 - **Installation:** Installer aus den [Releases](../../releases) laden und der Anleitung in
   [installer/README.md](installer/README.md) folgen.
-- **Einschränkungen:** noch kein Ton über Android Auto (Musik weiter per Bluetooth), 800x480, getestet mit einem Auto
-  (F07, 2014) und einem Telefon.
+- **Einschränkungen:** Ton über Android Auto läuft über USB (Rückfall auf Bluetooth, Anrufe und Mikrofon weiter per
+  Bluetooth), 800x480, getestet mit einem Auto (F07, 2014) und einem Telefon.
 - **Nutzung auf eigene Gefahr**, keine Gewähr. Lizenz: PolyForm Noncommercial 1.0.0, also keine kommerzielle Nutzung.
 - Mitmachen ist ausdrücklich erwünscht: [CONTRIBUTING.md](CONTRIBUTING.md). Issues und Pull Requests gern auf Deutsch
   oder Englisch.
