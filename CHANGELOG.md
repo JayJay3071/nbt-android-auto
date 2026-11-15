@@ -2,6 +2,19 @@
 
 Versions are named after the build date of the installer payload.
 
+## Unreleased
+
+Built with the QNX 6.5 GCC 4.4.2 toolchain; the audio route and the A2I output were tested on one car (BMW F07 2014,
+original HU_NBT). Not part of a released installer payload yet.
+
+- **Android Auto sound over USB, no Bluetooth needed** for music, navigation voice and system sounds. The original
+  NBT has no `libasound`, so the NBT-AAD browser-audio mixer now writes to the A2I endpoint `input_stereo_3`
+  (`src/android_auto/audio_a2i`). The new `audioconn` (`nbt_audioconn`) asks the audio ConnectionMaster
+  (FBlock 0x03) for connection 0xb8, the request the iDrive HMI itself sends (decoded from `HmiMain3D`), and removes
+  it again after silence and after every session. On by default; falls back to Bluetooth if the route is refused or
+  `liba2i_client.so` is missing; `touch .../NbtAndroidAutoRT/bt-audio` forces Bluetooth.
+  Details, findings and rollback: `docs/AA-AUDIO-PLAN.md`.
+
 ## 2026.11.10.2
 
 Tested on the car (BMW F07 2014, OnePlus 7 Pro), including install with the installer.

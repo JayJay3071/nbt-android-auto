@@ -42,7 +42,7 @@ MBEDTLS_URL = ("https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-%s
 MBEDTLS_DISABLED = ["MBEDTLS_AESNI_C", "MBEDTLS_HAVE_ASM", "MBEDTLS_PADLOCK_C"]
 # payload binaries built here (installer/payload/<name>)
 PROGRAMS = {"oneplus_native": "rt", "native_service": "rt", "decode_runner": "rt", "fifo_http": "rt",
-            "accessory_window": "rt", "nbt_knob": "rt", "nbt_hwvideo": "rt", "nbt_cluster": "rt",
+            "accessory_window": "rt", "nbt_knob": "rt", "nbt_hwvideo": "rt", "nbt_cluster": "rt", "audioconn": "rt",
             "libNbtAndroidAuto.so": "plugin"}
 
 
@@ -107,7 +107,7 @@ def add_nbt_aad(archive, checkout):
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         base = checkout / "milestone-7"
-        for folder in ("src", "include"):
+        for folder in ("src", "include", "third_party/speexdsp"):
             for path in (base / folder).rglob("*"):
                 if path.is_file():
                     target = work / "milestone-7" / path.relative_to(base)
@@ -124,6 +124,10 @@ def add_nbt_aad(archive, checkout):
         for patch in sorted((ROOT / "patches").glob("*.patch")):
             subprocess.run(["git", "apply", "--whitespace=nowarn", str(patch)], cwd=work, check=True)
             print("applied", patch.name)
+        # 4. original HU_NBT audio output: A2I input_stereo_3 instead of the libasound shim the car does not have
+        #    (car-verified 2026-11-15 with connection 0xb8, see docs/AA-AUDIO-PLAN.md)
+        for name in ("asound_device.cpp", "asound_device.hpp"):
+            (src / "audio" / name).write_bytes(text(ROOT / "src/android_auto/audio_a2i" / name))
         for path in sorted((work / "milestone-7").rglob("*")):
             if path.is_file():
                 archive.add("reference/" + path.relative_to(work / "milestone-7").as_posix(), path.read_bytes())

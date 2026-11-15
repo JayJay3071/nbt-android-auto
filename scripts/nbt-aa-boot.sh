@@ -23,6 +23,23 @@ touch $R/hw.mode
 # optional sharper picture: phone sends 1280x720 (touch $P/res720 to enable, rm to go back to 800x480)
 rm -f $R/res720
 if test -e $P/res720; then touch $R/res720; echo 'res720 on'; fi
+# Android Auto sound over the AA connection, on by default (docs/AA-AUDIO-PLAN.md): audioconn
+# (nbt_audioconn) asks the car's ConnectionMaster for the browser audio connection 0xb8.
+#   Back to Bluetooth:  touch $P/bt-audio   (rm $P/bt-audio = Android Auto sound again)
+#   Optional experiment: $P/aa-audio, first line another connection id ("0" = play without a route)
+# A refused / unanswered route switches to Bluetooth by itself until the next reboot ($R/audio-route.failed).
+rm -f $R/aa-audio $R/audioconn $R/bt-audio
+if test -f $P/audioconn; then cp $P/audioconn $R/audioconn && chmod 700 $R/audioconn; fi
+if test -e $P/aa-audio; then cp $P/aa-audio $R/aa-audio; fi
+if test -e $P/bt-audio; then
+  touch $R/bt-audio; echo 'audio: Bluetooth (bt-audio)'
+elif test ! -e /opt/sys/lib/liba2i_client.so -a ! -e $P/aa-audio; then
+  echo 'audio: Bluetooth (no liba2i_client on this NBT)'
+elif test -e $R/audio-route.failed; then
+  echo "audio: Bluetooth (route failed earlier: `sed 1q $R/audio-route.failed`)"
+else
+  echo "audio: Android Auto (`sed 1q $R/aa-audio 2>/dev/null || echo 0xb8`)"
+fi
 rm -f $R/wal.args $R/shadow.path
 # the plugin page exists: the phone is only switched after the page was opened once
 if test -e /fs/ram3/nbt-aa-hidden -o -e /fs/ram3/nbt-aa-request; then touch $R/gate.mode; fi
