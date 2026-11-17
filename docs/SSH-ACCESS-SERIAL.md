@@ -5,13 +5,18 @@ It costs nothing but a USB serial adapter and opening the head unit, and you sta
 car: nobody else connects to it remotely to install things.
 
 Method and credit: [IPL serial, telnet and SSH (spoolstreet.com)](https://spoolstreet.com/threads/ipl-serial-telnet-and-ssh.9172/).
-That thread has the details this page leaves out (serial settings, voltage level, ground).
 
 ## Pinout
 
 ![Debug serial on the Jacinto board: pin 1, 3 = RX, 4 = TX](images/nbt-jacinto-debug-serial.png)
 
 Pin 1 is marked with the red arrow; **pin 3 = RX** (green), **pin 4 = TX** (blue), as labelled in the picture.
+
+- **Serial settings:** 115200 baud, 8N1.
+- **Voltage level:** 3.3 V TTL. Use a 3.3 V USB serial adapter.
+- **Ground:** any screw of the head unit, or any pin that has continuity with the screws (pin 8, if memory serves;
+  check it with a multimeter first).
+- Connect the adapter's TX to the board's RX (pin 3) and the adapter's RX to the board's TX (pin 4).
 
 ## Enabling SSH
 
