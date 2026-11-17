@@ -34,6 +34,10 @@
 // WHEEL_UP ~30-60 s after start with nobody touching the roller): the first C30 after nbt_knob starts is a status
 // report, not a turn, and is only taken as the baseline now; and only 0x80 / 0x7e count as one step (before, any value
 // above / below 0x7f did). The raw value is logged.
+// Phone list (user 2026-11-17: the roller also skipped songs while scrolling the contact list opened with the steering
+// wheel phone button). Car trace 2026-11-17: the phone button = 15/02 fkt 400 (01 pressed, 00 released); nothing on MOST
+// marks the list closing. So after the phone button the roller stays with iDrive until it has been still for
+// NBT_LIST_HOLD_S seconds (default 8; every step inside the list restarts the time). 0 = off.
 // Forwarded as Android Auto media keys, also while the Android Auto page is not on screen: up -> NEXT 87,
 // down -> PREVIOUS 88, press -> PLAY_PAUSE 85. Override / switch off with NBT_WHEEL_UP / _DOWN / _PUSH = keycode / 0.
 // iDrive still gets the roller too.
@@ -224,7 +228,16 @@ bool wheelAllowed(const char* what) {
     return false;
 }
 
+long long g_listUntil = 0;      // roller for iDrive's phone list until then
+unsigned g_listHoldMs = 8000;
+
 void onWheel(const nbt::most::View& m, void*) {
+    if (m.fkt == 0x400 && m.len >= 1 && m.data[0] == 1 && g_listHoldMs) {   // phone button pressed
+        const bool copy = g_listUntil - (nowMs() + g_listHoldMs) > -200;   // the same press, once per HMI receiver
+        g_listUntil = nowMs() + g_listHoldMs;
+        if (!copy) printf("[Wheel] phone button: roller stays with iDrive (phone list) until %u s without a turn\n", g_listHoldMs / 1000);
+        return;
+    }
     if (m.len < 1 || (m.fkt != 0xC30 && m.fkt != 0xC31)) return;
     const uint8_t v = m.data[0];
     const long long t = nowMs();
@@ -235,6 +248,11 @@ void onWheel(const nbt::most::View& m, void*) {
     if (m.fkt == 0xC30 && !seenC30) {
         seenC30 = true;
         printf("[Wheel] first roller status %02x after start: baseline only, no key\n", v);
+        return;
+    }
+    if (nowMs() < g_listUntil) {                                         // scrolling iDrive's phone list
+        if (m.fkt == 0xC30) g_listUntil = nowMs() + g_listHoldMs;
+        printf("[Wheel] %s %02x: phone list open, not for the phone\n", m.fkt == 0xC30 ? "roller" : "push", v);
         return;
     }
     if (m.fkt == 0xC30) {
@@ -632,6 +650,7 @@ int main(int argc, char** argv) {
         g_auxPause = wheelKey("NBT_AUX_PAUSE", 1) != 0 && !trace;   // a --trace copy never sends keys
         g_auxResume = wheelKey("NBT_AUX_RESUME", 1) != 0;
         g_wheelAuxOnly = wheelKey("NBT_WHEEL_AUX_ONLY", 1) != 0;
+    g_listHoldMs = wheelKey("NBT_LIST_HOLD_S", 8) * 1000;
     }
     if (!most.addRoute(0x03, 0x00, 0xC03, 0xC, &onSource, NULL)) printf("[Knob] no room for the audio source route\n");
     if (!most.addRoute(0x03, 0x00, 0x053, nbt::most::kAny, &onSourceResult, NULL)) printf("[Knob] no room for the switch result route\n");
