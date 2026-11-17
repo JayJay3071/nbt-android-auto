@@ -12,6 +12,9 @@ iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrum
 > **This fork** ([valinet/nbt-android-auto](https://github.com/valinet/nbt-android-auto)) adds audio source handling,
 > steering wheel keys, BACK / tilt fixes, start at boot and more, tested on a BMW F30 with NBT. Full list:
 > [docs/FORK-CHANGES.md](docs/FORK-CHANGES.md). Build, install and debug commands: [docs/WORKFLOW.md](docs/WORKFLOW.md).
+>
+> **Audio:** in my setup, the phone is connected via USB, and its audio goes from the phone's 3.5 mm jack to the car's
+> AUX port. The entire solution is built around this; change it according to your needs.
 
 🇩🇪 **Deutsch:** Kurzfassung [weiter unten](#deutsch), Installationsanleitung in [installer/README.md](installer/README.md).
 

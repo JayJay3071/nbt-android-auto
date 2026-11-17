@@ -4,6 +4,9 @@ This fork ([valinet/nbt-android-auto](https://github.com/valinet/nbt-android-aut
 [JayJay3071/nbt-android-auto](https://github.com/JayJay3071/nbt-android-auto) `main` at `12c8411` (2026-11-11). It was
 developed and tested on a BMW F30 with NBT. Reverted experiments are not listed; only what the code does now.
 
+**Setup:** in my setup, the phone is connected via USB, and its audio goes from the phone's 3.5 mm jack to the car's AUX
+port. The entire solution is built around this; change it according to your needs (the `NBT_*` switches below).
+
 Most behaviour has an off switch: an environment variable read by `nbt_knob`, or a flag file in
 `/var/opt/hmi/data/rw/NbtAndroidAutoRT`. Defaults are as described. Commands for building and debugging:
 [WORKFLOW.md](WORKFLOW.md).
@@ -45,7 +48,7 @@ screen.
 ## Audio source (MOST ConnectionMaster)
 
 `nbt_knob` reads and switches the car's audio source directly, through the source master at MOST address 100E
-(FBlock 03, the ConnectionMaster). The phone's audio is expected on AUX (cable).
+(FBlock 03, the ConnectionMaster). The phone's audio is expected on AUX (3.5 mm cable, see Setup above).
 
 | Function | How |
 | --- | --- |
