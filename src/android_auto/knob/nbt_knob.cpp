@@ -147,30 +147,35 @@ int g_ownTiltStage = 0;                // our guard tilt coming back: 2 = its pr
 long long g_ownTiltUntil = 0;
 long long g_ignoreTiltUntil = 0;       // our tilt right: not for the phone (onKnob)
 
+bool sessionRunning();
+// the controller tricks (BACK guard, tilt left guard, BACK after tilt right) only while the Android Auto picture is on
+// screen AND a phone session runs (user 2026-11-17: not in the Android Auto menus while no phone is connected)
+bool aaActive() { return access("/fs/ram3/nbt-aa-hidden", F_OK) != 0 && sessionRunning(); }
+
 void onC20(const nbt::most::View& m, void*) {
     if (m.len < 7) return;
     pthread_mutex_lock(&g_backMx);
     if (m.data[2] != 0xFF) { g_ccsSrc = m.src; g_ccsDst = m.dst; g_ccsCounter = m.data[2]; }
     const long long tm = nowMs();
     if (g_backGuard && m.data[5] == 0x00 && m.data[3] == 1 && (m.data[6] & 0x02) && tm >= g_ignoreBackUntil &&
-        access("/fs/ram3/nbt-aa-hidden", F_OK) != 0)
+        aaActive())
         g_guardPending = true;                                         // the driver's BACK press: tilt right now
     if (m.data[5] == 0x1D && g_ownTiltStage && tm < g_ownTiltUntil) {   // our own guard tilt coming back
         if (g_ownTiltStage == 2 && m.data[3] == 1 && m.data[4] == 2) { g_ownTiltStage = 1; pthread_mutex_unlock(&g_backMx); return; }
         if (g_ownTiltStage == 1 && m.data[3] == 0) { g_ownTiltStage = 0; pthread_mutex_unlock(&g_backMx); return; }
     }
     if (tm >= g_ownTiltUntil) g_ownTiltStage = 0;
-    if (g_tiltGuard && m.data[5] == 0x1D && m.data[3] == 1 && m.data[4] == 8 && access("/fs/ram3/nbt-aa-hidden", F_OK) != 0) {
+    if (g_tiltGuard && m.data[5] == 0x1D && m.data[3] == 1 && m.data[4] == 8 && aaActive()) {
         g_guardPending = true;                                         // the driver's tilt left press: the same guard
         g_guardTiltLeft = true;
     } else if (m.data[5] == 0x1D && m.data[3] == 0 && g_guardTiltLeft) {
         g_guardTiltLeft = false;                                       // its release: BACK, as after a tilt right
-        if (access("/fs/ram3/nbt-aa-hidden", F_OK) != 0) g_backPending = true;
+        if (aaActive()) g_backPending = true;
     }
     if (m.data[5] == 0x1D && m.data[3] == 1 && m.data[4] == 2) g_tiltRightDown = true;
     else if (m.data[5] == 0x1D && m.data[3] == 0 && g_tiltRightDown) {
         g_tiltRightDown = false;
-        if (access("/fs/ram3/nbt-aa-hidden", F_OK) != 0) g_backPending = true;   // Android Auto on screen
+        if (aaActive()) g_backPending = true;   // Android Auto on screen
     }
     pthread_mutex_unlock(&g_backMx);
 }
