@@ -318,7 +318,7 @@ public:
     TargetPoll target;
     HoldSlot slots[kHoldCount];
     Entry():app(0),stopping(false),polling(false),entryFocused(false),running(false),focusMask(0),visibleMask(0),
-            shownText(0),shownMode(0),shownBoot(0),lastBootToggleMs(-100000),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0) {
+            shownText(0),shownMode(0),shownBoot(0),lastBootToggleMs(-100000),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0),showUntilMs(0) {
         checker.e=this; verifier.e=this; target.e=this;
         for(unsigned i=0;i<kHoldCount;++i){slots[i].e=this;slots[i].idx=i;}
     }
@@ -328,7 +328,9 @@ public:
     // 5 s (car 2026-11-08: with the focus in the split screen iDrive gave it back only after ~4.4 s; 2.5 s hid the picture
     // in between)
     void verify() { if(!verifier.pending&&!stopping&&app){verifier.pending=true;app->post(&verifier,5000);} }
-    void hold(const char* why) {
+    // counted=false: a show request and its one follow-up (NAV key, parking assistant, AUX): one per driver action, so
+    // they do not use up the loop guard (car 2026-11-18: a few NAV presses -> "refused by loop guard" for a minute)
+    void hold(const char* why,bool counted=true) {
         // review 2026-11-09: on every entry with Android Auto running the checker (+30 ms) and the status poll (+50 ms)
         // each sent the event, 50 ms apart and in the middle of iDrive's page transition; in the log of 2026-11-09 the
         // first ignored event was exactly such a pair. One event per second at most.
@@ -337,7 +339,7 @@ public:
         lastHoldMs=tm;lastAutoHold=now_s();
         long t=now_s();
         if(t-window>=60){window=t;holds=0;}
-        if(++holds>10){plog("hold refused by loop guard (10/min)");touch(kHidden);return;}
+        if(counted&&++holds>10){plog("hold refused by loop guard (10/min)");touch(kHidden);return;}
         // car 2026-11-09: iDrive sometimes ignores 52 for the rest of the drive (entry page shown, picture hidden): after
         // an ignored attempt the next one uses 54 (to hold state 13), then 52 again, ...
         const unsigned ev=ignoredHolds%2?kEvHoldAlt:kEvHold;
@@ -418,6 +420,7 @@ public:
         }
         return true;
     }
+    long long showUntilMs;   // a show request was handled: until then, a lost focus is taken back once (Checker)
     static bool holdFocus(void* self,const bmw::Parcel& p) {
         HoldSlot* s=static_cast<HoldSlot*>(self); Entry* e=s->e;
         bool focused=false;p.readBool(focused);
@@ -443,9 +446,13 @@ void TargetPoll::run() {
     const int want=running?(int)(kHoldState+kHoldCount-1):(int)kEntryState;
     if(want!=target){app->updateModel(kTargetModel,want);target=want;plog("entry target ->",want);}
     if(unlink(kShowRequest)==0){
+        // NAV (car 2026-11-18): iDrive opens its navigation ~1.3 s after the key, after the show request has already
+        // brought Android Auto back, and so took the screen again; with Android Auto already on screen (NAV pressed in
+        // Android Auto) it always did. For 4 s the Checker takes the focus back once more.
+        if(running)e->showUntilMs=now_ms()+4000;
         if(!running)plog("show request ignored: Android Auto not running",0);
         else if(e->holdFocused())plog("show request: already on screen",0);
-        else e->hold("show request");
+        else e->hold("show request",false);
     }
     app->post(this,250);   // 250 ms: show requests (NAV key, parking assistant) take effect quickly
 }
@@ -468,6 +475,13 @@ void Checker::run() {
             if(wait>0){touch(kBackKey);e->check((unsigned)wait+50);plog("check: BACK left the page, hold in ms",(int)wait);return;}
             plog("check: BACK left the page -> back to Android Auto");e->hold("hold (after BACK)");return;
         }
+    }
+    if(e->running&&now_ms()<e->showUntilMs){
+        const long long wait=1000-(now_ms()-e->lastHoldMs);       // hold() sends at most one event per second
+        if(wait>0){e->check((unsigned)wait+50);plog("check: focus taken after a show request, hold in ms",(int)wait);return;}
+        e->showUntilMs=0;
+        e->hold("check: focus taken after a show request (NAV: iDrive navigation) -> hold",false);
+        return;
     }
     if(e->running&&e->holdVisible()){
         // tilt right puts the iDrive focus into the split screen: taken back at once, so a normal tilt right is not noticed
