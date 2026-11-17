@@ -621,6 +621,29 @@ void stop_live(int)
 // media keys PLAY_PAUSE 85, NEXT 87, PREVIOUS 88 (steering wheel, 2026-11-12; all in the DHU template's keycodes_supported).
 const char* const kInputFifo = "/fs/ram3/nbt-aa-native/input.fifo";
 
+// Car day/night for Android Auto's night mode (dark maps at night). The HMI plugin writes CDS vehicle.dayNightChangeOver
+// to this file as '{"dayNightChangeOver":N}': 2 night, 1 day, 0 no change, 3 invalid (mapped like NBT-AAD / factory
+// CarPlay). Returns 1 night, 0 day, -1 unknown (keep what the phone has).
+const char* const kDayNightFile = "/fs/ram3/nbt-aa-daynight";
+int car_night()
+{
+    char b[96];
+    const int fd = open(kDayNightFile, O_RDONLY);
+    if (fd < 0)
+        return -1;
+    const ssize_t n = read(fd, b, sizeof(b) - 1);
+    close(fd);
+    if (n <= 0)
+        return -1;
+    b[n] = 0;
+    const char* p = strchr(b, ':');
+    p = p ? p + 1 : b;
+    while (*p == ' ' || *p == '"')
+        ++p;
+    const int v = atoi(p);
+    return v == 2 ? 1 : (v == 1 ? 0 : -1);
+}
+
 bool allowed_key(unsigned k)
 {
     return k == 3 || k == 4 || k == 5 || (k >= 19 && k <= 23) || k == 84 || k == 85 || k == 87 || k == 88 ||
@@ -743,6 +766,13 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
         session.setVideoFocusCallback(focus_request, 0);
     }
     setenv("NBT_VID_RES", "1", 0); // 800x480 unless the service asks for 1280x720 (res720)
+    // Day/night before the session starts: the phone asks for the NIGHT_MODE sensor early and gets this value
+    int night_posted = c.live ? car_night() : -1;
+    if (night_posted >= 0) {
+        session.postNightMode(night_posted != 0);
+        printf("AA_NIGHT car is in %s mode at session start\n", night_posted ? "night" : "day");
+    }
+    long long next_night_check = 0;
     printf("AA_VIDEO_CAPTURE_BEGIN max_seconds=%u max_bytes=8388608 max_frames=%u no_display=1 no_audio_playback=1\n",
            seconds, c.frame_limit);
     if (!session.start(pair[0])) {
@@ -817,6 +847,15 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
             g_refocus_at = 0;
             session.postVideoFocus(true);
             printf("AA_FOCUS projection given back to the phone\n");
+        }
+        if (!bye_until && c.live && now_ms() >= next_night_check) {
+            next_night_check = now_ms() + 1000;
+            const int n = car_night();
+            if (n >= 0 && n != night_posted) {
+                night_posted = n;
+                session.postNightMode(n != 0);
+                printf("AA_NIGHT car switched to %s mode: Android Auto %s\n", n ? "night" : "day", n ? "dark" : "light");
+            }
         }
         if (!bye_until && bg_focus && now_ms() >= next_focus_check && now_ms() - start >= 2000) {
             next_focus_check = now_ms() + 250;

@@ -16,6 +16,7 @@ Tested on a BMW F30 with NBT. Technical details: [docs/FORK-CHANGES.md](docs/FOR
   the front. These act only while a session runs.
 - **Start at boot** button (on / off); the service starts right away instead of after 15 s.
 - **Parking assistant:** Android Auto comes back when it closes.
+- **Night mode:** Android Auto (Google Maps, Waze) follows the car's day / night switch-over.
 - **Restart system** button and `scripts/nbt_reset.py` (reboot from a laptop).
 - One hold screen instead of 8; USB reads wait 8 s instead of 2 s; Bluetooth audio keeps working while Android Auto
   runs.
