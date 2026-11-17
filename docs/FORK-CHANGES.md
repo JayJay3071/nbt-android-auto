@@ -47,7 +47,7 @@ screen.
 | BACK | Goes to the phone; on the press nbt_knob sends iDrive a tilt right, so iDrive's BACK only returns the focus (`NBT_BACK_GUARD`) |
 | Tilt left | The same tilt right on the press, plus a BACK on the release (`NBT_TILT_GUARD`) |
 | NAV | Brings Android Auto to the front (`NBT_NAV_OPENS_AA`) |
-| NAV held (0.8 s) | Android Auto audio: switches the source to AUX and starts playback on the phone if it is not playing (`NBT_NAV_LONG_MS`, 0 = off) |
+| NAV in Android Auto | Android Auto audio: source not AUX → switch to AUX and start playback if the phone is not playing; source AUX → play / pause (`NBT_NAV_AUDIO`) |
 | MENU, COM, MEDIA, OPTION | Hide the picture at once and stay with iDrive |
 | Wheel roller | Up = NEXT, down = PREVIOUS, push = PLAY_PAUSE, only while the source is AUX (`NBT_WHEEL_AUX_ONLY`) |
 | Roller at start | The first status after start (`ff`) is ignored; only `80` / `7e` count as steps (fixed a one-time song skip at boot) |
