@@ -15,6 +15,9 @@ iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrum
 >
 > **Audio:** in my setup, the phone is connected via USB, and its audio goes from the phone's 3.5 mm jack to the car's
 > AUX port. The entire solution is built around this; change it according to your needs.
+>
+> **Split screen:** I primarily develop and test this with iDrive's split screen on, showing the trip computer. Other
+> split screen contents, or split screen off, get less testing.
 
 🇩🇪 **Deutsch:** Kurzfassung [weiter unten](#deutsch), Installationsanleitung in [installer/README.md](installer/README.md).
 
