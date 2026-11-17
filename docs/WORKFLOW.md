@@ -59,6 +59,19 @@ The logs live in RAM (`/fs/ram3`): a reboot clears them, so read them before reb
 | How sessions ended | `%CAR% "grep -h -e AA_USB -e 'No data' -e 'closed socket' /fs/ram3/nbt-aa-native/capture-*.log"` |
 | System log | `%CAR% "sloginfo \| tail -40"` |
 
+## CPU load
+
+CPU use per adaptive partition (QNX APS) over the last 0.1 s, 1 s and 10 s:
+
+```
+%CAR% "aps show -v"
+```
+
+It groups processes, it does not name them: the HMI and everything this project starts (spawned from the HMI plugin) run
+in `interaction`, system services such as `io-nme` (the decoder) most likely in `System`. Compare the **Total** of the
+10 s column, taken in the same situation (same screen, video running, phone connected for a minute), for example with the
+hardware decoder on and off.
+
 ## MOST trace
 
 60 s of all MOST messages the head unit receives, then copied to the laptop:
