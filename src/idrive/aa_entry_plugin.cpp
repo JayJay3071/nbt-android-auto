@@ -81,6 +81,7 @@ const char* const kLeave="/fs/ram3/nbt-aa-leave";
 // this flag on the driver's BACK while the picture is on screen; when the page is left within 2 s of it, the Checker
 // brings Android Auto back with one hold event (hold(): 1 per s, 10 per minute).
 const char* const kBackKey="/fs/ram3/nbt-aa-back";
+const char* const kGuard="/fs/ram3/nbt-aa-guard";   // nbt_knob's BACK guard (tilt right on the driver's BACK)
 const unsigned kEntryState=10, kHoldState=13, kEvHold=52, kFocus=1, kVisible=11, kStatusModel=4;
 // picture mode selection (2026-11-08): buttons on page 10 lead to the inert states 30 (16:9) / 31 (widescreen); their
 // focus handler stores the mode, restarts the service and sends focus event 53 back to page 10
@@ -429,7 +430,7 @@ public:
         plog(focused?"hold focus 1, level":"hold focus 0, level",(int)s->idx);
         e->target.start();
         if(focused){unlink(kLeave);unlink(kHidden);touch(kRequest);e->ignoredHolds=0;e->startPolling(500);
-            if(s->idx<=kRefillLevel&&!e->refill.pending&&!e->stopping){e->refill.pending=true;e->app->post(&e->refill,700);}}
+            /* refill off (2026-11-17): BACK does not climb the hold levels on this iDrive, the event only cost */}
         else e->check(150);            // decide after the HMI has finished its transition (see Checker)
         return true;
     }
@@ -474,6 +475,11 @@ void Checker::run() {
     if(!e||e->stopping||!e->app||e->holdFocused())return;    // BACK only climbed one hold level: nothing to do
     readStatus(&e->running);
     if(unlink(kLeave)==0){plog("check: leave key");touch(kHidden);return;}
+    {   // BACK guard (nbt_knob): its tilt right moved the focus into the split screen; the driver's BACK release brings it
+        // back. Wait for that instead of sending a hold event (up to 1.5 s after the guard).
+        struct stat st;
+        if(stat(kGuard,&st)==0&&time(0)-st.st_mtime<=1&&now_ms()-e->lastFocusMs<1500){e->check(200);return;}
+    }
     {
         struct stat st;
         const bool back=stat(kBackKey,&st)==0&&time(0)-st.st_mtime<=2;

@@ -125,11 +125,26 @@ uint8_t g_ccsCounter = 0;              // its last counter
 bool g_tiltRightDown = false;
 bool g_backPending = false;            // tilt right released: the main loop sends BACK
 long long g_ignoreBackUntil = 0;       // our own BACK coming back: not for the phone
+// BACK guard (2026-11-17, test): iDrive's BACK goes back in its history and leaves Android Auto; bringing the page back
+// with a focus event per BACK made iDrive ignore the event after a burst (car log 2026-11-17, as on 2026-11-07). A BACK
+// pressed while iDrive's focus is in the split screen only brings the focus back (car: our BACK after a tilt right).
+// So on the driver's BACK press, while Android Auto is on screen, nbt_knob sends a tilt right (press + release) at once:
+// if iDrive acts on the BACK release, the focus is in the split screen by then and BACK just returns it. Our own tilt
+// is neither answered with a BACK nor sent to the phone. /fs/ram3/nbt-aa-guard tells the plugin to wait for it.
+// NBT_BACK_GUARD=0 off.
+bool g_backGuard = true;
+bool g_guardPending = false;
+long long g_ignoreTiltUntil = 0;
 
 void onC20(const nbt::most::View& m, void*) {
     if (m.len < 7) return;
     pthread_mutex_lock(&g_backMx);
     if (m.data[2] != 0xFF) { g_ccsSrc = m.src; g_ccsDst = m.dst; g_ccsCounter = m.data[2]; }
+    const long long tm = nowMs();
+    if (g_backGuard && m.data[5] == 0x00 && m.data[3] == 1 && (m.data[6] & 0x02) && tm >= g_ignoreBackUntil &&
+        access("/fs/ram3/nbt-aa-hidden", F_OK) != 0)
+        g_guardPending = true;                                         // the driver's BACK press: tilt right now
+    if (tm < g_ignoreTiltUntil && m.data[5] == 0x1D) { pthread_mutex_unlock(&g_backMx); return; }   // our own tilt
     if (m.data[5] == 0x1D && m.data[3] == 1 && m.data[4] == 2) g_tiltRightDown = true;
     else if (m.data[5] == 0x1D && m.data[3] == 0 && g_tiltRightDown) {
         g_tiltRightDown = false;
@@ -359,6 +374,30 @@ void favouritesIfNeeded(nbt::most::Client& most) {
     }
 }
 
+nbt::most::Msg tiltRightMsg(uint16_t src, uint16_t dst, uint8_t counter, bool down) {
+    nbt::most::Msg m = backMsg(src, dst, counter, down);
+    m.data[4] = down ? 0x02 : 0x00; m.data[5] = 0x1D; m.data[6] = 0x01;   // car trace: 01 1d c 01 02 1d 01 / 01 1d c 00 00 1d 01
+    return m;
+}
+
+// main thread: the tilt right of the BACK guard
+void sendGuardIfPending(nbt::most::Client& most) {
+    pthread_mutex_lock(&g_backMx);
+    if (!g_guardPending) { pthread_mutex_unlock(&g_backMx); return; }
+    g_guardPending = false;
+    const uint16_t src = g_ccsSrc, dst = g_ccsDst;
+    const uint8_t c1 = nextCounter(g_ccsCounter), c2 = nextCounter(c1);
+    g_ccsCounter = c2;
+    g_ignoreTiltUntil = nowMs() + 600;
+    pthread_mutex_unlock(&g_backMx);
+    if (!src || !dst) return;
+    if (FILE* f = fopen("/fs/ram3/nbt-aa-guard", "w")) fclose(f);
+    most.send(tiltRightMsg(src, dst, c1, true));
+    usleep(30000);
+    most.send(tiltRightMsg(src, dst, c2, false));
+    printf("[Knob] BACK guard: tilt right to iDrive (%04X->%04X, counters %02x %02x)\n", src, dst, c1, c2);
+}
+
 // main thread: never send from the DSI callback thread
 void sendBackIfPending(nbt::most::Client& most) {
     pthread_mutex_lock(&g_backMx);
@@ -379,6 +418,12 @@ void sendBackIfPending(nbt::most::Client& most) {
 void onKnob(const nbt::car::CcsEvent& ev, void*) {
     char line[48];
     int n;
+    if (!strcmp(ev.what, "TILT_RIGHT")) {
+        pthread_mutex_lock(&g_backMx);
+        const bool ours = nowMs() < g_ignoreTiltUntil;
+        pthread_mutex_unlock(&g_backMx);
+        if (ours) { printf("[Knob] TILT_RIGHT %s: our own (BACK guard), not for the phone\n", ev.down ? "down" : "up"); return; }
+    }
     if (ev.keycode == nbt::AAK_BACK) {
         pthread_mutex_lock(&g_backMx);
         const bool ours = nowMs() < g_ignoreBackUntil;
@@ -527,6 +572,7 @@ int main(int argc, char** argv) {
     if (trace) g_aaButton = 0;
     g_playAux = wheelKey("NBT_PLAY_AUX", 1) != 0 && !trace;
     g_navOpensAa = wheelKey("NBT_NAV_OPENS_AA", 1) != 0 && !trace;
+    g_backGuard = wheelKey("NBT_BACK_GUARD", 1) != 0 && !trace;
     if (!most.addRoute(0xE5, 0x0F, 0xC06, 0xC, &onE5Periodic, NULL)) printf("[Knob] no room for the HMI address route\n");
     {
         const char* v = getenv("NBT_AUX_SOURCE");
@@ -558,7 +604,7 @@ int main(int argc, char** argv) {
         usleep(20000);
         if (most.state() != nbt::most::kUp) subscribed = false;
         else if (!subscribed) subscribed = sourceNotification(most, true);   // answered with the current source
-        if (!trace) sendBackIfPending(most);
+        if (!trace) { sendGuardIfPending(most); sendBackIfPending(most); }
         favouritesIfNeeded(most);
         playSwitchIfNeeded(most);
         clock_gettime(CLOCK_MONOTONIC, &t);
