@@ -318,7 +318,7 @@ public:
     TargetPoll target;
     HoldSlot slots[kHoldCount];
     Entry():app(0),stopping(false),polling(false),entryFocused(false),running(false),focusMask(0),visibleMask(0),
-            shownText(0),shownMode(0),shownBoot(0),lastBootToggleMs(-100000),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0),showUntilMs(0) {
+            shownText(0),shownMode(0),shownBoot(0),lastBootToggleMs(-100000),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0),showUntilMs(0),showRetryAtMs(0) {
         checker.e=this; verifier.e=this; target.e=this;
         for(unsigned i=0;i<kHoldCount;++i){slots[i].e=this;slots[i].idx=i;}
     }
@@ -421,6 +421,15 @@ public:
         return true;
     }
     long long showUntilMs;   // a show request was handled: until then, a lost focus is taken back once (Checker)
+    // car 2026-11-18: iDrive ignores every second focus event (after one that took, the next is ignored; after an ignored
+    // one, the other event number takes). A show request's event is checked ~1.1 s later (TargetPoll) and, not taken,
+    // sent again at once with the other number instead of hiding after the Verifier's 5 s.
+    long long showRetryAtMs;
+    void showHold(const char* why) {
+        const long long before=lastHoldMs;
+        hold(why,false);
+        if(lastHoldMs!=before)showRetryAtMs=lastHoldMs+1100;      // only when an event actually went out
+    }
     static bool holdFocus(void* self,const bmw::Parcel& p) {
         HoldSlot* s=static_cast<HoldSlot*>(self); Entry* e=s->e;
         bool focused=false;p.readBool(focused);
@@ -452,7 +461,14 @@ void TargetPoll::run() {
         if(running)e->showUntilMs=now_ms()+4000;
         if(!running)plog("show request ignored: Android Auto not running",0);
         else if(e->holdFocused())plog("show request: already on screen",0);
-        else e->hold("show request",false);
+        else e->showHold("show request");
+    }
+    if(e->showRetryAtMs&&now_ms()>=e->showRetryAtMs){
+        e->showRetryAtMs=0;
+        if(running&&!e->holdFocused()){
+            ++e->ignoredHolds;                                     // next event: the other number
+            e->showHold("show request not taken -> other focus event");
+        }
     }
     app->post(this,250);   // 250 ms: show requests (NAV key, parking assistant) take effect quickly
 }
@@ -480,7 +496,7 @@ void Checker::run() {
         const long long wait=1000-(now_ms()-e->lastHoldMs);       // hold() sends at most one event per second
         if(wait>0){e->check((unsigned)wait+50);plog("check: focus taken after a show request, hold in ms",(int)wait);return;}
         e->showUntilMs=0;
-        e->hold("check: focus taken after a show request (NAV: iDrive navigation) -> hold",false);
+        e->showHold("check: focus taken after a show request (NAV: iDrive navigation) -> hold");
         return;
     }
     if(e->running&&e->holdVisible()){
