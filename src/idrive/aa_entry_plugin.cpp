@@ -203,10 +203,13 @@ class Entry;
 // Problem: every tilt LEFT acted as BACK and every tilt RIGHT opened the split screen; each was undone with a focus event
 // (triggerEvent 52). After a few dozen of them the HMI stopped honouring the event (picture gone until a reboot).
 // Now: kHoldCount nested inert states (13 .. 13+N-1, each the parent of the next, focus event 52 targets the deepest).
-// BACK / tilt left only climbs one level and stays on a hold state: no event. Only when the entry page (10) is reached
+// 2026-11-17: one hold state only - BACK goes back in iDrive's history (it never climbed the levels) and tilt left is
+// kept on the hold state by nbt_knob's guards (tilt right, then BACK). If a guard misses, the entry page is reached and
+// one hold event brings Android Auto back (below).
+// Only when the entry page (10) is reached
 // one event goes out. Side panels / popups: at most one re-hold per 1.5 s. Never more than 10 events per minute, and no
 // periodic re-hold any more. The split screen itself is best switched off in iDrive (OPTION -> split screen).
-const unsigned kHoldCount=8;
+const unsigned kHoldCount=1;   // 2026-11-17: one hold state (was 8 nested ones; nbt_knob's BACK / tilt guards)
 // Decides, shortly after a hold state lost focus, what happened:
 //   another hold state has the focus (BACK climbed a level)         -> nothing
 //   a hard key was pressed (flag from nbt_knob)                      -> hide
@@ -228,18 +231,6 @@ public:
     void run();
 };
 struct HoldSlot { Entry* e; unsigned idx; };
-// BACK (user 2026-11-17: "sometimes goes back in iDrive"): every BACK goes to the phone AND climbs one hold level in
-// iDrive; at the top level (0) the next BACK leaves to the entry page. The focus event 54 (fallback for an ignored 52)
-// lands on level 0, so after it the very first BACK left. Now, 700 ms after a hold level <= 2 got the focus, one 52
-// takes the focus back to the deepest level (7): at most one per 2 s and inside the 10-per-minute loop guard; only 52,
-// never the 54 fallback (that would land on level 0 again).
-const unsigned kRefillLevel=2;
-class Refill : public bmw::Runnable {
-public:
-    Entry* e; bool pending; long long lastMs;
-    Refill():e(0),pending(false),lastMs(-100000) {}
-    void run();
-};
 // sends focus event 53 (back to page 10) after a mode choice
 class BackToEntry : public bmw::Runnable {
 public:
@@ -319,11 +310,10 @@ public:
     Verifier verifier;
     BackToEntry back;
     TargetPoll target;
-    Refill refill;
     HoldSlot slots[kHoldCount];
     Entry():app(0),stopping(false),polling(false),entryFocused(false),running(false),focusMask(0),visibleMask(0),
             shownText(0),shownMode(0),shownBoot(0),lastBootToggleMs(-100000),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0) {
-        checker.e=this; verifier.e=this; target.e=this; refill.e=this;
+        checker.e=this; verifier.e=this; target.e=this;
         for(unsigned i=0;i<kHoldCount;++i){slots[i].e=this;slots[i].idx=i;}
     }
     bool holdFocused() const { return focusMask!=0; }
@@ -429,8 +419,7 @@ public:
         e->lastFocusMs=now_ms();
         plog(focused?"hold focus 1, level":"hold focus 0, level",(int)s->idx);
         e->target.start();
-        if(focused){unlink(kLeave);unlink(kHidden);touch(kRequest);e->ignoredHolds=0;e->startPolling(500);
-            /* refill off (2026-11-17): BACK does not climb the hold levels on this iDrive, the event only cost */}
+        if(focused){unlink(kLeave);unlink(kHidden);touch(kRequest);e->ignoredHolds=0;e->startPolling(500);}
         else e->check(150);            // decide after the HMI has finished its transition (see Checker)
         return true;
     }
@@ -441,22 +430,6 @@ public:
         return true;
     }
 };
-void Refill::run() {
-    pending=false;
-    if(!e||e->stopping||!e->app||!e->holdFocused())return;
-    unsigned level=0;while(level<kHoldCount&&!(e->focusMask&(1u<<level)))++level;
-    if(level>kRefillLevel)return;                           // already deeper again (a hold event came meanwhile)
-    readStatus(&e->running);
-    if(!e->running)return;
-    const long long tm=now_ms();
-    if(tm-lastMs<2000){plog("refill skipped (one 2 s ago)",(int)level);return;}
-    long t=now_s();
-    if(t-e->window>=60){e->window=t;e->holds=0;}
-    if(++e->holds>10){plog("refill refused by loop guard (10/min)",(int)level);return;}
-    lastMs=tm;e->lastHoldMs=tm;
-    plog("refill: hold level low, focus event 52 from level",(int)level);
-    e->app->triggerEvent(kEvHold);
-}
 void TargetPoll::run() {
     if(!app||!e||e->stopping){active=false;return;}
     bool running=false;
@@ -625,7 +598,6 @@ bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& 
     bmw::PluginApp* app=new bmw::PluginApp(d,bmw::BasicString<char>(name),p,c);
     entry.app=app;entry.stopping=false;entry.polling=false;entry.checker.e=&entry;entry.checker.pending=false;entry.verifier.e=&entry;entry.verifier.pending=false;
     entry.focusMask=entry.visibleMask=0;
-    entry.refill.e=&entry;entry.refill.pending=false;
     bmw::ActionDelegate onEntry={&entry,&Entry::entryFocus};
     app->addHandler(kEntryState,kFocus,onEntry);
     entry.back.app=app;entry.shownMode=0;
@@ -668,7 +640,7 @@ void destroy(bmw::IPluginApp* p) {
     if(!created)return;
     entry.stopping=true;
     touch(kHidden);
-    entry.checker.e=0;entry.verifier.e=0;entry.back.app=0;entry.target.app=0;entry.refill.e=0;g_sysApp=0;
+    entry.checker.e=0;entry.verifier.e=0;entry.back.app=0;entry.target.app=0;g_sysApp=0;
     delete reinterpret_cast<bmw::PluginApp*>(p);   // native handler drops the queued runnable (entry is static)
     entry.app=0;
     created=false;
