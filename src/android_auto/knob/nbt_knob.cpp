@@ -85,6 +85,9 @@
 // autoplay, play on the phone / wheel / in Android Auto), so leaving AUX while music plays is not undone.
 // NBT_PLAY_AUX=0 off.
 // NBT_AUX_SOURCE = source byte of AUX (hex, default BB), NBT_AUX_PAUSE=0 off, NBT_AUX_RESUME=0 pause only.
+// 2026-11-18: with Android Auto sound in the car (aa_media_out) native_service sets NBT_AUX_SOURCE=f6 (main source
+// f6, io-amp input input_stereo_1) and NBT_AUX_OPENS_AA=0: everything above that says AUX then means f6, and iDrive's
+// own AUX stays factory. Without it (file media-jack) the Android Auto source is AUX, as before.
 // NAV while Android Auto is on screen (user 2026-11-18, instead of a long NAV press): the source is not AUX -> switch
 // to AUX and start playback on the phone unless it already plays (or unless our earlier AUX-left pause is about to be
 // undone by the back-to-AUX resume); the source is AUX -> PLAY_PAUSE (85) to the phone. The show request still goes
@@ -229,7 +232,7 @@ bool g_wheelAuxOnly = true;
 
 bool wheelAllowed(const char* what) {
     if (!g_wheelAuxOnly || g_lastSource < 0 || g_lastSource == (int)g_auxSource) return true;
-    printf("[Wheel] %s ignored: source %02X is not AUX\n", what, g_lastSource);
+    printf("[Wheel] %s ignored: source %02X is not the Android Auto source %02X\n", what, g_lastSource, g_auxSource);
     return false;
 }
 
@@ -354,12 +357,12 @@ void onSource(const nbt::most::View& m, void*) {
     if (prev == (int)g_auxSource && s != (int)g_auxSource) {
         const int st = mediaState();
         g_wePaused = sessionRunning() && st != 3;          // already paused: nothing to do, nothing to resume
-        printf("[Source] AUX left, phone media state %d\n", st);
+        printf("[Source] Android Auto source %02X left, phone media state %d\n", g_auxSource, st);
         if (g_wePaused) { wheelKeyLine(85, 1, "AUX_LEFT_PAUSE"); wheelKeyLine(85, 0, "AUX_LEFT_PAUSE"); }
     } else if (s == (int)g_auxSource && g_wePaused) {
         g_wePaused = false;
         const int st = mediaState();
-        printf("[Source] back on AUX, phone media state %d\n", st);
+        printf("[Source] back on the Android Auto source %02X, phone media state %d\n", g_auxSource, st);
         if (g_auxResume && sessionRunning() && st != 2) { wheelKeyLine(85, 1, "AUX_BACK_PLAY"); wheelKeyLine(85, 0, "AUX_BACK_PLAY"); }
     }
 }

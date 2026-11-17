@@ -95,6 +95,18 @@ Off by default (software decoding). Applies from the next session: replug the ph
 | Hardware decoder off | `%CAR% "rm -f /var/opt/hmi/data/rw/NbtAndroidAutoRT/hwdecode"` |
 | Which one runs | `%CAR% "grep -h 'decoder:' /fs/ram3/nbt-aa-native/decoder-*.log"` |
 
+## Android Auto sound: USB or cable
+
+By default the phone's sound comes over USB into the car (source `f6`). To use the 3.5 mm cable on AUX instead:
+
+| What | Command |
+| --- | --- |
+| Cable (AUX) | `%CAR% "touch /var/opt/hmi/data/rw/NbtAndroidAutoRT/media-jack"` |
+| USB (default) | `%CAR% "rm -f /var/opt/hmi/data/rw/NbtAndroidAutoRT/media-jack"` |
+| What the session does with the sound | `%CAR% "grep -h AA_MEDIA_OUT /fs/ram3/nbt-aa-native/capture-*.log"` |
+
+Applies after **Restart Android Auto** (the service reads the file when it starts).
+
 ## Test tool nbt_key
 
 Copy it to the car after a build (it is not part of the installer payload):

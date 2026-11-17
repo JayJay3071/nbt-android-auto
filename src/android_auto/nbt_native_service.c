@@ -449,7 +449,21 @@ int main(int argc, char** argv)
     setenv("NBT_AA_PAD", "8192", 0);
     setenv("NBT_CAR_YEAR", "2014", 1);
     setenv("NBT_HU_MODEL", "HU_NBT", 1);
-    setenv("NBT_SDR_DROP", "2,4,9", 1); /* services not offered to the phone (see NBT-AAD sdr_builder) */
+    /* Android Auto sound in the car (2026-11-18, aa_media_out.hpp): the media channel (9) is offered to the phone, its
+     * sound goes into io-amp input input_stereo_1, which plays as main source f6 (car-tested: built without a medium,
+     * kept by iDrive, no iDrive player on the steering wheel). nbt_knob treats f6 as the Android Auto audio source (play /
+     * NAV in Android Auto switch to it, leaving it pauses the phone) and leaves iDrive's AUX alone. The file media-jack in
+     * the runtime directory brings back the cable setup: no media channel (the phone plays on its own jack), the
+     * Android Auto source is AUX (bb) and choosing AUX opens Android Auto, as before. */
+    if (access("media-jack", F_OK) != 0) {
+        setenv("NBT_SDR_DROP", "2,4", 1); /* services not offered to the phone (see NBT-AAD sdr_builder) */
+        setenv("NBT_AA_MEDIA_OUT", "input_stereo_1", 0);
+        setenv("NBT_AUX_SOURCE", "f6", 0);
+        setenv("NBT_AUX_OPENS_AA", "0", 0);
+    } else {
+        setenv("NBT_SDR_DROP", "2,4,9", 1);
+        unsetenv("NBT_AA_MEDIA_OUT");
+    }
     setenv("NBT_RX_TIMEOUT_S", "5", 1);
 
     /* ---- mode switches (files in the runtime directory) ---- */

@@ -57,7 +57,16 @@ screen.
 ## Audio source (MOST ConnectionMaster)
 
 `nbt_knob` reads and switches the car's audio source directly, through the source master at MOST address 100E
-(FBlock 03, the ConnectionMaster). The phone's audio is expected on AUX (3.5 mm cable, see Setup above).
+(FBlock 03, the ConnectionMaster).
+
+**Android Auto sound over USB (2026-11-18, being tested):** the phone's media, navigation prompts and system sounds come
+over the Android Auto connection and are written into io-amp input `input_stereo_1` (`aa_media_out`, A2I client,
+48 kHz stereo, media turned down under prompts, acks once played). That input plays as main source **`f6`**, which the
+amplifier builds without a medium; iDrive keeps it, shows no player and leaves the steering wheel to us. `f6` is the
+Android Auto source: play or NAV in Android Auto switches to it, leaving it pauses the phone, the rocker goes to the
+phone only on `f6`. iDrive's AUX stays factory. The file `media-jack` in `/var/opt/hmi/data/rw/NbtAndroidAutoRT` brings
+back the cable setup (no media channel, the Android Auto source is AUX, choosing AUX opens Android Auto). Prompts
+while another source plays (radio) are not audible yet (next step: connection `b8` + `input_stereo_3`).
 
 | Function | How |
 | --- | --- |

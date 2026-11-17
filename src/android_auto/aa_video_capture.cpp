@@ -15,6 +15,7 @@
 //   AASession navigation callback --> nav_status() --> /fs/ram3/nbt-aa-native/nav.state
 #include "aa_video_capture.h"
 #include "aa_session.hpp"
+#include "aa_media_out.hpp"
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <sys/stat.h>
@@ -512,6 +513,23 @@ void video(uint32_t, const uint8_t* p, size_t n, uint64_t pts, void* v)
     save((Capture*)v, p, n, pts, false);
 }
 
+// Android Auto sound into the car (2026-11-18, aa_media_out.hpp): the service sets NBT_AA_MEDIA_OUT to the io-amp input
+// of the Android Auto audio source (input_stereo_1 = connection f6) and offers the media channel to the phone.
+void media_audio(uint8_t channel, const uint8_t* pcm, size_t len, uint64_t, void*)
+{
+    nbt::mediaout::onAudio(channel, pcm, len);
+}
+
+void media_state(uint8_t channel, bool started, uint32_t rate, uint32_t channels, void*)
+{
+    nbt::mediaout::onState(channel, started, rate, channels);
+}
+
+void media_consumed(uint8_t channel, size_t bytes, void* session)
+{
+    static_cast<nbt::AASession*>(session)->postAudioConsumed(channel, bytes);
+}
+
 // The phone asked for the screen back (car 2026-11-10: the "exit to car" icon in the Android Auto rail, picked with the
 // controller): it stops the video, our decoder ran dry ("stream inactive"), the service ended the session and the phone
 // refused the reconnect - the "connected but nothing works" drop-out. This head unit has no native screen to hand back
@@ -765,6 +783,19 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
         unlink("/fs/ram3/nbt-aa-native/nav.state");
         g_refocus_at = 0;
         session.setVideoFocusCallback(focus_request, 0);
+        const char* media_out = getenv("NBT_AA_MEDIA_OUT");
+        if (media_out && *media_out) {
+            nbt::mediaout::setConsumedCallback(media_consumed, &session);
+            if (nbt::mediaout::start(media_out)) {
+                // acks once played: the phone sends at the speed the car plays (no queue growing, no cuts)
+                session.setDeferredAudioAcks(true);
+                session.setAudioFrameCallback(media_audio, 0);
+                session.setAudioStateCallback(media_state, 0);
+                printf("AA_MEDIA_OUT Android Auto sound -> %s\n", media_out);
+            } else {
+                printf("AA_MEDIA_OUT not available: no Android Auto sound in the car this session\n");
+            }
+        }
     }
     setenv("NBT_VID_RES", "1", 0); // 800x480 unless the service asks for 1280x720 (res720)
     // Day/night before the session starts: the phone asks for the NIGHT_MODE sensor early and gets this value
@@ -897,6 +928,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     if (bye_until)
         printf("AA_BYEBYE %s\n", session.isActive() ? "session still open: closing it" : "session ended cleanly");
     shutdown(c.socket, SHUT_RDWR);
+    nbt::mediaout::stop();   // before the session: its writer reports consumed audio to the session
     session.stop();
     if (c.live)
         unlink("/fs/ram3/nbt-aa-native/nav.state");
