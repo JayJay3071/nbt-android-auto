@@ -223,6 +223,11 @@ public:
     BackToEntry():app(0) {}
     void run() { if(app){plog("mode chosen -> back to page 10");app->triggerEvent(kEvEntry);} }
 };
+// Show request (2026-11-17, to replace favourite 8): a program creates /fs/ram3/nbt-aa-show; the poll below removes it
+// and, while Android Auto runs, sends the hold focus event (52/54, through hold(): rate limit and loop guard apply) to
+// bring the picture to the front from wherever iDrive is. Open: whether iDrive honours the focus event while another
+// application is in front. The poll runs once the Android Auto page was opened in this boot.
+const char* const kShowRequest="/fs/ram3/nbt-aa-show";
 // HMI thread, every second once started: the entry's target (model 5) follows the service state
 const unsigned kTargetModel=5;
 class TargetPoll : public bmw::Runnable {
@@ -368,6 +373,11 @@ void TargetPoll::run() {
     readStatus(&running);
     const int want=running?(int)(kHoldState+kHoldCount-1):(int)kEntryState;
     if(want!=target){app->updateModel(kTargetModel,want);target=want;plog("entry target ->",want);}
+    if(unlink(kShowRequest)==0){
+        if(!running)plog("show request ignored: Android Auto not running",0);
+        else if(e->holdFocused())plog("show request: already on screen",0);
+        else e->hold("show request");
+    }
     app->post(this,1000);
 }
 void Checker::run() {
