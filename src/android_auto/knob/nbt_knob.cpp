@@ -37,7 +37,8 @@
 // Phone list (user 2026-11-17: the roller also skipped songs while scrolling the contact list opened with the steering
 // wheel phone button). Car trace 2026-11-17: the phone button = 15/02 fkt 400 (01 pressed, 00 released); nothing on MOST
 // marks the list closing. So after the phone button the roller stays with iDrive until it has been still for
-// NBT_LIST_HOLD_S seconds (default 8; every step inside the list restarts the time). 0 = off.
+// NBT_LIST_HOLD_S seconds (default 5, the list's own timeout: user 2026-11-17, it closes 5 s after the last turn;
+// every step inside the list restarts the time). 0 = off.
 // Forwarded as Android Auto media keys, also while the Android Auto page is not on screen: up -> NEXT 87,
 // down -> PREVIOUS 88, press -> PLAY_PAUSE 85. Override / switch off with NBT_WHEEL_UP / _DOWN / _PUSH = keycode / 0.
 // iDrive still gets the roller too.
@@ -229,7 +230,7 @@ bool wheelAllowed(const char* what) {
 }
 
 long long g_listUntil = 0;      // roller for iDrive's phone list until then
-unsigned g_listHoldMs = 8000;
+unsigned g_listHoldMs = 5000;
 
 void onWheel(const nbt::most::View& m, void*) {
     if (m.fkt == 0x400 && m.len >= 1 && m.data[0] == 1 && g_listHoldMs) {   // phone button pressed
@@ -650,7 +651,7 @@ int main(int argc, char** argv) {
         g_auxPause = wheelKey("NBT_AUX_PAUSE", 1) != 0 && !trace;   // a --trace copy never sends keys
         g_auxResume = wheelKey("NBT_AUX_RESUME", 1) != 0;
         g_wheelAuxOnly = wheelKey("NBT_WHEEL_AUX_ONLY", 1) != 0;
-    g_listHoldMs = wheelKey("NBT_LIST_HOLD_S", 8) * 1000;
+    g_listHoldMs = wheelKey("NBT_LIST_HOLD_S", 5) * 1000;
     }
     if (!most.addRoute(0x03, 0x00, 0xC03, 0xC, &onSource, NULL)) printf("[Knob] no room for the audio source route\n");
     if (!most.addRoute(0x03, 0x00, 0x053, nbt::most::kAny, &onSourceResult, NULL)) printf("[Knob] no room for the switch result route\n");
