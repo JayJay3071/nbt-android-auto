@@ -131,8 +131,12 @@ long long g_ignoreBackUntil = 0;       // our own BACK coming back: not for the 
 // So on the driver's BACK press, while Android Auto is on screen, nbt_knob sends a tilt right (press + release) at once:
 // if iDrive acts on the BACK release, the focus is in the split screen by then and BACK just returns it. Our own tilt
 // is neither answered with a BACK nor sent to the phone. /fs/ram3/nbt-aa-guard tells the plugin to wait for it.
-// NBT_BACK_GUARD=0 off.
+// NBT_BACK_GUARD=0 off. Car 2026-11-17: works (iDrive acts on the BACK release).
+// Tilt left (2026-11-17, test): iDrive treats it as "back" too, but climbs one of the 8 nested hold levels per tilt (car
+// log: level 7 -> 0, then the entry page and one hold event). The same guard on the tilt left press: if iDrive acts on
+// the tilt release with its focus in the split screen, no level is used. NBT_TILT_GUARD=0 off.
 bool g_backGuard = true;
+bool g_tiltGuard = true;
 bool g_guardPending = false;
 long long g_ignoreTiltUntil = 0;
 
@@ -144,6 +148,9 @@ void onC20(const nbt::most::View& m, void*) {
     if (g_backGuard && m.data[5] == 0x00 && m.data[3] == 1 && (m.data[6] & 0x02) && tm >= g_ignoreBackUntil &&
         access("/fs/ram3/nbt-aa-hidden", F_OK) != 0)
         g_guardPending = true;                                         // the driver's BACK press: tilt right now
+    if (g_tiltGuard && m.data[5] == 0x1D && m.data[3] == 1 && m.data[4] == 8 && tm >= g_ignoreTiltUntil &&
+        access("/fs/ram3/nbt-aa-hidden", F_OK) != 0)
+        g_guardPending = true;                                         // the driver's tilt left press: the same
     if (tm < g_ignoreTiltUntil && m.data[5] == 0x1D) { pthread_mutex_unlock(&g_backMx); return; }   // our own tilt
     if (m.data[5] == 0x1D && m.data[3] == 1 && m.data[4] == 2) g_tiltRightDown = true;
     else if (m.data[5] == 0x1D && m.data[3] == 0 && g_tiltRightDown) {
@@ -573,6 +580,7 @@ int main(int argc, char** argv) {
     g_playAux = wheelKey("NBT_PLAY_AUX", 1) != 0 && !trace;
     g_navOpensAa = wheelKey("NBT_NAV_OPENS_AA", 1) != 0 && !trace;
     g_backGuard = wheelKey("NBT_BACK_GUARD", 1) != 0 && !trace;
+    g_tiltGuard = wheelKey("NBT_TILT_GUARD", 1) != 0 && !trace;
     if (!most.addRoute(0xE5, 0x0F, 0xC06, 0xC, &onE5Periodic, NULL)) printf("[Knob] no room for the HMI address route\n");
     {
         const char* v = getenv("NBT_AUX_SOURCE");
