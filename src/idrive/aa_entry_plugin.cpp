@@ -46,6 +46,7 @@ template<class R,class A1,class A2,class A3,class A4> struct Delegate {
     R (*stub)(void*,A1);
 };
 typedef Delegate<bool,const Parcel&,void,void,void> ActionDelegate;
+typedef Delegate<bool,const BasicString<unsigned short>&,void,void,void> CdsDelegate;
 class TextID {
 public:
     explicit TextID(unsigned id);   // _ZN3bmw6TextIDC1Ej -> ID(id, 0x28): {u32 id, u32 type}, trivially destructible
@@ -61,6 +62,10 @@ public:
     void updateModel(unsigned,const TextID&);
     void updateModel(unsigned,int);   // _ZN3bmw9PluginApp11updateModelEji (in this car's libAppFramework.A.so)
     void addHandler(unsigned,unsigned,const ActionDelegate&);
+    // this car's libAppFramework.A.so (2026-11-17): start() = state 0/4 -> 1 + PluginAppHandler::start() (the queue of
+    // post()ed runnables is served from then on); the HMI calls it only when the page is first opened.
+    bool start();
+    void cdsAddPropertyChangedEventHandler(BasicString<char>&,unsigned,const CdsDelegate&);
 private:
     uint32_t opaque_[1024];
 };
@@ -229,6 +234,41 @@ public:
 // application is in front: car 2026-11-17, yes - brought to the front at once. The poll starts 5 s after the plugin is
 // created (so it also serves "Start at boot", before the page was ever opened) and again from the focus handlers.
 const char* const kShowRequest="/fs/ram3/nbt-aa-show";
+// Early start (2026-11-17): car log of 2026-11-17 - nothing post()ed ran before the page was first opened (the HMI calls
+// PluginApp::start() only then), so the show request did nothing at boot. create() now calls start() itself (a later
+// start() from the HMI finds state 1 and just returns true; init()/onInit still come from the HMI as before).
+// Car data (TEST, log only): CDS properties driving.gear and sensors.PDCStatus (names from NBT-AAD's EVO app; whether
+// this NBT has them is what the log will show), subscribed 3 s after create; every change goes to the plugin log and to
+// /fs/ram3/nbt-aa-gear / nbt-aa-pdc.
+void cdsText(const bmw::BasicString<unsigned short>& v,char* out,size_t size) {
+    const unsigned short* p=*reinterpret_cast<const unsigned short* const*>(&v);   // data_ = the UTF-16 text itself
+    size_t n=0;
+    while(p&&p[n]&&n<size-1){out[n]=p[n]<0x80?(char)p[n]:'?';++n;}
+    out[n]=0;
+}
+void cdsLog(const char* name,const char* file,const bmw::BasicString<unsigned short>& v) {
+    char text[160];cdsText(v,text,sizeof(text));
+    char line[200];snprintf(line,sizeof(line),"CDS %s = '%s'",name,text);
+    plog(line,0);
+    int fd=open(file,O_WRONLY|O_CREAT|O_TRUNC,0644);
+    if(fd>=0){size_t l=strlen(text);text[l]='\n';write(fd,text,l+1);close(fd);}
+}
+bool onGear(void*,const bmw::BasicString<unsigned short>& v){cdsLog("driving.gear","/fs/ram3/nbt-aa-gear",v);return true;}
+bool onPdc(void*,const bmw::BasicString<unsigned short>& v){cdsLog("sensors.PDCStatus","/fs/ram3/nbt-aa-pdc",v);return true;}
+class CdsSubscribe : public bmw::Runnable {
+public:
+    bmw::PluginApp* app;
+    CdsSubscribe():app(0) {}
+    void run() {
+        if(!app)return;
+        bmw::BasicString<char> g("driving.gear"),p("sensors.PDCStatus");
+        bmw::CdsDelegate dg={app,&onGear},dp={app,&onPdc};
+        app->cdsAddPropertyChangedEventHandler(g,0,dg);
+        app->cdsAddPropertyChangedEventHandler(p,0,dp);
+        plog("CDS handlers for driving.gear and sensors.PDCStatus registered",0);
+    }
+};
+CdsSubscribe g_cds;
 // HMI thread, every second once started: the entry's target (model 5) follows the service state
 const unsigned kTargetModel=5;
 class TargetPoll : public bmw::Runnable {
@@ -548,7 +588,9 @@ bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& 
     created=true;
     touch(kHidden);   // nothing is shown before the page is opened
     unlink(kShowRequest);                       // a request left from before this HMI start
+    plog("app start at create",app->start()?1:0);
     entry.target.active=true;app->post(&entry.target,5000);   // show requests (Start at boot) before the page is opened
+    g_cds.app=app;app->post(&g_cds,3000);
     {
         pthread_attr_t at; pthread_t th;
         pthread_attr_init(&at); pthread_attr_setdetachstate(&at,PTHREAD_CREATE_DETACHED);
