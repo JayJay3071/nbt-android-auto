@@ -85,6 +85,11 @@
 // autoplay, play on the phone / wheel / in Android Auto), so leaving AUX while music plays is not undone.
 // NBT_PLAY_AUX=0 off.
 // NBT_AUX_SOURCE = source byte of AUX (hex, default BB), NBT_AUX_PAUSE=0 off, NBT_AUX_RESUME=0 pause only.
+// NAV held (user 2026-11-17: "long press on NAV switches to the audio from Android Auto, starts playing if not already"):
+// NAV down starts a timer; still held after NBT_NAV_LONG_MS (default 800) while a session runs -> switch the source to
+// AUX if it is not AUX, and PLAY_PAUSE (85) to the phone unless it already plays (or unless our earlier AUX-left pause
+// is about to be undone by the back-to-AUX resume). The short press part (show request) stays as it is.
+// NBT_NAV_LONG_MS=0 off.
 //
 // usage: nbt_knob --probe                 only dlopen the DSI library and resolve its symbols (no connection)
 //        nbt_knob [--seconds N] [--fifo PATH]   observe and forward (default FIFO /fs/ram3/nbt-aa-native/input.fifo)
@@ -397,6 +402,8 @@ bool g_playAux = true;
 bool g_navOpensAa = true;
 int g_prevMedia = -1;           // -1 = not read yet (the first read is only the starting point)
 long long g_mediaNextCheck = 0;
+unsigned g_navLongMs = 800;
+long long g_navDownMs = 0;      // NAV held since (0 = not held / long press already handled); under g_backMx
 
 void playSwitchIfNeeded(nbt::most::Client& most) {
     if (!g_playAux) return;
@@ -409,6 +416,27 @@ void playSwitchIfNeeded(nbt::most::Client& most) {
     if (g_lastSource < 0 || g_lastSource == (int)g_auxSource || !sessionRunning()) return;
     printf("[Source] phone plays while the source is %02X\n", g_lastSource);
     requestSource(most, g_auxSource);
+}
+
+// main thread: NAV held long enough -> Android Auto audio (see the header)
+void navLongIfNeeded(nbt::most::Client& most) {
+    if (!g_navLongMs) return;
+    pthread_mutex_lock(&g_backMx);
+    const long long down = g_navDownMs;
+    const bool fire = down && nowMs() - down >= (long long)g_navLongMs;
+    if (fire) g_navDownMs = 0;                      // once per press
+    pthread_mutex_unlock(&g_backMx);
+    if (!fire || !sessionRunning()) return;
+    const int st = mediaState();
+    const bool onAux = g_lastSource == (int)g_auxSource;
+    printf("[Knob] NAV held: Android Auto audio (source %02X, phone media state %d)\n", g_lastSource < 0 ? 0xFF : g_lastSource, st);
+    if (!onAux) requestSource(most, g_auxSource);
+    if (st == 2) return;                                           // already playing
+    if (!onAux && g_wePaused && g_auxResume) return;               // the back-to-AUX resume (onSource) starts it
+    wheelKeyLine(85, 1, "NAV_LONG_PLAY");
+    wheelKeyLine(85, 0, "NAV_LONG_PLAY");
+    g_prevMedia = 2;                                               // our own play: no second switch request
+    g_mediaNextCheck = nowMs() + 3000;
 }
 
 void favouritesIfNeeded(nbt::most::Client& most) {
@@ -504,6 +532,12 @@ void onKnob(const nbt::car::CcsEvent& ev, void*) {
             int fd = open("/fs/ram3/nbt-aa-back", O_WRONLY | O_CREAT | O_TRUNC, 0644);
             if (fd >= 0) close(fd);
         }
+    }
+    // NAV held -> Android Auto audio (navLongIfNeeded, main thread): remember when NAV went down, forget on release
+    if (!ev.keycode && ev.kind == 1 && !strcmp(ev.what, "NAV")) {
+        pthread_mutex_lock(&g_backMx);
+        g_navDownMs = ev.down && !ev.cancel ? nowMs() : 0;
+        pthread_mutex_unlock(&g_backMx);
     }
     // NAV opens Android Auto (user 2026-11-17): iDrive still gets the key and opens its navigation, the show request
     // (HMI plugin, checked every 250 ms) brings Android Auto back over it. NBT_NAV_OPENS_AA=0: NAV stays with iDrive.
@@ -642,6 +676,7 @@ int main(int argc, char** argv) {
     g_playAux = wheelKey("NBT_PLAY_AUX", 1) != 0 && !trace;
     g_auxOpensAa = wheelKey("NBT_AUX_OPENS_AA", 1) != 0 && !trace;
     g_navOpensAa = wheelKey("NBT_NAV_OPENS_AA", 1) != 0 && !trace;
+    g_navLongMs = trace ? 0 : wheelKey("NBT_NAV_LONG_MS", 800);
     g_backGuard = wheelKey("NBT_BACK_GUARD", 1) != 0 && !trace;
     g_tiltGuard = wheelKey("NBT_TILT_GUARD", 1) != 0 && !trace;
     if (!most.addRoute(0xE5, 0x0F, 0xC06, 0xC, &onE5Periodic, NULL)) printf("[Knob] no room for the HMI address route\n");
@@ -679,6 +714,7 @@ int main(int argc, char** argv) {
         if (!trace) { sendGuardIfPending(most); sendBackIfPending(most); }
         favouritesIfNeeded(most);
         playSwitchIfNeeded(most);
+        navLongIfNeeded(most);
         clock_gettime(CLOCK_MONOTONIC, &t);
         long el = (long)(t.tv_sec - t0.tv_sec);
         if (seconds && el >= seconds) break;

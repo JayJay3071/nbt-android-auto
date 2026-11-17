@@ -13,7 +13,7 @@ Tested on a BMW F30 with NBT. Technical details: [docs/FORK-CHANGES.md](docs/FOR
 - **Steering wheel:** roller = next / previous, push = play / pause, only on AUX; no song skip at boot; the roller stays
   with iDrive's contact list for 4 s after the phone button.
 - **Controller:** BACK and tilt left / right stay in Android Auto, also with split screen on; NAV brings Android Auto to
-  the front. These act only while a session runs.
+  the front. These act only while a session runs. Holding NAV switches to the phone's audio (AUX) and starts playback.
 - **Start at boot** button (on / off); the service starts right away instead of after 15 s.
 - **Parking assistant:** Android Auto comes back when it closes.
 - **Night mode:** Android Auto (Google Maps, Waze) goes dark when the headlights are on.
