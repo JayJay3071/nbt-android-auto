@@ -109,5 +109,15 @@ Read the current audio source:
 %CAR% "LD_LIBRARY_PATH=/opt/sys/lib:/lib:/usr/lib /fs/ram3/nbt_key source 5"
 ```
 
+Beep test (`nbt_a2i_beep`, also only in the build folder): K short beeps into one io-amp input, audible only while
+the amplifier has a connection to that input:
+
+```
+%CAR% "cat > /fs/ram3/nbt_a2i_beep && chmod 755 /fs/ram3/nbt_a2i_beep" < build\qnx-build-<newest>\programs\nbt_a2i_beep
+```
+```
+%CAR% "LD_LIBRARY_PATH=/opt/sys/lib:/lib:/usr/lib /fs/ram3/nbt_a2i_beep input_stereo_3 2"
+```
+
 Other modes: `--watch [s]` (print controller messages), `back [s]` (BACK after a tilt right),
 `cm <fkt> <op> <bytes>` (send one ConnectionMaster message to 100E; `cm 053 6 00 10 00 bb` switches to AUX).

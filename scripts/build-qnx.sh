@@ -59,6 +59,9 @@ $CXX -Iref nbt_hwvideo.cpp ref/dsi_client.cpp ref/most/client.cpp -o $OUT/nbt_hw
 $CXX -Iref nbt_cluster.cpp ref/dsi_client.cpp ref/most/client.cpp -o $OUT/nbt_cluster -lm
 $CXX -Iref nbt_key.cpp ref/dsi_client.cpp ref/most/client.cpp -o $OUT/nbt_key
 
+echo "== nbt_a2i_beep (test: beeps into an io-amp input)"
+$CC -Wall $A/audio/nbt_a2i_beep.c -o $OUT/nbt_a2i_beep -lm
+
 echo "== HMI plugin libNbtAndroidAuto.so"
 cd $W/src/idrive
 if test -f $HMI_LIBS/libAppFramework.A.so -a -f $HMI_LIBS/libCoreFramework.A.so; then

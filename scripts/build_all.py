@@ -43,7 +43,8 @@ MBEDTLS_DISABLED = ["MBEDTLS_AESNI_C", "MBEDTLS_HAVE_ASM", "MBEDTLS_PADLOCK_C"]
 # payload binaries built here (installer/payload/<name>)
 PROGRAMS = {"oneplus_native": "rt", "native_service": "rt", "decode_runner": "rt", "fifo_http": "rt",
             "accessory_window": "rt", "nbt_knob": "rt", "nbt_hwvideo": "rt", "nbt_cluster": "rt",
-            "libNbtAndroidAuto.so": "plugin", "nbt_reset": "rt", "nbt_key": "test"}
+            "libNbtAndroidAuto.so": "plugin", "nbt_reset": "rt", "nbt_key": "test",
+            "nbt_a2i_beep": "test"}
 
 
 def git(*args, cwd=None):
