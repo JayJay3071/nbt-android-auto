@@ -81,6 +81,9 @@ The phone's playing / paused state comes from the session: a small NBT-AAD core 
 - **USB reads:** a session's USB read waits 8 s instead of 2 s (the session's own 5 s silence rule decides), and
   failed transfers are logged as `AA_USB_IN/OUT_FAILED`.
 - **Phone keys:** the session lets the media keys 85, 87 and 88 through to the phone.
+- **Hardware decoding (opt-in):** the flag file `/var/opt/hmi/data/rw/NbtAndroidAutoRT/hwdecode` makes the decoder use
+  `NmeCmdLine -wd 1` instead of software decoding, from the next session on. Off by default: on 2026-11-10 it gave
+  seconds of delay.
 
 ## Build, tools
 

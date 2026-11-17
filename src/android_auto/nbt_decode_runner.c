@@ -155,6 +155,9 @@ static void nme_restore(const char* when)
     printf("NME_OPTIONS %s: %d written back\n", when, changed);
 }
 
+#define HW_DECODE_FLAG "/var/opt/hmi/data/rw/NbtAndroidAutoRT/hwdecode"
+static const char* wd = "0"; /* NmeCmdLine -wd: 0 software, 1 hardware decoding */
+
 /* Cinemo output 1 = the stock video window classes that VideoApp/DisplayManager show (same as the stock USB player) */
 #define STOCK_VIDEO_OUTPUT                                                                                          \
     "?video-output-id=1&video-output-aspect-x=1&video-output-aspect-y=1"                                            \
@@ -194,6 +197,10 @@ int main(int argc, char** argv)
     signal(SIGPIPE, SIG_IGN);
     setvbuf(stdout, NULL, _IOLBF, 0);
 
+    /* Opt-in hardware decoding (user 2026-11-17): the flag file switches -wd 0 to -wd 1 (see the note below on why
+     * software is the default). Read at every decoder start, so it applies from the next session on. */
+    wd = access(HW_DECODE_FLAG, F_OK) == 0 ? "1" : "0";
+    printf("NBT_DECODE_RUNNER decoder: %s (-wd %s)\n", wd[0] == '1' ? "hardware" : "software", wd);
     nme_save();
     nme_restore("start"); /* repairs what an earlier run left (Audio/Enable=0 from the old "-a0") */
     child = fork();
@@ -217,25 +224,25 @@ int main(int argc, char** argv)
 
         if (!strcmp(argv[4], "screen720"))
             /* phone canvas 1280x720 with content rows 0..479 (insets 0,240,0,0) -> crop 667/1000 */
-            execl(argv[2], "NmeCmdLine", "-wd", "0", "-wi", "0", "-wm", "0", "-vd", "NmeDeviceScreen", "-vi",
+            execl(argv[2], "NmeCmdLine", "-wd", wd, "-wi", "0", "-wm", "0", "-vd", "NmeDeviceScreen", "-vi",
                   STOCK_VIDEO_OUTPUT,
                   "-vf", "-vr", "0,0,1000,667", "-va", "3", "-x", "800", "-y", "480", "-xx", "0", "-yy", "0",
                   "-i", "-ic", argv[3], (char*)0);
         else if (!strcmp(argv[4], "screencenter"))
             /* whole 800x480 phone canvas 1:1 (no crop); nbt_hwvideo places the window in the middle of the display */
-            execl(argv[2], "NmeCmdLine", "-wd", "0", "-wi", "0", "-wm", "0", "-vd", "NmeDeviceScreen", "-vi",
+            execl(argv[2], "NmeCmdLine", "-wd", wd, "-wi", "0", "-wm", "0", "-vd", "NmeDeviceScreen", "-vi",
                   STOCK_VIDEO_OUTPUT,
                   "-vf", "-va", "3", "-x", "800", "-y", "480", "-xx", "0", "-yy", "0",
                   "-i", "-ic", argv[3], (char*)0);
         else if (!strcmp(argv[4], "screen"))
             /* -vr 0,0,1000,625: only the phone's content rows 0..299 of 480 (insets 0,180,0,0) */
-            execl(argv[2], "NmeCmdLine", "-wd", "0", "-wi", "0", "-wm", "0", "-vd", "NmeDeviceScreen", "-vi",
+            execl(argv[2], "NmeCmdLine", "-wd", wd, "-wi", "0", "-wm", "0", "-vd", "NmeDeviceScreen", "-vi",
                   STOCK_VIDEO_OUTPUT,
                   "-vf", "-vr", "0,0,1000,625", "-va", "3", "-x", "800", "-y", "480", "-xx", "0", "-yy", "0",
                   "-i", "-ic", argv[3], (char*)0);
         else
             /* no display (-n): decoded frames go to the raw video output argv[4] (old PNG pipeline) */
-            execl(argv[2], "NmeCmdLine", "-n", "-wd", "0", "-wi", "0", "-wm", "0", "-i", "-ic", "-dv", argv[4],
+            execl(argv[2], "NmeCmdLine", "-n", "-wd", wd, "-wi", "0", "-wm", "0", "-i", "-ic", "-dv", argv[4],
                   argv[3], (char*)0);
         _exit(127);
     }

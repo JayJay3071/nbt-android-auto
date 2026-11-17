@@ -70,6 +70,16 @@ The logs live in RAM (`/fs/ram3`): a reboot clears them, so read them before reb
 %CAR% "cat /fs/ram3/trace.txt" > trace.txt
 ```
 
+## Hardware decoder
+
+Off by default (software decoding). Applies from the next session: replug the phone or use **Restart Android Auto**.
+
+| What | Command |
+| --- | --- |
+| Hardware decoder on | `%CAR% "touch /var/opt/hmi/data/rw/NbtAndroidAutoRT/hwdecode"` |
+| Hardware decoder off | `%CAR% "rm -f /var/opt/hmi/data/rw/NbtAndroidAutoRT/hwdecode"` |
+| Which one runs | `%CAR% "grep -h 'decoder:' /fs/ram3/nbt-aa-native/decoder-*.log"` |
+
 ## Test tool nbt_key
 
 Copy it to the car after a build (it is not part of the installer payload):
