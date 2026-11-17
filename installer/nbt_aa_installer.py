@@ -171,6 +171,43 @@ class Nbt:
 
 
 # --------------------------------------------------------------------------------------------------------------------
+def _crc_table():
+    table = []
+    for i in range(256):
+        c = i << 24
+        for _ in range(8):
+            c = ((c << 1) ^ 0x04C11DB7) if c & 0x80000000 else (c << 1)
+        table.append(c & 0xFFFFFFFF)
+    return table
+
+
+_CRC_TABLE = _crc_table()
+
+
+def posix_cksum(data):
+    """The POSIX cksum CRC (what `cksum` prints first): CRC-32/CKSUM over the data and its length."""
+    crc = 0
+    for b in data:
+        crc = ((crc << 8) & 0xFFFFFFFF) ^ _CRC_TABLE[((crc >> 24) ^ b) & 0xFF]
+    n = len(data)
+    while n:
+        crc = ((crc << 8) & 0xFFFFFFFF) ^ _CRC_TABLE[((crc >> 24) ^ (n & 0xFF)) & 0xFF]
+        n >>= 8
+    return (~crc) & 0xFFFFFFFF
+
+
+def installed_sums(nbt, targets):
+    """{target: (crc, size)} of the files already on the head unit, from one `cksum` call. Empty when the head unit has
+    no cksum or its output is not the POSIX form: then every file is written, as before."""
+    code, out, _ = nbt.run('cksum ' + ' '.join("'%s'" % t for t in targets) + ' 2>/dev/null', check=False)
+    sums = {}
+    for line in out.decode('utf-8', 'replace').splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+            sums[parts[2]] = (int(parts[0]), int(parts[1]))
+    return sums
+
+
 def load_manifest():
     directory = payload_dir()
     manifest_path = directory / 'manifest.json'
@@ -212,7 +249,7 @@ def preflight(nbt, log, root):
         raise InstallError('The HMI data directory is read-only.')
 
 
-def install(nbt, log, root=''):
+def install(nbt, log, root='', force=False):
     manifest = load_manifest()
     log('Package %s, %d files' % (manifest.get('version', '?'), len(manifest['files'])))
     preflight(nbt, log, root)
@@ -221,10 +258,21 @@ def install(nbt, log, root=''):
     files = sorted(manifest['files'], key=lambda e: e['target'].endswith('.manifest'))
     for directory in sorted({(root + e['target']).rsplit('/', 1)[0] for e in files}):
         nbt.run("mkdir -p '%s'" % directory)     # every target directory exists before the first write
+    # files whose content is already on the head unit are not written again (same CRC and size as `cksum` reports;
+    # --force writes everything)
+    sums = {} if force else installed_sums(nbt, [root + e['target'] for e in files])
+    skipped = 0
     for entry in files:
         target = root + entry['target']
-        log('  write %-46s %8d bytes' % (entry['target'].split('/')[-1], len(entry['data'])))
+        name = entry['target'].split('/')[-1]
+        if sums.get(target) == (posix_cksum(entry['data']), len(entry['data'])):
+            nbt.run("chmod %s '%s'" % (entry['mode'], target))
+            log('  same  %-46s %8d bytes' % (name, len(entry['data'])))
+            skipped += 1
+            continue
+        log('  write %-46s %8d bytes' % (name, len(entry['data'])))
         nbt.put(entry['data'], target, entry['mode'])
+    log('  %d of %d files unchanged, not written again' % (skipped, len(files)))
     dpi = root + RT_DIR + '/vid.dpi'
     nbt.run("test -f '%s' || echo 100 > '%s'" % (dpi, dpi))
     nbt.run("rm -f '%s/disabled'" % (root + RT_DIR))
@@ -288,7 +336,10 @@ def run_cli(args):
             save_logs(nbt, print, args.output or 'nbt-aa-logs-%s.zip' % time.strftime('%Y%m%d-%H%M%S'),
                       args.root)
         else:
-            ACTIONS[args.cli](nbt, print, args.root)
+            if args.cli == 'install':
+                install(nbt, print, args.root, force=args.force)
+            else:
+                ACTIONS[args.cli](nbt, print, args.root)
     finally:
         nbt.close()
 
@@ -401,6 +452,7 @@ def main():
     parser.add_argument('--port', type=int, default=22)
     parser.add_argument('--user', default='root')
     parser.add_argument('--output', help='logs: target zip file')
+    parser.add_argument('--force', action='store_true', help='install: write every file, also the unchanged ones')
     # development only: key login and installing below a test directory (e.g. in a QNX build VM)
     parser.add_argument('--key', help=argparse.SUPPRESS)
     parser.add_argument('--root', default='', help=argparse.SUPPRESS)

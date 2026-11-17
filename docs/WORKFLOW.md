@@ -38,6 +38,8 @@ python installer\make_payload.py --built build\qnx-build-<newest> --pem-dir .loc
 ```
 python installer\nbt_aa_installer.py --cli install
 ```
+Files already on the head unit with the same content are not written again (`same` in the output). To write
+everything anyway, add `--force`.
 
 5. Reboot the head unit: Multimedia → Android Auto → **Restart system**, or from the laptop:
 ```
