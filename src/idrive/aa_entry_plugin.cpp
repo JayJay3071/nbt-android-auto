@@ -30,6 +30,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <sys/stat.h>
@@ -237,9 +238,12 @@ const char* const kShowRequest="/fs/ram3/nbt-aa-show";
 // Early start (2026-11-17): car log of 2026-11-17 - nothing post()ed ran before the page was first opened (the HMI calls
 // PluginApp::start() only then), so the show request did nothing at boot. create() now calls start() itself (a later
 // start() from the HMI finds state 1 and just returns true; init()/onInit still come from the HMI as before).
-// Car data (TEST, log only): CDS properties driving.gear and sensors.PDCStatus (names from NBT-AAD's EVO app; whether
-// this NBT has them is what the log will show), subscribed 3 s after create; every change goes to the plugin log and to
-// /fs/ram3/nbt-aa-gear / nbt-aa-pdc.
+// Car data: CDS properties driving.gear and sensors.PDCStatus (names from NBT-AAD's EVO app), subscribed 3 s after
+// create; every change goes to the plugin log and to /fs/ram3/nbt-aa-gear / nbt-aa-pdc. Car 2026-11-17: both exist on
+// this NBT; '{"PDCStatus":1}' = parking assistant on screen, 2 = off; gear read '{"gear":15}' in P.
+// Back after parking (user 2026-11-17: after the parking assistant iDrive returned to its last screen, not to Android
+// Auto): when PDCStatus becomes 1 while the picture is on screen (no nbt-aa-hidden yet: the PDC value comes ~150 ms
+// before the page loses focus), its end (2) creates the show request, so Android Auto comes back.
 void cdsText(const bmw::BasicString<unsigned short>& v,char* out,size_t size) {
     const unsigned short* p=*reinterpret_cast<const unsigned short* const*>(&v);   // data_ = the UTF-16 text itself
     size_t n=0;
@@ -254,7 +258,16 @@ void cdsLog(const char* name,const char* file,const bmw::BasicString<unsigned sh
     if(fd>=0){size_t l=strlen(text);text[l]='\n';write(fd,text,l+1);close(fd);}
 }
 bool onGear(void*,const bmw::BasicString<unsigned short>& v){cdsLog("driving.gear","/fs/ram3/nbt-aa-gear",v);return true;}
-bool onPdc(void*,const bmw::BasicString<unsigned short>& v){cdsLog("sensors.PDCStatus","/fs/ram3/nbt-aa-pdc",v);return true;}
+bool g_pdcFromAa=false;   // the parking assistant came up over the Android Auto picture
+bool onPdc(void*,const bmw::BasicString<unsigned short>& v){
+    cdsLog("sensors.PDCStatus","/fs/ram3/nbt-aa-pdc",v);
+    char text[160];cdsText(v,text,sizeof(text));
+    const char* d=text;while(*d&&(*d<'0'||*d>'9'))++d;
+    const int st=*d?atoi(d):-1;
+    if(st==1){g_pdcFromAa=access(kHidden,F_OK)!=0;plog("parking assistant on, Android Auto was on screen",g_pdcFromAa?1:0);}
+    else if(st==2&&g_pdcFromAa){g_pdcFromAa=false;touch(kShowRequest);plog("parking assistant off: back to Android Auto",0);}
+    return true;
+}
 class CdsSubscribe : public bmw::Runnable {
 public:
     bmw::PluginApp* app;
