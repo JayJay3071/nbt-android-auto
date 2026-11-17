@@ -384,6 +384,12 @@ void onKnob(const nbt::car::CcsEvent& ev, void*) {
         const bool ours = nowMs() < g_ignoreBackUntil;
         pthread_mutex_unlock(&g_backMx);
         if (ours) { printf("[Knob] %s %s: our own BACK, not for the phone\n", ev.what, ev.down ? "down" : "up"); return; }
+        // the driver's BACK while Android Auto is on screen (2026-11-17): iDrive goes back in its own history and leaves
+        // the page; this flag tells the HMI plugin to bring Android Auto back (aa_entry_plugin, Checker)
+        if (ev.down && access("/fs/ram3/nbt-aa-hidden", F_OK) != 0) {
+            int fd = open("/fs/ram3/nbt-aa-back", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (fd >= 0) close(fd);
+        }
     }
     // NAV opens Android Auto (user 2026-11-17): iDrive still gets the key and opens its navigation, the show request
     // (HMI plugin, checked every 250 ms) brings Android Auto back over it. NBT_NAV_OPENS_AA=0: NAV stays with iDrive.

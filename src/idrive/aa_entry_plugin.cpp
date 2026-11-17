@@ -76,6 +76,11 @@ const char* const kRequest="/fs/ram3/nbt-aa-request";
 const char* const kHidden="/fs/ram3/nbt-aa-hidden";
 const char* const kState="/fs/ram3/nbt-aa-state";
 const char* const kLeave="/fs/ram3/nbt-aa-leave";
+// BACK (car 2026-11-17): iDrive's BACK goes back in iDrive's history, also from the deepest hold level (log: "hold focus
+// 0, level 7" -> "page left", never level 6), so it left Android Auto while the phone went back as well. nbt_knob writes
+// this flag on the driver's BACK while the picture is on screen; when the page is left within 2 s of it, the Checker
+// brings Android Auto back with one hold event (hold(): 1 per s, 10 per minute).
+const char* const kBackKey="/fs/ram3/nbt-aa-back";
 const unsigned kEntryState=10, kHoldState=13, kEvHold=52, kFocus=1, kVisible=11, kStatusModel=4;
 // picture mode selection (2026-11-08): buttons on page 10 lead to the inert states 30 (16:9) / 31 (widescreen); their
 // focus handler stores the mode, restarts the service and sends focus event 53 back to page 10
@@ -469,6 +474,16 @@ void Checker::run() {
     if(!e||e->stopping||!e->app||e->holdFocused())return;    // BACK only climbed one hold level: nothing to do
     readStatus(&e->running);
     if(unlink(kLeave)==0){plog("check: leave key");touch(kHidden);return;}
+    {
+        struct stat st;
+        const bool back=stat(kBackKey,&st)==0&&time(0)-st.st_mtime<=2;
+        unlink(kBackKey);
+        if(back&&e->running){
+            const long long wait=1000-(now_ms()-e->lastHoldMs);
+            if(wait>0){touch(kBackKey);e->check((unsigned)wait+50);plog("check: BACK left the page, hold in ms",(int)wait);return;}
+            plog("check: BACK left the page -> back to Android Auto");e->hold("hold (after BACK)");return;
+        }
+    }
     if(e->running&&e->holdVisible()){
         // tilt right puts the iDrive focus into the split screen: taken back at once, so a normal tilt right is not noticed
         // in Android Auto; a second tilt within 1.5 s still reaches the split screen menu (user request 2026-11-08: not
