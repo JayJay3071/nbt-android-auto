@@ -423,12 +423,13 @@ public:
     long long showUntilMs;   // a show request was handled: until then, a lost focus is taken back once (Checker)
     // car 2026-11-18: iDrive ignores every second focus event (after one that took, the next is ignored; after an ignored
     // one, the other event number takes). A show request's event is checked ~1.1 s later (TargetPoll) and, not taken,
-    // sent again at once with the other number instead of hiding after the Verifier's 5 s.
+    // sent again at once with the other number instead of hiding after the Verifier's 5 s. Once: the retry itself gets
+    // no retry (car 2026-11-18: retrying the retry sent an event every 1.26 s for as long as iDrive ignored them all).
     long long showRetryAtMs;
-    void showHold(const char* why) {
+    void showHold(const char* why,bool retry=true) {
         const long long before=lastHoldMs;
         hold(why,false);
-        if(lastHoldMs!=before)showRetryAtMs=lastHoldMs+1100;      // only when an event actually went out
+        if(retry&&lastHoldMs!=before)showRetryAtMs=lastHoldMs+1100;   // only when an event actually went out
     }
     static bool holdFocus(void* self,const bmw::Parcel& p) {
         HoldSlot* s=static_cast<HoldSlot*>(self); Entry* e=s->e;
@@ -459,15 +460,19 @@ void TargetPoll::run() {
         // brought Android Auto back, and so took the screen again; with Android Auto already on screen (NAV pressed in
         // Android Auto) it always did. For 4 s the Checker takes the focus back once more.
         if(running)e->showUntilMs=now_ms()+4000;
+        unlink(kLeave);                    // an iDrive key from before this request (written also while hidden)
         if(!running)plog("show request ignored: Android Auto not running",0);
         else if(e->holdFocused())plog("show request: already on screen",0);
         else e->showHold("show request");
     }
     if(e->showRetryAtMs&&now_ms()>=e->showRetryAtMs){
         e->showRetryAtMs=0;
-        if(running&&!e->holdFocused()){
+        // the driver left Android Auto with an iDrive key in between (car 2026-11-18: RADIO right after NAV was pulled
+        // back): no retry, no follow-up
+        if(access(kLeave,F_OK)==0){e->showUntilMs=0;plog("show request retry dropped: Android Auto left",0);}
+        else if(running&&!e->holdFocused()){
             ++e->ignoredHolds;                                     // next event: the other number
-            e->showHold("show request not taken -> other focus event");
+            e->showHold("show request not taken -> other focus event",false);
         }
     }
     app->post(this,250);   // 250 ms: show requests (NAV key, parking assistant) take effect quickly
@@ -476,7 +481,7 @@ void Checker::run() {
     pending=false;
     if(!e||e->stopping||!e->app||e->holdFocused())return;    // BACK only climbed one hold level: nothing to do
     readStatus(&e->running);
-    if(unlink(kLeave)==0){plog("check: leave key");touch(kHidden);return;}
+    if(unlink(kLeave)==0){plog("check: leave key");touch(kHidden);e->showUntilMs=0;e->showRetryAtMs=0;return;}
     {   // BACK guard (nbt_knob): its tilt right moved the focus into the split screen; the driver's BACK release brings it
         // back. Wait for that instead of sending a hold event (up to 1.5 s after the guard).
         struct stat st;

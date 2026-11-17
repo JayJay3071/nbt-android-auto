@@ -556,6 +556,12 @@ void onKnob(const nbt::car::CcsEvent& ev, void*) {
         printf("[Knob] %s: leave Android Auto (iDrive key)\n", ev.what);
         return;
     }
+    // the same key while the picture is hidden (car 2026-11-18): a show request may still be pending in the HMI plugin
+    // (its retry after an ignored focus event), which must not pull Android Auto back over the iDrive screen chosen now
+    if (!ev.keycode && ev.kind == 1 && ev.down && !ev.cancel) {
+        int fd = open("/fs/ram3/nbt-aa-leave", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd >= 0) close(fd);
+    }
     if (!ev.keycode) return;
     const bool release = ev.kind == 1 && !ev.down;
     if (!release && access("/fs/ram3/nbt-aa-hidden", F_OK) == 0) {
