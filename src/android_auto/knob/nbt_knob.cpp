@@ -30,6 +30,10 @@
 // receiver):
 //   fkt C30  0x80 = one step up, 0x7e = one step down, 0x7f = no step (also sent with every press)
 //   fkt C31  01 pressed, 00 released
+// Startup NEXT (user 2026-11-17: once per start, Android Auto skipped to the next song; knob.log of that boot showed one
+// WHEEL_UP ~30-60 s after start with nobody touching the roller): the first C30 after nbt_knob starts is a status
+// report, not a turn, and is only taken as the baseline now; and only 0x80 / 0x7e count as one step (before, any value
+// above / below 0x7f did). The raw value is logged.
 // Forwarded as Android Auto media keys, also while the Android Auto page is not on screen: up -> NEXT 87,
 // down -> PREVIOUS 88, press -> PLAY_PAUSE 85. Override / switch off with NBT_WHEEL_UP / _DOWN / _PUSH = keycode / 0.
 // iDrive still gets the roller too.
@@ -227,8 +231,15 @@ void onWheel(const nbt::most::View& m, void*) {
     // the same message once per HMI receiver, ~1 ms apart: take the first copy only
     if (m.fkt == g_wheelLastFkt && v == g_wheelLastVal && t - g_wheelLastMs < 40) return;
     g_wheelLastFkt = m.fkt; g_wheelLastVal = v; g_wheelLastMs = t;
+    static bool seenC30 = false;
+    if (m.fkt == 0xC30 && !seenC30) {
+        seenC30 = true;
+        printf("[Wheel] first roller status %02x after start: baseline only, no key\n", v);
+        return;
+    }
     if (m.fkt == 0xC30) {
-        const unsigned key = v > 0x7f ? g_wheelUp : v < 0x7f ? g_wheelDown : 0;
+        if (v != 0x80 && v != 0x7e && v != 0x7f) printf("[Wheel] roller value %02x: not one step, ignored\n", v);
+        const unsigned key = v == 0x80 ? g_wheelUp : v == 0x7e ? g_wheelDown : 0;
         if (!key || !wheelAllowed(v > 0x7f ? "WHEEL_UP" : "WHEEL_DOWN")) return;
         wheelKeyLine(key, 1, v > 0x7f ? "WHEEL_UP" : "WHEEL_DOWN");
         wheelKeyLine(key, 0, v > 0x7f ? "WHEEL_UP" : "WHEEL_DOWN");
