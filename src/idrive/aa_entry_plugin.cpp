@@ -34,8 +34,6 @@
 #include <string.h>
 #include <time.h>
 #include <sys/stat.h>
-#include <sys/mman.h>
-#include <errno.h>
 #include <spawn.h>
 #include <signal.h>
 #include <pthread.h>
@@ -93,6 +91,11 @@ const unsigned kBootState=35, kBootModel=91;         // "Start at boot" -> inert
 const char* const kBootOff="/var/opt/hmi/data/rw/NbtAndroidAutoRT/start-at-boot.off";
 bool bootOn() { return access(kBootOff,F_OK)!=0; }   // default: on (no file)
 const unsigned kEvHoldAlt=54;                        // focus event to hold state 13 (fallback when 52 is ignored)
+// The real reason iDrive "ignored" 52 / 54 (car 2026-11-18, HmiMain3D CFocusEvent::perform @0x88fd70b): every focus
+// event object counts its performs and refuses from the 12th on ("FocusEvent counter > 10"; never reset, only apps with
+// the RHMI permission rhmi.unlimitedfocusevents are exempt). So the XML has a pool of 100 focus events (200..299, all
+// to hold state 13); hold() uses each 10 times, then the next, and moves on at once after an ignored one.
+const unsigned kEvPoolFirst=200, kEvPoolCount=100, kEvPoolUses=10;
 // text ids in NbtAndroidAuto_ALL_Texts.zip (make_aa_entry_resources.py)
 enum { kTxtConnectUsb=2, kTxtNoPhone=3, kTxtStarting=4, kTxtRunning=5, kTxtReplug=6, kTxtUnsupported=7,
        kTxtServiceDown=8, kTxtSeveral=9, kTxt169=11, kTxtWide=12, kTxt169On=16, kTxtWideOn=17,
@@ -320,7 +323,7 @@ public:
     TargetPoll target;
     HoldSlot slots[kHoldCount];
     Entry():app(0),stopping(false),polling(false),entryFocused(false),running(false),focusMask(0),visibleMask(0),
-            shownText(0),shownMode(0),shownBoot(0),lastBootToggleMs(-100000),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0),showUntilMs(0),showRetryAtMs(0) {
+            shownText(0),shownMode(0),shownBoot(0),lastBootToggleMs(-100000),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0),showUntilMs(0),showRetryAtMs(0),evIdx(kEvPoolCount-1),evUses(kEvPoolUses),evIgnoredSeen(0) {
         checker.e=this; verifier.e=this; target.e=this;
         for(unsigned i=0;i<kHoldCount;++i){slots[i].e=this;slots[i].idx=i;}
     }
@@ -344,7 +347,10 @@ public:
         if(counted&&++holds>10){plog("hold refused by loop guard (10/min)");touch(kHidden);return;}
         // car 2026-11-09: iDrive sometimes ignores 52 for the rest of the drive (entry page shown, picture hidden): after
         // an ignored attempt the next one uses 54 (to hold state 13), then 52 again, ...
-        const unsigned ev=ignoredHolds%2?kEvHoldAlt:kEvHold;
+        if(ignoredHolds!=evIgnoredSeen){evIgnoredSeen=ignoredHolds;evUses=kEvPoolUses;}   // ignored: next event
+        if(evUses>=kEvPoolUses){evIdx=(evIdx+1)%kEvPoolCount;evUses=0;}
+        ++evUses;
+        const unsigned ev=kEvPoolFirst+evIdx;
         plog(why,(int)holds);
         plog("  focus event",(int)ev);
         plog("  ms since the last focus change",(int)(tm-lastFocusMs>100000?100000:tm-lastFocusMs));
@@ -428,6 +434,7 @@ public:
     // sent again at once with the other number instead of hiding after the Verifier's 5 s. Once: the retry itself gets
     // no retry (car 2026-11-18: retrying the retry sent an event every 1.26 s for as long as iDrive ignored them all).
     long long showRetryAtMs;
+    unsigned evIdx,evUses,evIgnoredSeen;   // focus event pool (kEvPoolFirst..): current event, its uses, ignoredHolds seen
     void showHold(const char* why,bool retry=true) {
         const long long before=lastHoldMs;
         hold(why,false);
@@ -636,7 +643,6 @@ bool sysGoFocus(void*,const bmw::Parcel& p) {
 
 Entry entry;
 bool created=false;
-void unlimitFocusEvents();   // below
 bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& p,const bmw::Bundle& c) {
     if(created)return 0;
     bmw::PluginApp* app=new bmw::PluginApp(d,bmw::BasicString<char>(name),p,c);
@@ -667,7 +673,6 @@ bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& 
     app->addHandler(kSysAskState,kFocus,onSysAsk);
     app->addHandler(kSysGoState,kFocus,onSysGo);
     created=true;
-    unlimitFocusEvents();
     touch(kHidden);   // nothing is shown before the page is opened
     unlink(kShowRequest);                       // a request left from before this HMI start
     plog("app start at create",app->start()?1:0);
@@ -681,47 +686,6 @@ bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& 
     }
     return reinterpret_cast<bmw::IPluginApp*>(app);
 }
-// --- iDrive's focus event limit, switched off in memory (user 2026-11-18) ----------------------------------------------
-// Why iDrive "ignored" the hold events 52 / 54 until a reboot (car 2026-11-18, HmiMain3D CFocusEvent::perform): every
-// focus event object counts its performs and refuses from the 12th on ("[RHMI FocusEvent] FocusEvent counter > 10",
-// "FocusEvent must only be used to restore HMI not to change screens while app is used."); the counter is never reset,
-// only apps with the RHMI permission rhmi.unlimitedfocusevents are exempt. The check, at 0x088fd70b of this car's
-// HmiMain3D (non-PIE, so the address is fixed):
-//     83 7b 30 0a          cmp  dword [ebx+0x30], 10
-//     0f 87 ee 03 00 00    ja   refuse
-// The plugin runs inside HmiMain3D: at create it replaces the ja with a 6-byte NOP in its own process, so every focus
-// event is performed as for a permitted app. Nothing on disk changes, a reboot undoes it. Only when exactly these 10
-// bytes are there (any other HmiMain3D: no change, the old limit stays). Written through /proc/self/as (as a debugger
-// sets breakpoints), else mprotect. Fallback if this does not work on the car: the pool of focus events (branch
-// focus-pool, 2026-11-18).
-const unsigned long kFocusLimitAt=0x088fd70bUL;
-void unlimitFocusEvents() {
-    static const unsigned char want[10]={0x83,0x7b,0x30,0x0a,0x0f,0x87,0xee,0x03,0x00,0x00};
-    static const unsigned char nop6[6]={0x66,0x0f,0x1f,0x44,0x00,0x00};
-    unsigned char* const p=reinterpret_cast<unsigned char*>(kFocusLimitAt);
-    if(memcmp(p,want,4)==0&&memcmp(p+4,nop6,6)==0){plog("focus event limit: already off",0);return;}
-    if(memcmp(p,want,10)!=0){plog("focus event limit: unknown HmiMain3D, not changed",0);return;}
-    int err=0;
-    bool written=false;
-    int fd=open("/proc/self/as",O_RDWR);
-    if(fd>=0){
-        written=pwrite(fd,nop6,6,(off_t)(kFocusLimitAt+4))==6;
-        if(!written)err=errno;
-        close(fd);
-    } else err=errno;
-    if(!written){
-        const unsigned long page=(kFocusLimitAt+4)&~0xFFFUL;    // the 6 bytes do not cross a 4 KiB page
-        if(mprotect(reinterpret_cast<void*>(page),0x1000,PROT_READ|PROT_WRITE|PROT_EXEC)==0){
-            memcpy(p+4,nop6,6);
-            mprotect(reinterpret_cast<void*>(page),0x1000,PROT_READ|PROT_EXEC);
-            written=true;
-            plog("focus event limit: written with mprotect (/proc/self/as errno)",err);
-        } else plog("focus event limit: mprotect failed, errno",errno);
-    }
-    const bool ok=memcmp(p+4,nop6,6)==0;
-    plog(ok?"focus event limit: off (HmiMain3D patched in memory)":"focus event limit: patch FAILED, still on",ok?0:err);
-}
-
 void destroy(bmw::IPluginApp* p) {
     if(!created)return;
     entry.stopping=true;
