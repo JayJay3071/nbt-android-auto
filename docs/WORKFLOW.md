@@ -120,4 +120,6 @@ the amplifier has a connection to that input:
 ```
 
 Other modes: `--watch [s]` (print controller messages), `back [s]` (BACK after a tilt right),
-`cm <fkt> <op> <bytes>` (send one ConnectionMaster message to 100E; `cm 053 6 00 10 00 bb` switches to AUX).
+`cm <fkt> <op> <bytes>` (send one ConnectionMaster message to 100E): `cm 053 6 00 10 00 bb` switches to AUX,
+`cm 053 6 00 11 00 b8` builds the browser connection (main source muted, `input_stereo_3` audible), `cm 054 6 00 12 00 b8`
+removes it again. The second pair of bytes is a request number of your choice; change it each time.

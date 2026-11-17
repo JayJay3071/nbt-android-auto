@@ -38,3 +38,36 @@
      von nbt_knob/nbt_hwvideo (`Client::send`).
 5. **Am Auto testen** mit dem Pieptest über libasound und gebauter Verbindung, danach mit AA-Musik. Jeder Sendetest nur mit
    Freigabe.
+
+## Update 2026-11-18 (fork, car-tested, English)
+
+The audio path works on the original NBT (F30), tested with `nbt_key` and `nbt_a2i_beep`:
+
+1. `nbt_key cm 053 6 00 18 00 b8`: ConnectionMaster builds connection `0xb8`.
+2. `nbt_a2i_beep input_stereo_3 2`: the beeps are audible (A2I client, 48 kHz 16 bit stereo).
+3. `nbt_key cm 054 6 00 19 00 b8`: the connection is removed, the main source plays again.
+
+**ConnectionMaster methods** (FBlock 03 at 100E; HmiMain3D `CPxyConnectionMaster` method table, `0x8b818f1`):
+
+| fkt | Method | Data |
+| --- | --- | --- |
+| `053` | BuildHighSyncConnection | handle (2 bytes), connection (2 bytes); 5 bytes = error 05 (length) |
+| `054` | RemoveHighSyncConnection | handle (2 bytes), connection (2 bytes) |
+| `C03` | HighSyncConnectionTable (status) | `00 00`, then per connection: id (2 bytes), state (1 byte) |
+| `C05` | HighSyncConnectionControl | not used |
+
+State in `C03`: `00` = playing, `04` = muted by an interrupting connection. Example while `b8` is built over AUX:
+`00 00 00 bb 04 00 b8 00`.
+
+**Connection IDs**: HmiMain3D has a table of 136 rows {EAudioSource, three connection IDs, category} at `0x9877344`
+(read by `CHmiAudioSink::getConnIDForAudioSource`). Category `01` holds the main sources (`01` radio, `bb` AUX, `c7`
+Bluetooth audio, ...), `b8` is category `0b`.
+
+**`b8` (browser, NBT-AAD: `eSRC_BROWSER`, "interrupting entertainment")** is not a main source: while it is built the
+amplifier mutes the main source, but iDrive and the source status still report the main source, so the steering wheel
+keys still act on it (car 2026-11-18: rocker changed the selected source's tracks / stations). Good for navigation
+prompts; for music a real main source (category `01`) with a writable input is needed.
+
+NBT-AAD's browser audio mode (`src/audio/browser_audio.*`, mixer, resampler, libasound shim) is built for exactly this
+connection; it builds / removes it through BMW's `audioconn` tool, which this NBT does not have. Here `053` / `054` over
+MOST take its place.

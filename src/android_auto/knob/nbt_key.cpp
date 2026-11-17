@@ -26,6 +26,16 @@
 //                           own device id and print every FBlock 03 answer for 2 s. MOST error answers (op F) are
 //                           decoded (05 = wrong length, 06 = parameter n wrong, ...). For finding the source switch
 //                           command: the HMI sends 03/00 fkt 053 op 6 (StartResultAck) to 100E on every switch.
+//                           ConnectionMaster methods (car 2026-11-18; HmiMain3D CPxyConnectionMaster method table):
+//                             053 BuildHighSyncConnection   {handle hi, lo, connection hi, lo}  (4 bytes; 5 = error 05)
+//                             054 RemoveHighSyncConnection  {handle hi, lo, connection hi, lo}
+//                             C03 HighSyncConnectionTable   status: {00 00} then per connection {id hi, lo, state}
+//                             C05 HighSyncConnectionControl (not used)
+//                           state 00 = playing, 04 = muted by an interrupting connection. Examples:
+//                             cm 053 6 00 10 00 bb   AUX as the main source
+//                             cm 053 6 00 11 00 b8   browser (interrupting: the main source is muted, input_stereo_3
+//                                                    is heard; the steering wheel still acts on the main source)
+//                             cm 054 6 00 12 00 b8   remove the browser connection again (main source back)
 // Needs LD_LIBRARY_PATH=/opt/sys/lib:/lib:/usr/lib (DSI library).
 #include "most/client.hpp"
 #include <pthread.h>
@@ -98,7 +108,8 @@ nbt::most::Msg backMsg(uint16_t src, uint16_t dst, uint8_t counter, bool down) {
 
 int usage() {
     printf("usage: nbt_key --watch [seconds] | nbt_key back [seconds] | nbt_key source [seconds] |"
-           " nbt_key cm <fkt hex> <op hex> [data hex bytes...]\n");
+           " nbt_key cm <fkt hex> <op hex> [data hex bytes...]\n"
+           "  cm 053 6 00 10 00 bb = build AUX, cm 053 6 00 11 00 b8 = build browser, cm 054 6 00 12 00 b8 = remove it\n");
     return 1;
 }
 }
