@@ -621,14 +621,14 @@ void stop_live(int)
 // media keys PLAY_PAUSE 85, NEXT 87, PREVIOUS 88 (steering wheel, 2026-11-12; all in the DHU template's keycodes_supported).
 const char* const kInputFifo = "/fs/ram3/nbt-aa-native/input.fifo";
 
-// Car day/night for Android Auto's night mode (dark maps at night). The HMI plugin writes CDS vehicle.dayNightChangeOver
-// to this file as '{"dayNightChangeOver":N}': 2 night, 1 day, 0 no change, 3 invalid (mapped like NBT-AAD / factory
-// CarPlay). Returns 1 night, 0 day, -1 unknown (keep what the phone has).
-const char* const kDayNightFile = "/fs/ram3/nbt-aa-daynight";
+// Car day/night for Android Auto's night mode (dark maps at night). This NBT has no day/night car data property, so the
+// headlights stand in: the HMI plugin writes CDS controls.headlights to this file as '{"headlights":N}'; 0 = day,
+// anything else = night. Returns 1 night, 0 day, -1 unknown (no file, or an error answer: keep what the phone has).
+const char* const kHeadlightsFile = "/fs/ram3/nbt-aa-headlights";
 int car_night()
 {
     char b[96];
-    const int fd = open(kDayNightFile, O_RDONLY);
+    const int fd = open(kHeadlightsFile, O_RDONLY);
     if (fd < 0)
         return -1;
     const ssize_t n = read(fd, b, sizeof(b) - 1);
@@ -636,12 +636,13 @@ int car_night()
     if (n <= 0)
         return -1;
     b[n] = 0;
-    const char* p = strchr(b, ':');
-    p = p ? p + 1 : b;
-    while (*p == ' ' || *p == '"')
-        ++p;
-    const int v = atoi(p);
-    return v == 2 ? 1 : (v == 1 ? 0 : -1);
+    const char* p = strstr(b, "\"headlights\":");
+    if (!p)
+        return -1;
+    p += 13;
+    if (*p < '0' || *p > '9')
+        return -1;
+    return atoi(p) != 0 ? 1 : 0;
 }
 
 bool allowed_key(unsigned k)

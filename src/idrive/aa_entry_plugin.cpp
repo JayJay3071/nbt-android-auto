@@ -268,9 +268,10 @@ void cdsLog(const char* name,const char* file,const bmw::BasicString<unsigned sh
 }
 bool onGear(void*,const bmw::BasicString<unsigned short>& v){cdsLog("driving.gear","/fs/ram3/nbt-aa-gear",v);return true;}
 // Night mode (user 2026-11-17: Waze stayed white at night): the core advertises the NIGHT_MODE sensor but nothing fed it,
-// so the phone always got day. CDS vehicle.dayNightChangeOver (name and format '{"dayNightChangeOver":%u}' from NBT-AAD's
-// iDrive app; 1 day, 2 night, 0 no change, 3 invalid) goes to /fs/ram3/nbt-aa-daynight, read by the session.
-bool onDayNight(void*,const bmw::BasicString<unsigned short>& v){cdsLog("vehicle.dayNightChangeOver","/fs/ram3/nbt-aa-daynight",v);return true;}
+// so the phone always got day. NBT-AAD's vehicle.dayNightChangeOver answers '{"error":400}' on this NBT: HmiMain3D's CDS
+// table has no day/night property (car 2026-11-17). controls.headlights ('{"headlights":%d}') is used instead and goes
+// to /fs/ram3/nbt-aa-headlights, read by the session: headlights on = night.
+bool onHeadlights(void*,const bmw::BasicString<unsigned short>& v){cdsLog("controls.headlights","/fs/ram3/nbt-aa-headlights",v);return true;}
 bool g_pdcFromAa=false;   // the parking assistant came up over the Android Auto picture
 bool onPdc(void*,const bmw::BasicString<unsigned short>& v){
     cdsLog("sensors.PDCStatus","/fs/ram3/nbt-aa-pdc",v);
@@ -287,12 +288,12 @@ public:
     CdsSubscribe():app(0) {}
     void run() {
         if(!app)return;
-        bmw::BasicString<char> g("driving.gear"),p("sensors.PDCStatus"),d("vehicle.dayNightChangeOver");
-        bmw::CdsDelegate dg={app,&onGear},dp={app,&onPdc},dd={app,&onDayNight};
+        bmw::BasicString<char> g("driving.gear"),p("sensors.PDCStatus"),d("controls.headlights");
+        bmw::CdsDelegate dg={app,&onGear},dp={app,&onPdc},dd={app,&onHeadlights};
         app->cdsAddPropertyChangedEventHandler(g,0,dg);
         app->cdsAddPropertyChangedEventHandler(p,0,dp);
         app->cdsAddPropertyChangedEventHandler(d,0,dd);
-        plog("CDS handlers for driving.gear, sensors.PDCStatus and vehicle.dayNightChangeOver registered",0);
+        plog("CDS handlers for driving.gear, sensors.PDCStatus and controls.headlights registered",0);
     }
 };
 CdsSubscribe g_cds;

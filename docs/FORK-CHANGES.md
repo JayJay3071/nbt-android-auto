@@ -33,7 +33,7 @@ The plugin starts with iDrive, can bring Android Auto to the front from anywhere
 | Parking assistant | Reads iDrive car data `sensors.PDCStatus` (1 = on, 2 = off); Android Auto comes back when it closes, if it was on screen before |
 | BACK fallback | If iDrive's BACK still leaves the page, one focus event brings Android Auto back (1 per s, 10 per minute) |
 | Hold screen | One inert hold screen instead of 8 nested ones |
-| Night mode | Reads iDrive car data `vehicle.dayNightChangeOver` (1 = day, 2 = night) into `/fs/ram3/nbt-aa-daynight`; the session sends it to the phone as Android Auto's night mode, so maps go dark at night |
+| Night mode | This NBT has no day/night car data, so the headlights stand in: iDrive car data `controls.headlights` goes to `/fs/ram3/nbt-aa-headlights`; the session sends headlights on = night to the phone as Android Auto's night mode, so maps go dark at night |
 
 ## Controller and steering wheel (nbt_knob)
 
