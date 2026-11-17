@@ -7,6 +7,9 @@ developed and tested on a BMW F30 with NBT. Reverted experiments are not listed;
 **Setup:** in my setup, the phone is connected via USB, and its audio goes from the phone's 3.5 mm jack to the car's AUX
 port. The entire solution is built around this; change it according to your needs (the `NBT_*` switches below).
 
+**Android Auto audio:** not fixed in this fork either; Android Auto still sends no audio to the car. I use a dedicated
+phone that always stays in the car, always connected to it, so its 3.5 mm jack on AUX is all I need.
+
 **Split screen:** I primarily develop and test this with iDrive's split screen on, showing the trip computer. Other
 split screen contents, or split screen off, get less testing.
 

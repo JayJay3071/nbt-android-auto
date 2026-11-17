@@ -14,7 +14,9 @@ iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrum
 > [docs/FORK-CHANGES.md](docs/FORK-CHANGES.md). Build, install and debug commands: [docs/WORKFLOW.md](docs/WORKFLOW.md).
 >
 > **Audio:** in my setup, the phone is connected via USB, and its audio goes from the phone's 3.5 mm jack to the car's
-> AUX port. The entire solution is built around this; change it according to your needs.
+> AUX port. The entire solution is built around this; change it according to your needs. Audio over Android Auto
+> itself is **not** fixed in this fork either: I use a dedicated phone that always stays in the car, always connected
+> to it, so the 3.5 mm cable is all I need.
 >
 > **Split screen:** I primarily develop and test this with iDrive's split screen on, showing the trip computer. Other
 > split screen contents, or split screen off, get less testing.
@@ -43,7 +45,8 @@ iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrum
 
 ## Known limitations
 
-- **No Android Auto audio yet.** Music runs over Bluetooth or an AUX cable from the phone, calls work. Plan: [docs/AA-AUDIO-PLAN.md](docs/AA-AUDIO-PLAN.md).
+- **No Android Auto audio yet** (also not in this fork). Music runs over Bluetooth or an AUX cable from the phone,
+  calls work. Plan: [docs/AA-AUDIO-PLAN.md](docs/AA-AUDIO-PLAN.md).
 - **800x480 only.** The hardware capture (`dev-nvideocapture`) is limited to WVGA. 720p was tested: not sharper, more
   input lag.
 - The controller has a noticeable delay because of the video buffer.
