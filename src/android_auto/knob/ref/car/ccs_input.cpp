@@ -103,7 +103,9 @@ void CcsInput::onController(const most::View& m) {
         else
             printf("[Knob] %s %s -> AA key %u%s\n", ev[i].what, ev[i].down ? "down" : "up", ev[i].keycode,
                    ev[i].keycode ? "" : " (unmapped, not sent)");
-        if (cb_ && (ev[i].kind == 2 || ev[i].keycode)) cb_(ev[i], user_);
+        // NBT-Project 2026-11-17: hard keys with keycode 0 go to the callback too (nbt_knob: NAV opens Android Auto,
+        // iDrive keys hide the picture); before, the callback never saw them (car log: "NAV down -> AA key 0").
+        if (cb_ && (ev[i].kind == 2 || ev[i].kind == 1 || ev[i].keycode)) cb_(ev[i], user_);
     }
 }
 
