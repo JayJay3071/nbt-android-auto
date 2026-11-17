@@ -311,6 +311,7 @@ void pressFavourite(nbt::most::Client& most, uint16_t src, uint16_t dst, unsigne
 // main thread, every 200 ms until done: the service's public state
 // --- phone starts playing while the source is not AUX: switch the source to AUX (see the header) ---
 bool g_playAux = true;
+bool g_navOpensAa = true;
 int g_prevMedia = -1;           // -1 = not read yet (the first read is only the starting point)
 long long g_mediaNextCheck = 0;
 
@@ -383,6 +384,13 @@ void onKnob(const nbt::car::CcsEvent& ev, void*) {
         const bool ours = nowMs() < g_ignoreBackUntil;
         pthread_mutex_unlock(&g_backMx);
         if (ours) { printf("[Knob] %s %s: our own BACK, not for the phone\n", ev.what, ev.down ? "down" : "up"); return; }
+    }
+    // NAV opens Android Auto (user 2026-11-17): iDrive still gets the key and opens its navigation, the show request
+    // (HMI plugin, checked every 250 ms) brings Android Auto back over it. NBT_NAV_OPENS_AA=0: NAV stays with iDrive.
+    if (!ev.keycode && ev.kind == 1 && ev.down && !ev.cancel && g_navOpensAa && !strcmp(ev.what, "NAV") && sessionRunning()) {
+        if (FILE* s = fopen("/fs/ram3/nbt-aa-show", "w")) fclose(s);
+        printf("[Knob] NAV: Android Auto to the front (show request)\n");
+        return;
     }
     // a hard key that stays with iDrive (MENU, OPTION, COM, MEDIA, NAV, MAP: keycode 0) while Android Auto is on
     // screen: tell the HMI page (aa_entry_plugin) that the driver wants iDrive, so it does not pull the page back
@@ -512,6 +520,7 @@ int main(int argc, char** argv) {
     if (g_auxButton > 8 || trace) g_auxButton = 0;   // a --trace copy (tests, boot.sh trace) never presses anything
     if (trace) g_aaButton = 0;
     g_playAux = wheelKey("NBT_PLAY_AUX", 1) != 0 && !trace;
+    g_navOpensAa = wheelKey("NBT_NAV_OPENS_AA", 1) != 0 && !trace;
     if (!most.addRoute(0xE5, 0x0F, 0xC06, 0xC, &onE5Periodic, NULL)) printf("[Knob] no room for the HMI address route\n");
     {
         const char* v = getenv("NBT_AUX_SOURCE");

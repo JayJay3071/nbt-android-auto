@@ -282,7 +282,7 @@ public:
     }
 };
 CdsSubscribe g_cds;
-// HMI thread, every second once started: the entry's target (model 5) follows the service state
+// HMI thread, every 250 ms once started: the entry's target (model 5) follows the service state; show requests
 const unsigned kTargetModel=5;
 class TargetPoll : public bmw::Runnable {
 public:
@@ -432,7 +432,7 @@ void TargetPoll::run() {
         else if(e->holdFocused())plog("show request: already on screen",0);
         else e->hold("show request");
     }
-    app->post(this,1000);
+    app->post(this,250);   // 250 ms: show requests (NAV key, parking assistant) take effect quickly
 }
 void Checker::run() {
     pending=false;
