@@ -17,3 +17,15 @@ Test the tool without a reset: `nbt_reset -n <gateway>`. It needs `libsocket.so.
 through `ssh host "..."` does not find (no login profile); there, prefix the HMI's library path:
 `LD_LIBRARY_PATH=/lib:/opt/sys/lib:/boot/lib:/opt/hmi/lib nbt_reset -n <gateway>`. The plugin passes the HMI's
 environment.
+
+## From a PC: `scripts/nbt_reset.py`
+
+The same reset (UDS `11 01` to 0x63 through the gateway's HSFZ port 6801) from a laptop on the ENET cable, Python 3
+standard library only:
+
+    python scripts\nbt_reset.py                 find the gateway with the HSFZ 6811 broadcast, then reset
+    python scripts\nbt_reset.py --host IP       skip discovery, use this gateway address
+    python scripts\nbt_reset.py --type 2        1 hardReset (default), 2 keyOffOnReset, 3 softReset
+
+From the PC the broadcast does reach the gateway, so the script prints the gateway address (and the VIN): that is the
+address for the `gateway` file above.
