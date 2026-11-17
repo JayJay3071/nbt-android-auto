@@ -135,10 +135,17 @@ long long g_ignoreBackUntil = 0;       // our own BACK coming back: not for the 
 // Tilt left (2026-11-17, test): iDrive treats it as "back" too, but climbs one of the 8 nested hold levels per tilt (car
 // log: level 7 -> 0, then the entry page and one hold event). The same guard on the tilt left press: if iDrive acts on
 // the tilt release with its focus in the split screen, no level is used. NBT_TILT_GUARD=0 off.
+// Car 2026-11-17: the focus went into the split screen (its options entry showed) and came back only sometimes, slowly.
+// So the driver's tilt left release is now answered with a BACK, exactly like the tilt right fix: the focus returns at
+// once. Our own tilt coming back (press, then release, within 300 ms) is recognised in order, so the driver's release
+// is not mistaken for ours.
 bool g_backGuard = true;
 bool g_tiltGuard = true;
 bool g_guardPending = false;
-long long g_ignoreTiltUntil = 0;
+bool g_guardTiltLeft = false;          // the guard was for a tilt left: its release gets a BACK
+int g_ownTiltStage = 0;                // our guard tilt coming back: 2 = its press next, 1 = its release next
+long long g_ownTiltUntil = 0;
+long long g_ignoreTiltUntil = 0;       // our tilt right: not for the phone (onKnob)
 
 void onC20(const nbt::most::View& m, void*) {
     if (m.len < 7) return;
@@ -148,10 +155,18 @@ void onC20(const nbt::most::View& m, void*) {
     if (g_backGuard && m.data[5] == 0x00 && m.data[3] == 1 && (m.data[6] & 0x02) && tm >= g_ignoreBackUntil &&
         access("/fs/ram3/nbt-aa-hidden", F_OK) != 0)
         g_guardPending = true;                                         // the driver's BACK press: tilt right now
-    if (g_tiltGuard && m.data[5] == 0x1D && m.data[3] == 1 && m.data[4] == 8 && tm >= g_ignoreTiltUntil &&
-        access("/fs/ram3/nbt-aa-hidden", F_OK) != 0)
-        g_guardPending = true;                                         // the driver's tilt left press: the same
-    if (tm < g_ignoreTiltUntil && m.data[5] == 0x1D) { pthread_mutex_unlock(&g_backMx); return; }   // our own tilt
+    if (m.data[5] == 0x1D && g_ownTiltStage && tm < g_ownTiltUntil) {   // our own guard tilt coming back
+        if (g_ownTiltStage == 2 && m.data[3] == 1 && m.data[4] == 2) { g_ownTiltStage = 1; pthread_mutex_unlock(&g_backMx); return; }
+        if (g_ownTiltStage == 1 && m.data[3] == 0) { g_ownTiltStage = 0; pthread_mutex_unlock(&g_backMx); return; }
+    }
+    if (tm >= g_ownTiltUntil) g_ownTiltStage = 0;
+    if (g_tiltGuard && m.data[5] == 0x1D && m.data[3] == 1 && m.data[4] == 8 && access("/fs/ram3/nbt-aa-hidden", F_OK) != 0) {
+        g_guardPending = true;                                         // the driver's tilt left press: the same guard
+        g_guardTiltLeft = true;
+    } else if (m.data[5] == 0x1D && m.data[3] == 0 && g_guardTiltLeft) {
+        g_guardTiltLeft = false;                                       // its release: BACK, as after a tilt right
+        if (access("/fs/ram3/nbt-aa-hidden", F_OK) != 0) g_backPending = true;
+    }
     if (m.data[5] == 0x1D && m.data[3] == 1 && m.data[4] == 2) g_tiltRightDown = true;
     else if (m.data[5] == 0x1D && m.data[3] == 0 && g_tiltRightDown) {
         g_tiltRightDown = false;
@@ -396,8 +411,9 @@ void sendGuardIfPending(nbt::most::Client& most) {
     const uint8_t c1 = nextCounter(g_ccsCounter), c2 = nextCounter(c1);
     g_ccsCounter = c2;
     g_ignoreTiltUntil = nowMs() + 600;
+    g_ownTiltStage = 2; g_ownTiltUntil = nowMs() + 300;
     pthread_mutex_unlock(&g_backMx);
-    if (!src || !dst) return;
+    if (!src || !dst) { pthread_mutex_lock(&g_backMx); g_ownTiltStage = 0; pthread_mutex_unlock(&g_backMx); return; }
     if (FILE* f = fopen("/fs/ram3/nbt-aa-guard", "w")) fclose(f);
     most.send(tiltRightMsg(src, dst, c1, true));
     usleep(30000);
