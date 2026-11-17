@@ -274,8 +274,11 @@ bool sourceNotification(nbt::most::Client& most, bool set) {
     return ok;
 }
 
+long long g_ourSourceRequestMs = -100000;   // our own switch request: the AUX that follows is not the driver's
+bool g_auxOpensAa = true;
 // asks the source master 100E to switch to `source` (ConnectionMaster 053 StartResultAck, see the header)
 bool requestSource(nbt::most::Client& most, unsigned source) {
+    g_ourSourceRequestMs = nowMs();
     static unsigned handle = 0x0100;
     handle = (handle + 1) & 0xFFFF;
     if (handle < 0x0100) handle = 0x0100;                         // keep clear of the HMI's small handles
@@ -305,6 +308,14 @@ void onSource(const nbt::most::View& m, void*) {
     const int prev = g_lastSource;
     g_lastSource = s;
     printf("[Source] %02X -> %02X\n", prev < 0 ? 0xFF : prev, s);
+    // AUX chosen in iDrive (user 2026-11-17: the AUX page is the phone's audio, show Android Auto instead): the driver
+    // switched to AUX (not our own request of the last 3 s) while a session runs -> show request to the HMI plugin.
+    // NBT_AUX_OPENS_AA=0 off.
+    if (g_auxOpensAa && prev >= 0 && prev != (int)g_auxSource && s == (int)g_auxSource &&
+        nowMs() - g_ourSourceRequestMs > 3000 && sessionRunning()) {
+        if (FILE* f = fopen("/fs/ram3/nbt-aa-show", "w")) fclose(f);
+        printf("[Source] AUX chosen in iDrive: Android Auto to the front (show request)\n");
+    }
     if (!g_auxPause || prev < 0) return;
     if (prev == (int)g_auxSource && s != (int)g_auxSource) {
         const int st = mediaState();
@@ -599,6 +610,7 @@ int main(int argc, char** argv) {
     if (g_auxButton > 8 || trace) g_auxButton = 0;   // a --trace copy (tests, boot.sh trace) never presses anything
     if (trace) g_aaButton = 0;
     g_playAux = wheelKey("NBT_PLAY_AUX", 1) != 0 && !trace;
+    g_auxOpensAa = wheelKey("NBT_AUX_OPENS_AA", 1) != 0 && !trace;
     g_navOpensAa = wheelKey("NBT_NAV_OPENS_AA", 1) != 0 && !trace;
     g_backGuard = wheelKey("NBT_BACK_GUARD", 1) != 0 && !trace;
     g_tiltGuard = wheelKey("NBT_TILT_GUARD", 1) != 0 && !trace;
