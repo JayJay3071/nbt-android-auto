@@ -17,7 +17,7 @@
            every id in this file must be unique, see model 70) -->
       <hmiAction id="80" target="33"/>
       <hmiAction id="81" target="34"/>
-      <!-- "Start at boot" on/off (favourite 8 = Android Auto, see nbt_knob.cpp) -> inert page 35, whose
+      <!-- "Start at boot" on/off (Android Auto to the front at the first session, see nbt_knob.cpp) -> inert page 35, whose
            focus switches the flag file start-at-boot.off and sends focus event 53 back to 10 -->
       <hmiAction id="90" target="35"/>
     </actions>

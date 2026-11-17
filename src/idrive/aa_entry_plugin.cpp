@@ -19,7 +19,7 @@
 //   - MENU / MEDIA / NAV / COM / MAP / OPTION leave the page the iDrive way: the overlay hides, the session keeps running
 //     in the background. Multimedia -> Android Auto then brings the running session to the front at once.
 //   - "Start at boot: on/off" (inert page 35): switches the flag file start-at-boot.off in the package; nbt_knob reads it
-//     when the first session of a boot runs and then presses favourite 8 (Android Auto) - or not.
+//     when the first session of a boot runs and then brings the picture to the front (show request) - or not.
 //   - "Restart system" (page 33 asks, its button leads to the inert page 34): reboots the head unit with nbt_reset
 //     (UDS 11 01 through the gateway), formerly the separate NbtReboot plugin ("Restart iDrive" under Multimedia).
 // Hold states 13..20 are nested (see "hold states" below). Loop guard: at most 10 hold events per minute.
@@ -226,7 +226,8 @@ public:
 // Show request (2026-11-17, to replace favourite 8): a program creates /fs/ram3/nbt-aa-show; the poll below removes it
 // and, while Android Auto runs, sends the hold focus event (52/54, through hold(): rate limit and loop guard apply) to
 // bring the picture to the front from wherever iDrive is. Open: whether iDrive honours the focus event while another
-// application is in front. The poll runs once the Android Auto page was opened in this boot.
+// application is in front: car 2026-11-17, yes - brought to the front at once. The poll starts 5 s after the plugin is
+// created (so it also serves "Start at boot", before the page was ever opened) and again from the focus handlers.
 const char* const kShowRequest="/fs/ram3/nbt-aa-show";
 // HMI thread, every second once started: the entry's target (model 5) follows the service state
 const unsigned kTargetModel=5;
@@ -546,6 +547,8 @@ bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& 
     app->addHandler(kSysGoState,kFocus,onSysGo);
     created=true;
     touch(kHidden);   // nothing is shown before the page is opened
+    unlink(kShowRequest);                       // a request left from before this HMI start
+    entry.target.active=true;app->post(&entry.target,5000);   // show requests (Start at boot) before the page is opened
     {
         pthread_attr_t at; pthread_t th;
         pthread_attr_init(&at); pthread_attr_setdetachstate(&at,PTHREAD_CREATE_DETACHED);

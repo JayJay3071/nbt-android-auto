@@ -50,6 +50,9 @@
 // Switch (2026-11-12, "Start at boot" in the Android Auto menu): only once per boot (marker /fs/ram3/nbt-aa-fav-done,
 // so restarting Android Auto presses nothing), and not while the file start-at-boot.off exists in the package
 // (/var/opt/hmi/data/rw/NbtAndroidAutoRT; the menu creates / deletes it, read when the session starts).
+// 2026-11-17: no favourite button any more (user: free favourite 8). nbt_knob creates /fs/ram3/nbt-aa-show and the HMI
+// plugin brings the picture to the front with its focus event (car 2026-11-17: works while another screen is in front).
+// The favourite code stays for NBT_AUX_FAVORITE (off by default).
 //
 // Pause on source change (2026-11-12, user: phone audio over AUX; music should stop when iDrive switches away from AUX).
 // Car trace 2026-11-12 (AUX -> Bluetooth -> AUX -> Radio -> AUX): on every source switch 100E sends FBlock 03 inst 00
@@ -325,7 +328,7 @@ void playSwitchIfNeeded(nbt::most::Client& most) {
 }
 
 void favouritesIfNeeded(nbt::most::Client& most) {
-    if (g_favDone || (!g_auxButton && !g_aaButton)) return;
+    if (g_favDone) return;
     const long long now = nowMs();
     if (now < g_favNextCheck) return;
     g_favNextCheck = now + 200;                     // native_service writes "running" as soon as a session starts
@@ -339,7 +342,7 @@ void favouritesIfNeeded(nbt::most::Client& most) {
     pthread_mutex_lock(&g_backMx);
     const uint16_t dst = g_hmiDev, src = g_hmiSrc;
     pthread_mutex_unlock(&g_backMx);
-    if (!dst || !src) return;                                     // HMI address not known yet
+    if (g_auxButton && (!dst || !src)) return;                    // HMI address not known yet (favourite only)
     g_favDone = true;
     if (access(kFavDone, F_OK) == 0) { printf("[Knob] start at boot: already done in this boot\n"); return; }
     if (FILE* m = fopen(kFavDone, "w")) fclose(m);
@@ -350,8 +353,8 @@ void favouritesIfNeeded(nbt::most::Client& most) {
         if (g_aaButton) usleep(1500000);                          // let iDrive switch the source first
     }
     if (g_aaButton) {
-        printf("[Knob] favourite %u (Android Auto)\n", g_aaButton);
-        pressFavourite(most, src, dst, g_aaButton);
+        if (FILE* s = fopen("/fs/ram3/nbt-aa-show", "w")) fclose(s);   // the HMI plugin shows the picture (see the header)
+        printf("[Knob] start at boot: Android Auto to the front (show request)\n");
     }
 }
 
@@ -505,9 +508,9 @@ int main(int argc, char** argv) {
     g_wheelUp = wheelKey("NBT_WHEEL_UP", 87); g_wheelDown = wheelKey("NBT_WHEEL_DOWN", 88); g_wheelPush = wheelKey("NBT_WHEEL_PUSH", 85);
     if (!most.addRoute(0x15, 0x02, nbt::most::kAny, 0xC, &onWheel, NULL)) printf("[Knob] no room for the steering wheel route\n");
     g_auxButton = wheelKey("NBT_AUX_FAVORITE", 0);
-    g_aaButton = wheelKey("NBT_AA_FAVORITE", 8);
+    g_aaButton = wheelKey("NBT_AA_FAVORITE", 1);        // now only on (show request) / 0 = off
     if (g_auxButton > 8 || trace) g_auxButton = 0;   // a --trace copy (tests, boot.sh trace) never presses anything
-    if (g_aaButton > 8 || trace) g_aaButton = 0;
+    if (trace) g_aaButton = 0;
     g_playAux = wheelKey("NBT_PLAY_AUX", 1) != 0 && !trace;
     if (!most.addRoute(0xE5, 0x0F, 0xC06, 0xC, &onE5Periodic, NULL)) printf("[Knob] no room for the HMI address route\n");
     {
