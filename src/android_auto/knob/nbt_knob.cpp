@@ -34,7 +34,7 @@
 // down -> PREVIOUS 88, press -> PLAY_PAUSE 85. Override / switch off with NBT_WHEEL_UP / _DOWN / _PUSH = keycode / 0.
 // iDrive still gets the roller too.
 // 2026-11-13 (user): only while the audio source is AUX (the phone's audio); on Bluetooth / radio the roller is left to
-// iDrive alone. Source from the C03 status below; unknown until the first switch after boot = treated as AUX.
+// iDrive alone. Source from the C03 status below (asked for at start); still unknown = treated as AUX.
 // NBT_WHEEL_AUX_ONLY=0: always forward, as before.
 //
 // AUX source + Android Auto in front (2026-11-12, user: phone audio over AUX; favourite button 7 = the AUX page, which
@@ -61,6 +61,10 @@
 // AUX was left starts (unheard, the source is not AUX) and is paused again on the way back. So the key goes out only
 // while the phone reports "playing": the session writes the phone's media state to /fs/ram3/nbt-aa-media (2 = playing,
 // 3 = paused, car 2026-11-13; patches/nbt-aad-aa_session-media-state.patch); no file = unknown = as before.
+// Current source at start (car 2026-11-17, nbt_key source): a Get of 03/00 C03 is refused (Error 05), but a
+// notification registration with 100E (03/00 fkt 001 Set {01, our device id, 0C 03}) is answered at once with the
+// current C03 status, and later switches come to us as well. nbt_knob registers whenever its MOST link comes up and
+// clears the registration (02 ...) when it ends normally.
 // NBT_AUX_SOURCE = source byte of AUX (hex, default BB), NBT_AUX_PAUSE=0 off, NBT_AUX_RESUME=0 pause only.
 //
 // usage: nbt_knob --probe                 only dlopen the DSI library and resolve its symbols (no connection)
@@ -203,6 +207,19 @@ int mediaState() {   // 2 = playing, 3 = paused, 0 = unknown
     if (fscanf(f, "%d", &st) != 1) st = 0;
     fclose(f);
     return st;
+}
+
+// registers (set) / clears our notification for the source status with the source master 100E
+bool sourceNotification(nbt::most::Client& most, bool set) {
+    const uint16_t me = (uint16_t)most.deviceId();
+    nbt::most::Msg m;
+    m.txType = 0; m.varTag = 1; m.varVal = 0;
+    m.dst = 0x100E; m.src = me; m.fblock = 0x03; m.inst = 0x00; m.fkt = 0x001; m.opType = 0x0; m.hdrTag = 0xFFFFu;
+    const uint8_t d[5] = { (uint8_t)(set ? 0x01 : 0x02), (uint8_t)(me >> 8), (uint8_t)me, 0x0C, 0x03 };
+    m.data.assign(d, d + 5);
+    const bool ok = most.send(m);
+    printf("[Source] notification %s for %04X at 100E: %s\n", set ? "set" : "cleared", me, ok ? "sent" : "FAILED");
+    return ok;
 }
 
 void onSource(const nbt::most::View& m, void*) {
@@ -467,8 +484,11 @@ int main(int argc, char** argv) {
         for (int w = 0; w < 50 && most.state() != nbt::most::kUp; ++w) usleep(100000);
         g_mydev = most.deviceId();
     }
+    bool subscribed = false;
     while (!g_stop) {
         usleep(20000);
+        if (most.state() != nbt::most::kUp) subscribed = false;
+        else if (!subscribed) subscribed = sourceNotification(most, true);   // answered with the current source
         if (!trace) sendBackIfPending(most);
         favouritesIfNeeded(most);
         clock_gettime(CLOCK_MONOTONIC, &t);
@@ -482,6 +502,7 @@ int main(int argc, char** argv) {
             pthread_mutex_unlock(&g_mx);
         }
     }
+    if (subscribed) { sourceNotification(most, false); usleep(200000); }
     printf("nbt_knob: end forwarded=%u dropped=%u\n", g_sent, g_dropped);
     fflush(stdout);
     _exit(0);   // the DSI library threads are not joined; leave without running their destructors
