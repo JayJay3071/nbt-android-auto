@@ -65,6 +65,13 @@
 // notification registration with 100E (03/00 fkt 001 Set {01, our device id, 0C 03}) is answered at once with the
 // current C03 status, and later switches come to us as well. nbt_knob registers whenever its MOST link comes up and
 // clears the registration (02 ...) when it ends normally.
+// Source switch (car 2026-11-17, nbt_key cm): 03/00 fkt 053 op StartResultAck to 100E, data {handle hi, handle lo,
+// source hi, source lo}: "00 10 00 bb" switched the car to AUX (C03 to the HMI, then ResultAck "00 10"); with 2 or 3
+// bytes 100E answers ErrorAck "06 01" (parameter 1 wrong). No HMI page change, the picture stays.
+// Play -> AUX (user 2026-11-17): when the phone's media state changes to playing (2) while a session runs and the known
+// source is not AUX, nbt_knob switches the source to AUX that way. Only on the change to "playing" (session start with
+// autoplay, play on the phone / wheel / in Android Auto), so leaving AUX while music plays is not undone.
+// NBT_PLAY_AUX=0 off.
 // NBT_AUX_SOURCE = source byte of AUX (hex, default BB), NBT_AUX_PAUSE=0 off, NBT_AUX_RESUME=0 pause only.
 //
 // usage: nbt_knob --probe                 only dlopen the DSI library and resolve its symbols (no connection)
@@ -222,6 +229,30 @@ bool sourceNotification(nbt::most::Client& most, bool set) {
     return ok;
 }
 
+// asks the source master 100E to switch to `source` (ConnectionMaster 053 StartResultAck, see the header)
+bool requestSource(nbt::most::Client& most, unsigned source) {
+    static unsigned handle = 0x0100;
+    handle = (handle + 1) & 0xFFFF;
+    if (handle < 0x0100) handle = 0x0100;                         // keep clear of the HMI's small handles
+    nbt::most::Msg m;
+    m.txType = 0; m.varTag = 1; m.varVal = 0;
+    m.dst = 0x100E; m.src = (uint16_t)most.deviceId(); m.fblock = 0x03; m.inst = 0x00; m.fkt = 0x053; m.opType = 0x6;
+    m.hdrTag = 0xFFFFu;
+    const uint8_t d[4] = { (uint8_t)(handle >> 8), (uint8_t)handle, (uint8_t)(source >> 8), (uint8_t)source };
+    m.data.assign(d, d + 4);
+    const bool ok = most.send(m);
+    printf("[Source] switch to %02X requested (handle %04X): %s\n", source, handle, ok ? "sent" : "FAILED");
+    return ok;
+}
+
+// 100E's answer to our switch request: ResultAck (D) or ErrorAck (9, "06 nn" = parameter nn wrong)
+void onSourceResult(const nbt::most::View& m, void*) {
+    if (m.fkt != 0x053 || m.len < 2 || m.data[0] == 0x00) return;  // handles below 0x0100 are the HMI's
+    printf("[Source] switch handle %02X%02X: %s", m.data[0], m.data[1], m.op == 0xD ? "done" : m.op == 0x9 ? "ERROR" : "?");
+    for (size_t i = 2; i < m.len && i < 8; ++i) printf(" %02x", m.data[i]);
+    printf("\n");
+}
+
 void onSource(const nbt::most::View& m, void*) {
     if (m.fkt != 0xC03 || m.len < 5) return;             // the 2-byte "00 00" is only the old source going off
     const int s = m.data[3];
@@ -275,6 +306,24 @@ void pressFavourite(nbt::most::Client& most, uint16_t src, uint16_t dst, unsigne
 }
 
 // main thread, every 200 ms until done: the service's public state
+// --- phone starts playing while the source is not AUX: switch the source to AUX (see the header) ---
+bool g_playAux = true;
+int g_prevMedia = -1;           // -1 = not read yet (the first read is only the starting point)
+long long g_mediaNextCheck = 0;
+
+void playSwitchIfNeeded(nbt::most::Client& most) {
+    if (!g_playAux) return;
+    const long long now = nowMs();
+    if (now < g_mediaNextCheck) return;
+    g_mediaNextCheck = now + 200;
+    const int st = mediaState(), prev = g_prevMedia;
+    g_prevMedia = st;
+    if (prev < 0 || st != 2 || prev == 2) return;                // only the change to "playing"
+    if (g_lastSource < 0 || g_lastSource == (int)g_auxSource || !sessionRunning()) return;
+    printf("[Source] phone plays while the source is %02X\n", g_lastSource);
+    requestSource(most, g_auxSource);
+}
+
 void favouritesIfNeeded(nbt::most::Client& most) {
     if (g_favDone || (!g_auxButton && !g_aaButton)) return;
     const long long now = nowMs();
@@ -459,6 +508,7 @@ int main(int argc, char** argv) {
     g_aaButton = wheelKey("NBT_AA_FAVORITE", 8);
     if (g_auxButton > 8 || trace) g_auxButton = 0;   // a --trace copy (tests, boot.sh trace) never presses anything
     if (g_aaButton > 8 || trace) g_aaButton = 0;
+    g_playAux = wheelKey("NBT_PLAY_AUX", 1) != 0 && !trace;
     if (!most.addRoute(0xE5, 0x0F, 0xC06, 0xC, &onE5Periodic, NULL)) printf("[Knob] no room for the HMI address route\n");
     {
         const char* v = getenv("NBT_AUX_SOURCE");
@@ -468,6 +518,7 @@ int main(int argc, char** argv) {
         g_wheelAuxOnly = wheelKey("NBT_WHEEL_AUX_ONLY", 1) != 0;
     }
     if (!most.addRoute(0x03, 0x00, 0xC03, 0xC, &onSource, NULL)) printf("[Knob] no room for the audio source route\n");
+    if (!most.addRoute(0x03, 0x00, 0x053, nbt::most::kAny, &onSourceResult, NULL)) printf("[Knob] no room for the switch result route\n");
     if (trace && !most.setTap(&onTap, NULL)) return 3;
     if (!most.start("NBTPROJ_KNOB")) return 3;
     printf("nbt_knob: observing the iDrive controller, forwarding to %s%s\n", g_fifo, seconds ? "" : " until SIGTERM");
@@ -491,6 +542,7 @@ int main(int argc, char** argv) {
         else if (!subscribed) subscribed = sourceNotification(most, true);   // answered with the current source
         if (!trace) sendBackIfPending(most);
         favouritesIfNeeded(most);
+        playSwitchIfNeeded(most);
         clock_gettime(CLOCK_MONOTONIC, &t);
         long el = (long)(t.tv_sec - t0.tv_sec);
         if (seconds && el >= seconds) break;
