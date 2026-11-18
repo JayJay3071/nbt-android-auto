@@ -107,6 +107,11 @@ By default the phone's sound comes over USB into the car (source `f6`). To use t
 
 Applies after **Restart Android Auto** (the service reads the file when it starts).
 
+Navigation prompts while another source plays (radio, ...) cut in over connection `b8`. To turn that off (prompts only
+on Android Auto's own source): `%CAR% "touch /var/opt/hmi/data/rw/NbtAndroidAutoRT/prompts-off"`. What happened:
+`%CAR% "grep -e Prompt -e 'build handle' -e 'remove handle' /fs/ram3/nbt-aa-native/knob.log"` and
+`%CAR% "grep -h -e prompt -e b8 /fs/ram3/nbt-aa-native/capture-*.log"`.
+
 ## Test tool nbt_key
 
 Copy it to the car after a build (it is not part of the installer payload):

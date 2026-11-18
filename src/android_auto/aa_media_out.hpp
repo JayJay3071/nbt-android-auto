@@ -13,6 +13,11 @@
 // Each stream waits for a small reserve before it plays (and again after running dry), and media is cut back when the
 // phone has queued more than ~0.5 s, so the delay stays short.
 //
+// Prompts while another source plays (NBT_AA_PROMPT_OUT, input_stereo_3): guidance and system sounds go there instead
+// of the main mix whenever the car's main source (written by nbt_knob to /fs/ram3/nbt-aa-source) is not Android Auto's
+// (NBT_AUX_SOURCE); nbt_knob builds connection b8 for them on request (/fs/ram3/nbt-aa-prompt -> nbt-aa-prompt-ready),
+// which mutes the main source while the prompt plays, and removes it 0.8 s after the prompt.
+//
 // Flow control: the session acks the phone's audio frames only once they are played (AASession deferred acks); this
 // module reports what left its queues through the consumed callback, so the phone sends at the speed the car plays.
 //

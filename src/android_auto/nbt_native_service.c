@@ -458,11 +458,16 @@ int main(int argc, char** argv)
     if (access("media-jack", F_OK) != 0) {
         setenv("NBT_SDR_DROP", "2,4", 1); /* services not offered to the phone (see NBT-AAD sdr_builder) */
         setenv("NBT_AA_MEDIA_OUT", "input_stereo_1", 0);
+        /* prompts while another source plays: input_stereo_3 over connection b8 (nbt_knob builds it); file prompts-off
+         * = only on Android Auto's own source */
+        if (access("prompts-off", F_OK) != 0) setenv("NBT_AA_PROMPT_OUT", "input_stereo_3", 0);
+        else { unsetenv("NBT_AA_PROMPT_OUT"); setenv("NBT_PROMPT_CONN", "0", 1); }
         setenv("NBT_AUX_SOURCE", "f6", 0);
         setenv("NBT_AUX_OPENS_AA", "0", 0);
     } else {
         setenv("NBT_SDR_DROP", "2,4,9", 1);
         unsetenv("NBT_AA_MEDIA_OUT");
+        unsetenv("NBT_AA_PROMPT_OUT");
     }
     setenv("NBT_RX_TIMEOUT_S", "5", 1);
 

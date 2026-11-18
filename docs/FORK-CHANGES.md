@@ -63,7 +63,9 @@ amplifier builds without a medium; iDrive keeps it, shows a globe with a music n
 Android Auto source: play or NAV in Android Auto switches to it, leaving it pauses the phone, the rocker goes to the
 phone only on `f6`. iDrive's AUX stays factory. The file `media-jack` in `/var/opt/hmi/data/rw/NbtAndroidAutoRT` brings
 back the cable setup (no media channel, the Android Auto source is AUX, choosing AUX opens Android Auto). Prompts
-while another source plays (radio) are not audible yet (next step: connection `b8` + `input_stereo_3`).
+while another source plays (radio, Bluetooth, AUX, none) go into `input_stereo_3` instead, and `nbt_knob` builds
+connection **`b8`** (the browser, interrupting) for them: the main source is muted while the prompt plays, then `b8` is
+removed 0.8 s after it (like traffic news). Flag file `prompts-off`: prompts only on Android Auto's source.
 
 | Function | How |
 | --- | --- |

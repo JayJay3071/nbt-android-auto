@@ -313,29 +313,73 @@ bool sourceNotification(nbt::most::Client& most, bool set) {
 
 long long g_ourSourceRequestMs = -100000;   // our own switch request: the AUX that follows is not the driver's
 bool g_auxOpensAa = true;
-// asks the source master 100E to switch to `source` (ConnectionMaster 053 StartResultAck, see the header)
-bool requestSource(nbt::most::Client& most, unsigned source) {
-    g_ourSourceRequestMs = nowMs();
+// one ConnectionMaster command to 100E (car 2026-11-18): fkt 053 BuildHighSyncConnection / 054 Remove..., op 6
+// StartResultAck, data {handle hi, lo, connection hi, lo}. Returns the handle (0 = not sent).
+unsigned connectionCmd(nbt::most::Client& most, unsigned fkt, unsigned conn) {
     static unsigned handle = 0x0100;
     handle = (handle + 1) & 0xFFFF;
     if (handle < 0x0100) handle = 0x0100;                         // keep clear of the HMI's small handles
     nbt::most::Msg m;
     m.txType = 0; m.varTag = 1; m.varVal = 0;
-    m.dst = 0x100E; m.src = (uint16_t)most.deviceId(); m.fblock = 0x03; m.inst = 0x00; m.fkt = 0x053; m.opType = 0x6;
+    m.dst = 0x100E; m.src = (uint16_t)most.deviceId(); m.fblock = 0x03; m.inst = 0x00; m.fkt = (uint16_t)fkt; m.opType = 0x6;
     m.hdrTag = 0xFFFFu;
-    const uint8_t d[4] = { (uint8_t)(handle >> 8), (uint8_t)handle, (uint8_t)(source >> 8), (uint8_t)source };
+    const uint8_t d[4] = { (uint8_t)(handle >> 8), (uint8_t)handle, (uint8_t)(conn >> 8), (uint8_t)conn };
     m.data.assign(d, d + 4);
-    const bool ok = most.send(m);
-    printf("[Source] switch to %02X requested (handle %04X): %s\n", source, handle, ok ? "sent" : "FAILED");
-    return ok;
+    return most.send(m) ? handle : 0;
 }
 
-// 100E's answer to our switch request: ResultAck (D) or ErrorAck (9, "06 nn" = parameter nn wrong)
+// asks the source master 100E to switch to `source` (ConnectionMaster 053, see the header)
+bool requestSource(nbt::most::Client& most, unsigned source) {
+    g_ourSourceRequestMs = nowMs();
+    const unsigned handle = connectionCmd(most, 0x053, source);
+    printf("[Source] switch to %02X requested (handle %04X): %s\n", source, handle, handle ? "sent" : "FAILED");
+    return handle != 0;
+}
+
+// --- Android Auto prompts while another source plays (2026-11-18, aa_media_out) ---
+// The session writes prompts that come while the main source is not Android Auto's into io-amp input_stereo_3 and
+// creates kPromptReq; nbt_knob then builds connection b8 (the browser: interrupting, mutes the main source, plays
+// input_stereo_3; car-tested with nbt_key + nbt_a2i_beep), writes kPromptReady when 100E has built it and removes it
+// (054) once kPromptReq is gone. kSourceFile tells the session the current main source.
+const char* const kSourceFile = "/fs/ram3/nbt-aa-source";
+const char* const kPromptReq = "/fs/ram3/nbt-aa-prompt";
+const char* const kPromptReady = "/fs/ram3/nbt-aa-prompt-ready";
+unsigned g_promptConn = 0xB8;      // NBT_PROMPT_CONN (0 = off)
+bool g_promptBuilt = false;        // our b8 is up or requested
+unsigned g_promptHandle = 0;       // handle of our b8 build
+long long g_promptNext = 0;
+
+void promptRouteIfNeeded(nbt::most::Client& most) {
+    if (!g_promptConn) return;
+    const long long now = nowMs();
+    if (now < g_promptNext) return;
+    g_promptNext = now + 50;
+    const bool want = access(kPromptReq, F_OK) == 0 && sessionRunning();
+    if (want && !g_promptBuilt) {
+        unlink(kPromptReady);
+        g_promptHandle = connectionCmd(most, 0x053, g_promptConn);
+        g_promptBuilt = true;
+        printf("[Prompt] Android Auto prompt: build %02X (handle %04X)\n", g_promptConn, g_promptHandle);
+    } else if (!want && g_promptBuilt) {
+        const unsigned h = connectionCmd(most, 0x054, g_promptConn);
+        g_promptBuilt = false;
+        g_promptHandle = 0;
+        unlink(kPromptReady);
+        printf("[Prompt] prompt over: remove %02X (handle %04X)\n", g_promptConn, h);
+    }
+}
+
+// 100E's answer to our build / remove: ResultAck (D) or ErrorAck (9, "06 nn" = parameter nn wrong, 42 not available)
 void onSourceResult(const nbt::most::View& m, void*) {
-    if (m.fkt != 0x053 || m.len < 2 || m.data[0] == 0x00) return;  // handles below 0x0100 are the HMI's
-    printf("[Source] switch handle %02X%02X: %s", m.data[0], m.data[1], m.op == 0xD ? "done" : m.op == 0x9 ? "ERROR" : "?");
+    if ((m.fkt != 0x053 && m.fkt != 0x054) || m.len < 2 || m.data[0] == 0x00) return;  // handles below 0x0100: the HMI's
+    const unsigned handle = (unsigned)m.data[0] << 8 | m.data[1];
+    printf("[Source] %s handle %04X: %s", m.fkt == 0x053 ? "build" : "remove", handle,
+           m.op == 0xD ? "done" : m.op == 0x9 ? "ERROR" : "?");
     for (size_t i = 2; i < m.len && i < 8; ++i) printf(" %02x", m.data[i]);
     printf("\n");
+    if (m.fkt == 0x053 && handle == g_promptHandle && g_promptBuilt && m.op == 0xD) {
+        if (FILE* f = fopen(kPromptReady, "w")) fclose(f);
+    }
 }
 
 // Main audio sources: the connection IDs of category 01 in HmiMain3D's connection table (0x9877344, car 2026-11-18).
@@ -371,6 +415,10 @@ void onSource(const nbt::most::View& m, void*) {
     printf("[Source] %02X -> %02X (table:", prev < 0 ? 0xFF : prev, s < 0 ? 0xFF : s);
     for (size_t i = 2; i < m.len && i < 26; ++i) printf(" %02x", m.data[i]);
     printf(")\n");
+    if (FILE* f = fopen(kSourceFile, "w")) {               // for the session's prompt routing (aa_media_out)
+        if (s >= 0) fprintf(f, "%04x\n", s); else fputs("none\n", f);
+        fclose(f);
+    }
     const int prevMain = g_prevMain;
     if (s >= 0) g_prevMain = s;
     // AUX chosen in iDrive (user 2026-11-17: the AUX page is the phone's audio, show Android Auto instead): the driver
@@ -725,6 +773,13 @@ int main(int argc, char** argv) {
     }
     if (!most.addRoute(0x03, 0x00, 0xC03, 0xC, &onSource, NULL)) printf("[Knob] no room for the audio source route\n");
     if (!most.addRoute(0x03, 0x00, 0x053, nbt::most::kAny, &onSourceResult, NULL)) printf("[Knob] no room for the switch result route\n");
+    if (!most.addRoute(0x03, 0x00, 0x054, nbt::most::kAny, &onSourceResult, NULL)) printf("[Knob] no room for the remove result route\n");
+    {
+        const char* v = getenv("NBT_PROMPT_CONN");             // hex, 0 = no prompts over another source
+        g_promptConn = trace ? 0 : (v && *v ? (unsigned)strtoul(v, 0, 16) : 0xB8u);
+    }
+    unlink(kPromptReady);
+    unlink(kSourceFile);
     if (trace && !most.setTap(&onTap, NULL)) return 3;
     if (!most.start("NBTPROJ_KNOB")) return 3;
     printf("nbt_knob: observing the iDrive controller, forwarding to %s%s\n", g_fifo, seconds ? "" : " until SIGTERM");
@@ -750,6 +805,7 @@ int main(int argc, char** argv) {
         favouritesIfNeeded(most);
         playSwitchIfNeeded(most);
         navAudioIfNeeded(most);
+        if (!trace) promptRouteIfNeeded(most);
         clock_gettime(CLOCK_MONOTONIC, &t);
         long el = (long)(t.tv_sec - t0.tv_sec);
         if (seconds && el >= seconds) break;
@@ -761,6 +817,7 @@ int main(int argc, char** argv) {
             pthread_mutex_unlock(&g_mx);
         }
     }
+    if (g_promptBuilt) { connectionCmd(most, 0x054, g_promptConn); unlink(kPromptReady); usleep(200000); }
     if (subscribed) { sourceNotification(most, false); usleep(200000); }
     printf("nbt_knob: end forwarded=%u dropped=%u\n", g_sent, g_dropped);
     fflush(stdout);
