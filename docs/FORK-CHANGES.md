@@ -66,6 +66,8 @@ back the cable setup (no media channel, the Android Auto source is AUX, choosing
 while another source plays (radio, Bluetooth, AUX, none) go into `input_stereo_3` instead, and `nbt_knob` builds
 connection **`b8`** (the browser, interrupting) for them: the main source is muted while the prompt plays, then `b8` is
 removed 0.8 s after it (like traffic news). Flag file `prompts-off`: prompts only on Android Auto's source.
+Both inputs are written in 4096-byte packages (21 ms, two queued); the writer sleeps until a package is due instead of
+polling every millisecond (1024-byte packages are the fallback; env `NBT_A2I_BUF`, `NBT_A2I_PACKAGES`).
 
 | Function | How |
 | --- | --- |

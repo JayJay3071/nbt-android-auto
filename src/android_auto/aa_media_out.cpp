@@ -196,27 +196,46 @@ void reportConsumed() {
 }
 
 // ---- one A2I output -------------------------------------------------------------------------------------------------
+// Package size (2026-11-18): 1024-byte packages (5.3 ms) meant ~190 packages a second, and the writer polled
+// GetNotification every millisecond in between: about 1000 wakeups a second per output, competing with the session
+// and the decoder for the CPU (knob input on the Android Auto picture became slow). Now 4096-byte packages (21 ms), and
+// the writer sleeps until shortly before the next
+// package is due. NBT_A2I_BUF / NBT_A2I_PACKAGES override; if the input refuses the size, the car-tested 1024 x 2.
 struct Out {
     const char* name;
     char endpoint[48];
     void* h;
     unsigned primed;
+    unsigned pkgBytes, pkgs;       // what the input was opened with
+    long long pkgMs;               // play time of one package
+    long long lastWrite;           // ms of the last Out_Write
+    unsigned long long polls, writes;   // GetNotification calls / packages written (stats)
 };
-Out g_main = {"main", "", 0, 0}, g_prompt = {"prompt", "", 0, 0};
+Out g_main = {"main", "", 0, 0, 0, 0, 0, 0, 0, 0}, g_prompt = {"prompt", "", 0, 0, 0, 0, 0, 0, 0, 0};
+unsigned g_pkgBytes = 4096, g_pkgs = 2;
 pthread_t g_mainThread, g_promptThread;
 bool g_promptThreadOn = false;
 
-bool openOut(Out& o) {
+bool openWith(Out& o, unsigned bytes, unsigned pkgs) {
     A2ICfg cfg;
     memset(&cfg, 0, sizeof(cfg));
-    cfg.magic = 0x02000000; cfg.direction = 0; cfg.field_08 = 1; cfg.mode = 2; cfg.buffer_size = 0x400;
+    cfg.magic = 0x02000000; cfg.direction = 0; cfg.field_08 = 1; cfg.mode = pkgs; cfg.buffer_size = bytes;
     cfg.channels = 2; cfg.bytes_per_sample = 2; cfg.sample_rate = kRate; cfg.endpoint_name = o.endpoint;
     cfg.channel_type = 1; cfg.sample_bits = 0; cfg.field_34 = 0x05555555; cfg.timeout_ms = 2000;
-    o.h = 0; o.primed = 0;
+    o.h = 0; o.primed = 0; o.lastWrite = 0;
     const int rc = a_open(&o.h, &cfg);
-    printf("AA_MEDIA_OUT %s: A2I_Client_Open('%s') rc=%d %s\n", o.name, o.endpoint, rc, rc && a_err ? a_err(rc) : "");
+    printf("AA_MEDIA_OUT %s: A2I_Client_Open('%s', %u bytes x%u) rc=%d %s\n", o.name, o.endpoint, bytes, pkgs, rc,
+           rc && a_err ? a_err(rc) : "");
     if (rc || !o.h) { o.h = 0; return false; }
+    o.pkgBytes = bytes; o.pkgs = pkgs;
+    o.pkgMs = (long long)bytes / 4 * 1000 / kRate;
     return true;
+}
+
+bool openOut(Out& o) {
+    if (openWith(o, g_pkgBytes, g_pkgs)) return true;
+    if (g_pkgBytes == 1024 && g_pkgs == 2) return false;
+    return openWith(o, 1024, 2);   // car-tested 2026-11-18
 }
 
 void closeOut(Out& o) {
@@ -227,7 +246,13 @@ void closeOut(Out& o) {
 bool pump(Out& o, void (*fill)(int16_t*, size_t)) {
     void* buf = 0;
     size_t size = 0;
-    if (o.primed >= 2 && a_notify(o.h) != 0) { usleep(1000); return false; }
+    if (o.primed >= 2) {
+        // the next package is due about one package time after the last write; sleep until 2 ms before, then poll
+        const long long due = o.lastWrite + o.pkgMs - 2, now = nowMs();
+        if (due - now > 1) { usleep((useconds_t)(due - now) * 1000); return false; }
+        ++o.polls;
+        if (a_notify(o.h) != 0) { usleep(1000); return false; }
+    }
     int rc = a_getbuf(o.h, &buf, &size);
     if (rc == kNoBuffer && o.primed < 2) { usleep(2000); return false; }
     if (rc || !buf || !size) { usleep(2000); return false; }
@@ -240,10 +265,19 @@ bool pump(Out& o, void (*fill)(int16_t*, size_t)) {
         return false;
     }
     ++o.primed;
+    ++o.writes;
+    o.lastWrite = nowMs();
     return true;
 }
 
 void logStats() {
+    static unsigned long long lastPolls = 0, lastWrites = 0;
+    static long long lastAt = 0;
+    const long long now = nowMs();
+    if (lastAt && now > lastAt)
+        printf("AA_MEDIA_OUT main: %u bytes x%u, %llu polls / %llu packages in %lld s\n", g_main.pkgBytes, g_main.pkgs,
+               g_main.polls - lastPolls, g_main.writes - lastWrites, (now - lastAt) / 1000);
+    lastPolls = g_main.polls; lastWrites = g_main.writes; lastAt = now;
     pthread_mutex_lock(&g_mx);
     for (int i = 0; i < S_N; ++i) {
         const Stream& t = g_s[i];
@@ -355,6 +389,10 @@ bool start(const char* endpoint) {
         printf("AA_MEDIA_OUT A2I symbols missing\n");
         return false;
     }
+    if (const char* b = getenv("NBT_A2I_BUF")) if (*b) g_pkgBytes = (unsigned)strtoul(b, 0, 0);
+    if (const char* n = getenv("NBT_A2I_PACKAGES")) if (*n) g_pkgs = (unsigned)strtoul(n, 0, 0);
+    if (g_pkgBytes < 256 || g_pkgBytes > 65536 || (g_pkgBytes & 3)) g_pkgBytes = 4096;
+    if (g_pkgs < 2 || g_pkgs > 16) g_pkgs = 2;
     snprintf(g_main.endpoint, sizeof(g_main.endpoint), "%s", endpoint);
     if (!openOut(g_main)) return false;
     // reserve before playing / queue limit / level after a cut (frames at 48 kHz). Prompts may wait up to ~2 s for b8.
