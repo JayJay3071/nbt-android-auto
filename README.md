@@ -157,8 +157,9 @@ Parts of the Android Auto core and the controller code come from **NBT-AAD** by 
 ([Sq00ky/Supra-iDrive6-Android-Auto](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto)). Thank you!
 
 This project is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE): free for private and other
-noncommercial use, **no commercial use** (for example selling it pre-installed). Third-party notices are listed in
-[NOTICE.md](NOTICE.md).
+noncommercial use, **no commercial use** (for example selling it pre-installed). The decoder `nbt_decoder`,
+`nbt_reset` and a few documents are licensed under the [GNU GPL version 3](LICENSE-GPL-3.0.txt) instead; the list is
+in [NOTICE.md](NOTICE.md#gplv3-parts), together with the third-party notices.
 
 Required Notice: Copyright (c) 2026 nanaisu - NBT-AAD (https://github.com/Sq00ky/Supra-iDrive6-Android-Auto)
 
@@ -190,7 +191,8 @@ So sieht es im Auto aus: [Video auf Instagram](https://www.instagram.com/reel/Df
   [installer/README.md](installer/README.md) folgen.
 - **Einschränkungen:** noch kein Ton über Android Auto (Musik weiter per Bluetooth), 800x480, getestet mit einem Auto
   (F07, 2014) und einem Telefon.
-- **Nutzung auf eigene Gefahr**, keine Gewähr. Lizenz: PolyForm Noncommercial 1.0.0, also keine kommerzielle Nutzung.
+- **Nutzung auf eigene Gefahr**, keine Gewähr. Lizenz: PolyForm Noncommercial 1.0.0, also keine kommerzielle Nutzung;
+  der Decoder und die übrigen in NOTICE.md unter „GPLv3 parts“ genannten Dateien: GNU GPL Version 3.
 - Mitmachen ist ausdrücklich erwünscht: [CONTRIBUTING.md](CONTRIBUTING.md). Issues und Pull Requests gern auf Deutsch
   oder Englisch.
 - **Spenden und Kontakt:** Wer das Projekt unterstützen möchte, kann gern per **PayPal** an
