@@ -3,6 +3,7 @@
 
 #include <dlfcn.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -212,7 +213,23 @@ struct Out {
     unsigned long long polls, writes;   // GetNotification calls / packages written (stats)
 };
 Out g_main = {"main", "", 0, 0, 0, 0, 0, 0, 0, 0}, g_prompt = {"prompt", "", 0, 0, 0, 0, 0, 0, 0, 0};
-unsigned g_pkgBytes = 4096, g_pkgs = 2;
+// Car 2026-11-18 with the decoder mode: our queue never ran dry and the phone was paced by the acks, yet the sound was
+// choppy at times while the CPU peaked (94 % over 0.1 s): with 2 packages io-amp has only one package (21 ms) of slack,
+// so a writer thread that runs late leaves a gap. Now 3 packages (one more in reserve, 64 ms in all) and the writer
+// threads run above the normal application priorities (NBT_A2I_PRIO, default 21, SCHED_RR; 0 = leave as is).
+unsigned g_pkgBytes = 4096, g_pkgs = 3;
+int g_prio = 21;
+
+void raisePriority(const char* who) {
+    if (g_prio <= 0) return;
+    struct sched_param sp;
+    int policy = 0;
+    pthread_getschedparam(pthread_self(), &policy, &sp);
+    const int was = sp.sched_priority;
+    sp.sched_priority = g_prio;
+    const int rc = pthread_setschedparam(pthread_self(), SCHED_RR, &sp);
+    printf("AA_MEDIA_OUT %s writer priority %d -> %d%s\n", who, was, g_prio, rc ? " FAILED" : "");
+}
 pthread_t g_mainThread, g_promptThread;
 bool g_promptThreadOn = false;
 
@@ -289,6 +306,7 @@ void logStats() {
 }
 
 void* mainWriter(void*) {
+    raisePriority("main");
     unsigned long long writes = 0;
     long long nextLog = nowMs() + 10000;
     while (!g_stop) {
@@ -313,6 +331,7 @@ int carSource() {
 
 // prompt control + prompt output (opened only while a prompt goes over b8)
 void* promptWriter(void*) {
+    raisePriority("prompt");
     bool requested = false, gaveUp = false;
     long long requestedAt = 0, lastPrompt = 0, nextCheck = 0;
     while (!g_stop) {
@@ -392,7 +411,9 @@ bool start(const char* endpoint) {
     if (const char* b = getenv("NBT_A2I_BUF")) if (*b) g_pkgBytes = (unsigned)strtoul(b, 0, 0);
     if (const char* n = getenv("NBT_A2I_PACKAGES")) if (*n) g_pkgs = (unsigned)strtoul(n, 0, 0);
     if (g_pkgBytes < 256 || g_pkgBytes > 65536 || (g_pkgBytes & 3)) g_pkgBytes = 4096;
-    if (g_pkgs < 2 || g_pkgs > 16) g_pkgs = 2;
+    if (g_pkgs < 2 || g_pkgs > 16) g_pkgs = 3;
+    if (const char* q = getenv("NBT_A2I_PRIO")) if (*q) g_prio = atoi(q);
+    if (g_prio > 60) g_prio = 60;
     snprintf(g_main.endpoint, sizeof(g_main.endpoint), "%s", endpoint);
     if (!openOut(g_main)) return false;
     // reserve before playing / queue limit / level after a cut (frames at 48 kHz). Prompts may wait up to ~2 s for b8.
