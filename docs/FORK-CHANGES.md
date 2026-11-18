@@ -4,11 +4,8 @@ This fork ([valinet/nbt-android-auto](https://github.com/valinet/nbt-android-aut
 [JayJay3071/nbt-android-auto](https://github.com/JayJay3071/nbt-android-auto) `main` at `12c8411` (2026-11-11). It was
 developed and tested on a BMW F30 with NBT. Reverted experiments are not listed; only what the code does now.
 
-**Setup:** in my setup, the phone is connected via USB, and its audio goes from the phone's 3.5 mm jack to the car's AUX
-port. The entire solution is built around this; change it according to your needs (the `NBT_*` switches below).
-
-**Android Auto audio:** not fixed in this fork either; Android Auto still sends no audio to the car. I use a dedicated
-phone that always stays in the car, always connected to it, so its 3.5 mm jack on AUX is all I need.
+**Setup:** a dedicated phone that always stays in the car, connected via USB. Its sound comes over USB into the car
+(source `f6`, see Audio below); the 3.5 mm cable to AUX is optional (flag file `media-jack` = the old cable setup).
 
 **Split screen:** I primarily develop and test this with iDrive's split screen on, showing the trip computer. Other
 split screen contents, or split screen off, get less testing.
@@ -59,10 +56,10 @@ screen.
 `nbt_knob` reads and switches the car's audio source directly, through the source master at MOST address 100E
 (FBlock 03, the ConnectionMaster).
 
-**Android Auto sound over USB (2026-11-18, being tested):** the phone's media, navigation prompts and system sounds come
+**Android Auto sound over USB (car-tested 2026-11-18):** the phone's media, navigation prompts and system sounds come
 over the Android Auto connection and are written into io-amp input `input_stereo_1` (`aa_media_out`, A2I client,
 48 kHz stereo, media turned down under prompts, acks once played). That input plays as main source **`f6`**, which the
-amplifier builds without a medium; iDrive keeps it, shows no player and leaves the steering wheel to us. `f6` is the
+amplifier builds without a medium; iDrive keeps it, shows a globe with a music note as the source and leaves the steering wheel to us. `f6` is the
 Android Auto source: play or NAV in Android Auto switches to it, leaving it pauses the phone, the rocker goes to the
 phone only on `f6`. iDrive's AUX stays factory. The file `media-jack` in `/var/opt/hmi/data/rw/NbtAndroidAutoRT` brings
 back the cable setup (no media channel, the Android Auto source is AUX, choosing AUX opens Android Auto). Prompts
@@ -70,12 +67,15 @@ while another source plays (radio) are not audible yet (next step: connection `b
 
 | Function | How |
 | --- | --- |
-| Read the source | Notification registration at 100E (`03/00 fkt 001`); 100E answers at once and on every switch with `fkt C03`, byte 3 = source (`bb` AUX, `c7` Bluetooth, `01` radio). A plain Get is refused |
-| Switch the source | `03/00 fkt 053` StartResultAck to 100E with {request number, `00`, source}; `00 xx 00 bb` switches to AUX |
-| Leaving AUX | Sends PLAY_PAUSE (85) to the phone if it is playing (`NBT_AUX_PAUSE`); keys 126 / 127 are not used, they dropped the session |
-| Back to AUX | Sends PLAY_PAUSE again if the pause was ours (`NBT_AUX_RESUME`) |
-| Phone starts playing | Switches the source to AUX if it is not AUX (`NBT_PLAY_AUX`) |
-| AUX chosen in iDrive | Brings Android Auto to the front (`NBT_AUX_OPENS_AA`) |
+| Read the source | Notification registration at 100E (`03/00 fkt 001`); 100E answers at once and on every switch with `fkt C03`: `00 00`, then {id (2 bytes), state} per connection. The source is the first main-source entry (`f6` Android Auto, `bb` AUX, `c7` Bluetooth, `01` radio, ...); an empty table (CD/DVD without a disc) = none. A plain Get is refused |
+| Switch the source | `03/00 fkt 053` (BuildHighSyncConnection) to 100E with {request number, connection}; `fkt 054` removes one |
+| Leaving Android Auto's source | Sends PLAY_PAUSE (85) to the phone if it is playing (`NBT_AUX_PAUSE`); keys 126 / 127 are not used, they dropped the session |
+| Back on it | Sends PLAY_PAUSE again if the pause was ours (`NBT_AUX_RESUME`) |
+| Phone starts playing | Switches to Android Auto's source if it is not active (`NBT_PLAY_AUX`) |
+| NAV in Android Auto | Switches to Android Auto's source and plays, or play / pause on it (`NBT_NAV_AUDIO`) |
+| AUX chosen in iDrive | Cable setup only (`media-jack`): brings Android Auto to the front (`NBT_AUX_OPENS_AA`) |
+
+`NBT_AUX_SOURCE` is Android Auto's source: `f6` by default, `bb` (AUX) with `media-jack`.
 
 The phone's playing / paused state comes from the session: a small NBT-AAD core patch
 (`patches/nbt-aad-aa_session-media-state.patch`) writes it to `/fs/ram3/nbt-aa-media` (2 = playing, 3 = paused).

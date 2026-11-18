@@ -13,10 +13,10 @@ iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrum
 > steering wheel keys, BACK / tilt fixes, start at boot and more, tested on a BMW F30 with NBT. Full list:
 > [docs/FORK-CHANGES.md](docs/FORK-CHANGES.md). Build, install and debug commands: [docs/WORKFLOW.md](docs/WORKFLOW.md).
 >
-> **Audio:** in my setup, the phone is connected via USB, and its audio goes from the phone's 3.5 mm jack to the car's
-> AUX port. The entire solution is built around this; change it according to your needs. Audio over Android Auto
-> itself is **not** fixed in this fork either: I use a dedicated phone that always stays in the car, always connected
-> to it, so the 3.5 mm cable is all I need.
+> **Audio:** Android Auto sound works over USB in this fork: music, navigation prompts and system sounds play through
+> the car as their own audio source (iDrive shows a globe with a music note). The 3.5 mm cable to AUX is optional; the
+> flag file `media-jack` brings back the cable setup ([docs/WORKFLOW.md](docs/WORKFLOW.md)). I use a dedicated phone
+> that always stays in the car, always connected to it.
 >
 > **Split screen:** I primarily develop and test this with iDrive's split screen on, showing the trip computer. Other
 > split screen contents, or split screen off, get less testing.
@@ -30,11 +30,13 @@ iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrum
   Two picture modes: **wide** (full width) and **16:9** (sharper, iDrive split screen stays visible on the right).
 - **iDrive controller**: turn = rotate, tilt = D-pad, press = OK, BACK = back; BACK and tilts stay in Android Auto, also
   with iDrive split screen on. MENU / MEDIA / COM / OPTION leave Android Auto, which keeps running in the background.
-  **NAV** brings Android Auto to the front.
-- **Steering wheel**: roller up / down = next / previous track, roller push = play / pause, only while the audio source
-  is AUX. After the phone button the roller stays with iDrive's contact list for 4 s.
-- **Audio source**: when the phone starts playing, the car switches to AUX; leaving AUX pauses the phone, coming back
-  resumes it. Choosing AUX in iDrive brings Android Auto to the front.
+  **NAV** brings Android Auto to the front; pressed again in Android Auto, it switches to Android Auto's sound (or
+  play / pause).
+- **Android Auto sound in the car**: over USB, into main audio source `f6` (no cable). When the phone starts playing,
+  the car switches to it; choosing another source in iDrive pauses the phone; NAV in Android Auto switches back and
+  resumes. iDrive's AUX stays factory.
+- **Steering wheel**: roller up / down = next / previous track, roller push = play / pause, only while Android Auto's
+  audio source plays. After the phone button the roller stays with iDrive's contact list for 4 s.
 - **Menu entry** *Multimedia → Android Auto*: shows the status, starts the service as soon as the HMI boots and brings a
   running session to the front. **Start at boot** (on / off) brings Android Auto to the front once per boot.
 - **Parking assistant**: when it closes, Android Auto comes back if it was on screen before.
@@ -45,8 +47,8 @@ iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrum
 
 ## Known limitations
 
-- **No Android Auto audio yet** (also not in this fork). Music runs over Bluetooth or an AUX cable from the phone,
-  calls work. Plan: [docs/AA-AUDIO-PLAN.md](docs/AA-AUDIO-PLAN.md).
+- **Navigation prompts while another source plays** (radio, Bluetooth) are not audible yet; on Android Auto's own
+  source they are. Calls still go over Bluetooth. Details: [docs/AA-AUDIO-PLAN.md](docs/AA-AUDIO-PLAN.md).
 - **800x480 only.** The hardware capture (`dev-nvideocapture`) is limited to WVGA. 720p was tested: not sharper, more
   input lag.
 - The controller has a noticeable delay because of the video buffer.
