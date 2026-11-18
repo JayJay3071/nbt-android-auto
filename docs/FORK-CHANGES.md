@@ -30,7 +30,7 @@ The plugin starts with iDrive, can bring Android Auto to the front from anywhere
 | Parking assistant | Reads iDrive car data `sensors.PDCStatus` (1 = on, 2 = off); Android Auto comes back when it closes, if it was on screen before |
 | BACK fallback | If iDrive's BACK still leaves the page, one focus event brings Android Auto back (1 per s, 10 per minute) |
 | Hold screen | One inert hold screen instead of 8 nested ones |
-| Focus event limit | iDrive performs each focus event of an app at most 11 times per HMI start (HmiMain3D `CFocusEvent::perform`, "FocusEvent counter > 10"), which made it ignore the hold events until a reboot. The page XML has a pool of 100 focus events (200–299, all to the hold screen); the plugin uses each 10 times, then the next |
+| Focus event limit | iDrive performs each focus event of an app at most 11 times per HMI start (HmiMain3D `CFocusEvent::perform`, "FocusEvent counter > 10"), which made it ignore the hold events until a reboot. The page XML has a pool of 500 focus events (200–699, all to the hold screen, about 5000 refocuses per boot); the plugin uses each 10 times, then the next |
 | Night mode | This NBT has no day/night car data, so the headlights stand in: iDrive car data `controls.headlights` goes to `/fs/ram3/nbt-aa-headlights`; the session sends headlights on = night to the phone as Android Auto's night mode, so maps go dark at night |
 
 ## Controller and steering wheel (nbt_knob)

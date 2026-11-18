@@ -93,9 +93,9 @@ bool bootOn() { return access(kBootOff,F_OK)!=0; }   // default: on (no file)
 const unsigned kEvHoldAlt=54;                        // focus event to hold state 13 (fallback when 52 is ignored)
 // The real reason iDrive "ignored" 52 / 54 (car 2026-11-18, HmiMain3D CFocusEvent::perform @0x88fd70b): every focus
 // event object counts its performs and refuses from the 12th on ("FocusEvent counter > 10"; never reset, only apps with
-// the RHMI permission rhmi.unlimitedfocusevents are exempt). So the XML has a pool of 100 focus events (200..299, all
+// the RHMI permission rhmi.unlimitedfocusevents are exempt). So the XML has a pool of 500 focus events (200..699, all
 // to hold state 13); hold() uses each 10 times, then the next, and moves on at once after an ignored one.
-const unsigned kEvPoolFirst=200, kEvPoolCount=100, kEvPoolUses=10;
+const unsigned kEvPoolFirst=200, kEvPoolCount=500, kEvPoolUses=10;   // 500 (user 2026-11-18: long drives), was 100
 // text ids in NbtAndroidAuto_ALL_Texts.zip (make_aa_entry_resources.py)
 enum { kTxtConnectUsb=2, kTxtNoPhone=3, kTxtStarting=4, kTxtRunning=5, kTxtReplug=6, kTxtUnsupported=7,
        kTxtServiceDown=8, kTxtSeveral=9, kTxt169=11, kTxtWide=12, kTxt169On=16, kTxtWideOn=17,
