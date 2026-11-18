@@ -458,6 +458,10 @@ int main(int argc, char** argv)
     if (access("media-jack", F_OK) != 0) {
         setenv("NBT_SDR_DROP", "2,4", 1); /* services not offered to the phone (see NBT-AAD sdr_builder) */
         setenv("NBT_AA_MEDIA_OUT", "input_stereo_1", 0);
+        /* keep channel 8 a GUIDANCE sink (car 2026-11-18: the NBT-AAD SDR builder retypes it to SYSTEM_AUDIO in its
+         * Bluetooth audio mode, "nav prompts over Bluetooth"; without Bluetooth audio the phone then spoke the
+         * navigation prompts on its own speaker) */
+        setenv("NBT_GUIDANCE_BT", "0", 1);
         /* prompts while another source plays: input_stereo_3 over connection b8 (nbt_knob builds it); file prompts-off
          * = only on Android Auto's own source */
         if (access("prompts-off", F_OK) != 0) setenv("NBT_AA_PROMPT_OUT", "input_stereo_3", 0);
