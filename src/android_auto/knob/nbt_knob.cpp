@@ -227,7 +227,7 @@ void wheelKeyLine(unsigned key, int down, const char* what) {
 }
 
 unsigned g_auxSource = 0xBB;
-int g_lastSource = -1;          // unknown until the first switch
+int g_lastSource = -1;          // -1 unknown until the first status, -2 no main source (empty table)
 bool g_wheelAuxOnly = true;
 
 bool wheelAllowed(const char* what) {
@@ -338,22 +338,50 @@ void onSourceResult(const nbt::most::View& m, void*) {
     printf("\n");
 }
 
+// Main audio sources: the connection IDs of category 01 in HmiMain3D's connection table (0x9877344, car 2026-11-18).
+// The C03 table can list more than one connection: an interrupting one (traffic news, a prompt, the browser b8) sits
+// next to the main source and mutes it. The source is the first main-source entry; none = -2 (car 2026-11-18: CD/DVD
+// without a disc leaves the table empty, "00 00", so Android Auto music had no connection while nbt_knob still
+// believed in F6 and NAV only toggled play / pause).
+const uint16_t kMainSources[] = {
+    0x001, 0x068, 0x062, 0x018, 0x020, 0x024, 0x027, 0x028, 0x086, 0x01b, 0x050, 0x053, 0x04d, 0x080, 0x07d,
+    0x077, 0x09a, 0x09d, 0x0a0, 0x0b4, 0x0bb, 0x0be, 0x123, 0x0c1, 0x122, 0x1b0, 0x1b3, 0x088, 0x0c7, 0x150,
+    0x153, 0x156, 0x159, 0x0ea, 0x0fc, 0x0ed, 0x0fd, 0x0f0, 0x0fe, 0x0f3, 0x0f6, 0x0f9, 0x1d0, 0x1d3, 0x1d6,
+    0x0df, 0x100, 0x109, 0x110, 0x119, 0x124, 0x127, 0x12a, 0x12d, 0x200, 0x209, 0x20f, 0x212, 0x10c, 0x11c,
+    0x20c, 0x2a0, 0x2a3, 0x166, 0x169, 0x16c, 0x16f, 0x071, 0x220, 0x221
+};
+bool isMainSource(unsigned id) {
+    for (size_t i = 0; i < sizeof(kMainSources) / sizeof(kMainSources[0]); ++i)
+        if (kMainSources[i] == id) return true;
+    return false;
+}
+int g_prevMain = -1;            // the last real main source (for "AUX chosen", which must look past an empty table)
+
 void onSource(const nbt::most::View& m, void*) {
-    if (m.fkt != 0xC03 || m.len < 5) return;             // the 2-byte "00 00" is only the old source going off
-    const int s = m.data[3];
+    if (m.fkt != 0xC03 || m.len < 2) return;
+    // {00 00} then per connection {id hi, id lo, state}: state 00 playing, 04 muted by an interrupting connection
+    int s = -2;
+    for (size_t i = 2; i + 2 < (size_t)m.len && i < 2 + 3 * 8; i += 3) {
+        const unsigned id = (unsigned)m.data[i] << 8 | m.data[i + 1];
+        if (isMainSource(id)) { s = (int)id; break; }
+    }
     if (s == g_lastSource) return;                        // the same status once per receiver
     const int prev = g_lastSource;
     g_lastSource = s;
-    printf("[Source] %02X -> %02X\n", prev < 0 ? 0xFF : prev, s);
+    printf("[Source] %02X -> %02X (table:", prev < 0 ? 0xFF : prev, s < 0 ? 0xFF : s);
+    for (size_t i = 2; i < m.len && i < 26; ++i) printf(" %02x", m.data[i]);
+    printf(")\n");
+    const int prevMain = g_prevMain;
+    if (s >= 0) g_prevMain = s;
     // AUX chosen in iDrive (user 2026-11-17: the AUX page is the phone's audio, show Android Auto instead): the driver
     // switched to AUX (not our own request of the last 3 s) while a session runs -> show request to the HMI plugin.
     // NBT_AUX_OPENS_AA=0 off.
-    if (g_auxOpensAa && prev >= 0 && prev != (int)g_auxSource && s == (int)g_auxSource &&
+    if (g_auxOpensAa && prevMain >= 0 && prevMain != (int)g_auxSource && s == (int)g_auxSource &&
         nowMs() - g_ourSourceRequestMs > 3000 && sessionRunning()) {
         if (FILE* f = fopen("/fs/ram3/nbt-aa-show", "w")) fclose(f);
         printf("[Source] AUX chosen in iDrive: Android Auto to the front (show request)\n");
     }
-    if (!g_auxPause || prev < 0) return;
+    if (!g_auxPause || prev == -1) return;                // -1: the first status after start, nothing changed
     if (prev == (int)g_auxSource && s != (int)g_auxSource) {
         const int st = mediaState();
         g_wePaused = sessionRunning() && st != 3;          // already paused: nothing to do, nothing to resume
@@ -415,8 +443,8 @@ void playSwitchIfNeeded(nbt::most::Client& most) {
     const int st = mediaState(), prev = g_prevMedia;
     g_prevMedia = st;
     if (prev < 0 || st != 2 || prev == 2) return;                // only the change to "playing"
-    if (g_lastSource < 0 || g_lastSource == (int)g_auxSource || !sessionRunning()) return;
-    printf("[Source] phone plays while the source is %02X\n", g_lastSource);
+    if (g_lastSource == -1 || g_lastSource == (int)g_auxSource || !sessionRunning()) return;   // -2 (no source): switch
+    printf("[Source] phone plays while the source is %02X\n", g_lastSource < 0 ? 0xFF : g_lastSource);
     requestSource(most, g_auxSource);
 }
 
