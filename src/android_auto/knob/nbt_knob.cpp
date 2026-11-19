@@ -137,10 +137,12 @@ long long nowMs() { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); retur
 // --- BACK after a tilt right (split-screen mode), see the header ---
 pthread_mutex_t g_backMx = PTHREAD_MUTEX_INITIALIZER;
 uint16_t g_ccsSrc = 0, g_ccsDst = 0;   // addresses of the controller's last C20
-// Message counter at start (car 2026-11-19): iDrive only acts on a C20 that carries the controller's running counter
-// (our NAV with a guessed 01 was ignored, the driver's next one had 9d), and the controller keeps counting across iDrive
-// restarts. So right after the link is up nbt_knob asks the controller (Get, E5/01 fkt C20, to 3002 from our own
-// device) and takes the counter from its answer; the answer's addresses are not the controller -> HMI ones.
+// Controller messages in iDrive (HmiMain3D CHmiCCSController::onCCSPushButton, disassembled 2026-11-19): the counter is
+// not checked for sequence. A C20 is dropped when its counter is ff or when the controller is not "alive" yet (no
+// message since HMI start); either case marks it alive and makes iDrive send the rotary encoder config again. Other
+// drops: sender / receiver not 01 / 1D, HMI power state not 3..5, key state unchanged (press while pressed).
+// nbt_knob asks the controller for its counter at start (Get, E5/01 fkt C20, to 3002 from our own device), only to
+// know whether the controller has sent anything yet (answer ff: nothing since boot).
 uint16_t g_selfDev = 0;
 bool g_counterKnown = false;
 uint8_t g_ccsCounter = 0;              // its last counter
@@ -153,6 +155,9 @@ long long g_ignoreBackUntil = 0;       // our own BACK coming back: not for the 
 // request). The plugin creates /fs/ram3/nbt-aa-hmi-nav; nbt_knob sends one NAV (C20 hard key bit 0x20, as the
 // controller would), which comes back here and is handled exactly like the driver's NAV.
 bool g_navKeyPending = false;
+// our own C20 (BACK guard, BACK, NAV) comes back here with our own device as its source (car 2026-11-19: 2032): while
+// they can still come back, a C20 does not change the controller's addresses or counter
+long long g_ownC20Until = 0;
 // BACK guard (2026-11-17, test): iDrive's BACK goes back in its history and leaves Android Auto; bringing the page back
 // with a focus event per BACK made iDrive ignore the event after a burst (car log 2026-11-17, as on 2026-11-07). A BACK
 // pressed while iDrive's focus is in the split screen only brings the focus back (car: our BACK after a tilt right).
@@ -191,8 +196,10 @@ void onC20(const nbt::most::View& m, void*) {
                           m.data[2] == 0xFF ? " (none)" : "");
         return;
     }
-    if (m.data[2] != 0xFF) { g_ccsSrc = m.src; g_ccsDst = m.dst; g_ccsCounter = m.data[2]; g_counterKnown = true; }
     const long long tm = nowMs();
+    if (m.data[2] != 0xFF && tm >= g_ownC20Until) {
+        g_ccsSrc = m.src; g_ccsDst = m.dst; g_ccsCounter = m.data[2]; g_counterKnown = true;
+    }
     if (g_backGuard && m.data[5] == 0x00 && m.data[3] == 1 && (m.data[6] & 0x02) && tm >= g_ignoreBackUntil &&
         aaActive())
         g_guardPending = true;                                         // the driver's BACK press: tilt right now
@@ -227,7 +234,7 @@ nbt::most::Msg hardKeyMsg(uint16_t src, uint16_t dst, uint8_t counter, bool down
     m.data.assign(d, d + 7);
     return m;
 }
-// counter ff, status 3 (no change): dropped by iDrive, which then re-bases on the next counter
+// counter ff, status 3 (no change): dropped by iDrive, which marks the controller alive (see g_selfDev)
 nbt::most::Msg rebaseMsg(uint16_t src, uint16_t dst) {
     nbt::most::Msg m = hardKeyMsg(src, dst, 0xFF, false, 0x00);
     m.data[3] = 0x03;
@@ -619,6 +626,7 @@ void sendGuardIfPending(nbt::most::Client& most) {
     const uint8_t c1 = nextCounter(g_ccsCounter), c2 = nextCounter(c1);
     g_ccsCounter = c2;
     g_ignoreTiltUntil = nowMs() + 600;
+    g_ownC20Until = nowMs() + 600;
     g_ownTiltStage = 2; g_ownTiltUntil = nowMs() + 300;
     pthread_mutex_unlock(&g_backMx);
     if (!src || !dst) { pthread_mutex_lock(&g_backMx); g_ownTiltStage = 0; pthread_mutex_unlock(&g_backMx); return; }
@@ -629,29 +637,34 @@ void sendGuardIfPending(nbt::most::Client& most) {
     printf("[Knob] BACK guard: tilt right to iDrive (%04X->%04X, counters %02x %02x)\n", src, dst, c1, c2);
 }
 
-// main thread: the NAV asked for by the HMI plugin. Without a controller message seen yet (Android Auto shown by "start at
-// boot", parking assistant on its own button), the addresses every C20 of this car has used: controller 3002 -> HMI 2025.
+// main thread: the NAV asked for by the HMI plugin (parking assistant off).
+// Addresses (car 2026-11-19, nbt_key --watch right after boot): the controller sends to the HMI at 2021 (C20 3002 ->
+// 2021, and its periodic E5/0F C06 too). Until then nbt_knob had sent NAV to 2025 when no controller key had been seen
+// since boot, and iDrive never got it; after one real press it had learned 3002 -> 2021 and NAV worked. So without a
+// controller key seen yet, the addresses of the periodic C06 (every 2 s) are used, as for the favourite buttons.
+// The first controller message after an HMI start is dropped by iDrive (HmiMain3D onCCSPushButton: it only marks the
+// controller "alive"), and so is any with counter ff: one ff message goes first while the controller is silent.
 void sendNavIfPending(nbt::most::Client& most) {
     pthread_mutex_lock(&g_backMx);
     if (!g_navKeyPending) { pthread_mutex_unlock(&g_backMx); return; }
     g_navKeyPending = false;
-    if (!g_ccsSrc || !g_ccsDst) { g_ccsSrc = 0x3002; g_ccsDst = 0x2025; }
-    const uint16_t src = g_ccsSrc, dst = g_ccsDst;
+    uint16_t src = g_ccsSrc, dst = g_ccsDst;
+    const char* from = "last controller key";
+    if (!src || !dst) {
+        src = g_hmiSrc; dst = g_hmiDev; from = "periodic C06";
+        if (!src || !dst) { src = 0x3002; dst = 0x2021; from = "default"; }
+    }
+    const bool known = g_counterKnown;
     const uint8_t c1 = nextCounter(g_ccsCounter), c2 = nextCounter(c1);
     g_ccsCounter = c2;
-    const bool known = g_counterKnown;
+    g_ownC20Until = nowMs() + 1000;
     pthread_mutex_unlock(&g_backMx);
-    // Counter unknown (controller not touched since boot; its answer to the Get carries ff): HmiMain3D drops a message
-    // with counter ff ("controller not configured") and re-bases on the next one (firmware notes, ccs_decoder.hpp). So
-    // one ff message first makes our 01 / 02 acceptable, and one more ff after them lets iDrive re-base again on the
-    // controller's own next counter. Car 2026-11-19: without it our NAV (01 02) was ignored.
-    printf("[Knob] NAV to iDrive for the HMI plugin (%04X->%04X, counters %02x %02x%s)\n", src, dst, c1, c2,
-           known ? "" : ", counter unknown: framed by ff messages");
-    if (!known) { most.send(rebaseMsg(src, dst)); usleep(30000); }
+    printf("[Knob] NAV to iDrive for the HMI plugin (%04X->%04X from the %s, counters %02x %02x%s)\n", src, dst, from,
+           c1, c2, known ? "" : ", controller silent since boot: ff first");
+    if (!known) { most.send(rebaseMsg(src, dst)); usleep(100000); }
     most.send(hardKeyMsg(src, dst, c1, true, 0x20));
     usleep(100000);
     most.send(hardKeyMsg(src, dst, c2, false, 0x20));
-    if (!known) { usleep(30000); most.send(rebaseMsg(src, dst)); }
 }
 
 // main thread: never send from the DSI callback thread
@@ -663,6 +676,7 @@ void sendBackIfPending(nbt::most::Client& most) {
     const uint8_t c1 = nextCounter(g_ccsCounter), c2 = nextCounter(c1);
     g_ccsCounter = c2;
     g_ignoreBackUntil = nowMs() + 600;
+    g_ownC20Until = nowMs() + 600;
     pthread_mutex_unlock(&g_backMx);
     if (!src || !dst) return;
     printf("[Knob] tilt right: BACK to iDrive (%04X->%04X, counters %02x %02x)\n", src, dst, c1, c2);
