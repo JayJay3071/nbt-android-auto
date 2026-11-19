@@ -38,6 +38,7 @@ Runtime directory: `/fs/ram3/nbt-aa-native` (RAM). Installed package: `/var/opt/
 | `accessory_window` | `android_auto/accessory_window.c` | Adapted from NBT-AAD. |
 | `nbt_knob` | `android_auto/knob/nbt_knob.cpp` + `knob/ref/` | |
 | `nbt_hwvideo` | `android_auto/knob/nbt_hwvideo.cpp` + `knob/ref/` | Background: [docs/HW-VIDEO-PATH.md](../docs/HW-VIDEO-PATH.md). |
+| `nbt_decoder` | `android_auto/decoder/nbt_decoder.c` + FFmpeg 2.8.22 (`decoder/ffmpeg/`, `scripts/ffmpeg_qnx.py`, `scripts/build-ffmpeg-qnx.sh`) | Optional decoder mode (`decoder.mode`). Background: [docs/DECODER.md](../docs/DECODER.md). |
 | `nbt_cluster` | `android_auto/knob/nbt_cluster.cpp` + `knob/ref/` | Background: [docs/CLUSTER-HUDTERMINAL.md](../docs/CLUSTER-HUDTERMINAL.md). |
 | `libNbtAndroidAuto.so` | `idrive/aa_entry_plugin.cpp`, `idrive/nbt_image_abi.hpp`, `idrive/NbtAndroidAuto.xml`, `idrive/NbtAndroidAuto.manifest`, `idrive/make_aa_entry_resources.py` | Links against two libraries from the head unit (see DEVELOPMENT.md). |
 
@@ -55,6 +56,8 @@ The protocol itself (version exchange, TLS, service discovery, channels) is **NB
 - [patches/nbt-aad-aa_session-byebye.patch](../patches/) adds the clean session end (`postByeBye`, ByeByeRequest /
   ByeByeResponse) that `aa_video_capture.cpp` uses.
 - [patches/nbt-aad-sdr_builder-pixel-aspect.patch](../patches/) adds the pixel aspect ratio for the wide picture mode.
+- [patches/nbt-aad-sdr_builder-video-fps.patch](../patches/) lets the service ask the phone for 60 fps (`NBT_VID_FPS`).
+- [patches/nbt-aad-aa_session-video-acks.patch](../patches/) acknowledges video frames once the decoder took them (flow control).
 
 `scripts/build_all.py` applies all of this automatically and builds every program (see DEVELOPMENT.md).
 - `scripts/mbedtls_legacy_time.py` patches Mbed TLS to accept the old UTCTime format of some phone certificates.

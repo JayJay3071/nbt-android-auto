@@ -27,7 +27,7 @@ The plugin starts with iDrive, can bring Android Auto to the front from anywhere
 | Menu entry | Leads straight to the picture while a session runs |
 | Early start | The plugin calls `PluginApp::start()` itself when iDrive loads it, so its timers run before the page is first opened |
 | Show request | Any program creates `/fs/ram3/nbt-aa-show`; within 250 ms the plugin brings Android Auto to the front |
-| Parking assistant | Reads iDrive car data `sensors.PDCStatus` (1 = on, 2 = off); Android Auto comes back when it closes, if it was on screen before |
+| Parking assistant | Reads iDrive car data `sensors.PDCStatus` (1 = on, 2 = off). While it is on, Android Auto's window is hidden and the hold page does not take the screen back. When it closes and Android Auto was on screen before, `nbt_knob` sends the controller's NAV key (`/fs/ram3/nbt-aa-hmi-nav`), which brings Android Auto back. iDrive takes a controller message only with the controller's running counter: `nbt_knob` asks the controller for it at start and, if it is still unknown, frames NAV with `ff`-counter messages, after which iDrive takes the next counter |
 | BACK fallback | If iDrive's BACK still leaves the page, one focus event brings Android Auto back (1 per s, 10 per minute) |
 | Hold screen | One inert hold screen instead of 8 nested ones |
 | Focus event limit | iDrive performs each focus event of an app at most 11 times per HMI start (HmiMain3D `CFocusEvent::perform`, "FocusEvent counter > 10"), which made it ignore the hold events until a reboot. The page XML has a pool of 500 focus events (200–699, all to the hold screen, about 5000 refocuses per boot); the plugin uses each 10 times, then the next |
@@ -99,6 +99,18 @@ The phone's playing / paused state comes from the session: a small NBT-AAD core 
 - **Hardware decoding (opt-in):** the flag file `/var/opt/hmi/data/rw/NbtAndroidAutoRT/hwdecode` makes the decoder use
   `NmeCmdLine -wd 1` instead of software decoding, from the next session on. Off by default: on 2026-11-10 it gave
   seconds of delay.
+
+- **Video flow control:** the phone's video frames are acknowledged only once they are written to the decoder FIFO or
+  dropped, so the phone stays at most its window of 10 frames ahead of the decoder instead of filling the queue
+  (`patches/nbt-aad-aa_session-video-acks.patch`; a frame not taken within `NBT_AA_VIDEO_ACK_FORCE_MS`, default 1500, is
+  acked anyway; `NBT_AA_VIDEO_ACKS=0` = ack on arrival as before).
+- **Decoder mode (optional, `decoder.mode`):** `nbt_decoder` decodes the picture with FFmpeg 2.8 (H.264 only, with its
+  SIMD assembly) and shows it through the car's own video library in iDrive's EARLYVIDEO window, instead of
+  fifo_http + Cinemo + nbt_hwvideo (Cinemo needs ~45 % CPU for ~28 fps; with the USB sound it fell behind and the
+  picture lagged). Full width, or with `split800` 1:1 in an 800x480 window; `decoder.60fps` asks the phone for 60 fps
+  (`NBT_VID_FPS`, core patch `nbt-aad-sdr_builder-video-fps.patch`) and sets the car's stream to 60. Car: ~7 ms decode,
+  ~13 ms upload per picture. Details, settings, the car's video interface and the FFmpeg build:
+  [DECODER.md](DECODER.md).
 
 ## Build, tools
 

@@ -2,6 +2,16 @@
 
 Versions are named after the build date of the installer payload.
 
+## Unreleased (fork valinet/nbt-android-auto)
+
+- **Decoder mode (optional):** the picture decoded with FFmpeg and shown through the car's own video path; no more lag
+  when the USB sound runs, up to 60 pictures/s with `decoder.60fps`. Turned on with the file `decoder.mode`; see
+  [docs/DECODER.md](docs/DECODER.md).
+- **Parking assistant:** while it is on, Android Auto stays out of the way; when it closes, Android Auto comes back
+  (NAV).
+- **Video flow control:** the phone sends video only as fast as the decoder takes it.
+- **USB sound:** three 4096-byte packages queued, writer threads at a higher priority.
+
 ## 2026.11.17 (fork valinet/nbt-android-auto)
 
 Tested on a BMW F30 with NBT. Technical details: [docs/FORK-CHANGES.md](docs/FORK-CHANGES.md).
