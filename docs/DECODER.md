@@ -1,6 +1,6 @@
-# Decoder mode (`decoder.mode`)
+# Decoder mode
 
-An optional picture path: `nbt_decoder` decodes the phone's H.264 on the CPU with FFmpeg and hands every picture to
+The default picture path: `nbt_decoder` decodes the phone's H.264 on the CPU with FFmpeg and hands every picture to
 the car's NVIDIA video library, which shows it in iDrive's EARLYVIDEO window. It replaces `fifo_http` + Cinemo
 (`decode_runner`) + `nbt_hwvideo` for the session. Source: `src/android_auto/decoder/nbt_decoder.c` (its header
 has the details below in short form).
@@ -9,14 +9,15 @@ Why: Cinemo's software decoder needs about 45 % CPU for about 28 pictures/s on t
 running as well it fell behind, its queue grew and the picture lagged several seconds. FFmpeg with its SIMD assembly
 decodes an 800x480 picture in about 7 ms on the car.
 
-## Turning it on
+## Settings
 
-Files in `/var/opt/hmi/data/rw/NbtAndroidAutoRT`, read at boot:
+Used whenever `nbt_decoder` is installed, at 60 fps; no file is needed. Optional files in
+`/var/opt/hmi/data/rw/NbtAndroidAutoRT`, read at boot:
 
 | File | Effect |
 |---|---|
-| `decoder.mode` | Use the decoder mode (the installer ships `nbt_decoder` when the build has it) |
-| `decoder.60fps` | Ask the phone for 60 pictures/s (`NBT_VID_FPS`, core patch `nbt-aad-sdr_builder-video-fps.patch`) and set the car's stream to 60 (`--fps 60`) |
+| `decoder.off` | Do not use the decoder mode: the old picture path (Cinemo). Without it the decoder mode is used whenever `nbt_decoder` is installed (the installer ships it when the build has it) |
+| `decoder.30fps` | Ask the phone for 30 pictures/s instead of 60. Default: 60 (`NBT_VID_FPS`, core patch `nbt-aad-sdr_builder-video-fps.patch`, and the car's stream set to 60, `--fps 60`) |
 | `split800` | The 800x480 picture 1:1 at the left edge (`--size 800x480`), iDrive's split screen stays visible; otherwise stretched to 1280x480 |
 | `decoder.stale` | Milliseconds without a new picture before the window is hidden (default 5000, `0` = never) |
 | `decoder.args` | One line of extra arguments for `nbt_decoder` |

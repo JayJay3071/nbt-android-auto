@@ -95,7 +95,7 @@ def main():
         args.decoder = args.built.resolve() / 'programs' / 'nbt_decoder'
     if args.decoder and args.decoder.is_file():
         files = list(files) + [(args.decoder, 'rt/nbt_decoder', RT + '/nbt_decoder', '700')]
-        print('including', args.decoder, '(decoder mode: touch decoder.mode on the car to use it)')
+        print('including', args.decoder, '(decoder mode, used unless decoder.off is on the car)')
     if OUT.exists():
         shutil.rmtree(OUT)
     entries = []

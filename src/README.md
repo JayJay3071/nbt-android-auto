@@ -38,7 +38,7 @@ Runtime directory: `/fs/ram3/nbt-aa-native` (RAM). Installed package: `/var/opt/
 | `accessory_window` | `android_auto/accessory_window.c` | Adapted from NBT-AAD. |
 | `nbt_knob` | `android_auto/knob/nbt_knob.cpp` + `knob/ref/` | |
 | `nbt_hwvideo` | `android_auto/knob/nbt_hwvideo.cpp` + `knob/ref/` | Background: [docs/HW-VIDEO-PATH.md](../docs/HW-VIDEO-PATH.md). |
-| `nbt_decoder` | `android_auto/decoder/nbt_decoder.c` + FFmpeg 2.8.22 (`decoder/ffmpeg/`, `scripts/ffmpeg_qnx.py`, `scripts/build-ffmpeg-qnx.sh`) | Optional decoder mode (`decoder.mode`). Background: [docs/DECODER.md](../docs/DECODER.md). |
+| `nbt_decoder` | `android_auto/decoder/nbt_decoder.c` + FFmpeg 2.8.22 (`decoder/ffmpeg/`, `scripts/ffmpeg_qnx.py`, `scripts/build-ffmpeg-qnx.sh`) | Decoder mode (default, `decoder.off` = the old path). Background: [docs/DECODER.md](../docs/DECODER.md). |
 | `nbt_cluster` | `android_auto/knob/nbt_cluster.cpp` + `knob/ref/` | Background: [docs/CLUSTER-HUDTERMINAL.md](../docs/CLUSTER-HUDTERMINAL.md). |
 | `libNbtAndroidAuto.so` | `idrive/aa_entry_plugin.cpp`, `idrive/nbt_image_abi.hpp`, `idrive/NbtAndroidAuto.xml`, `idrive/NbtAndroidAuto.manifest`, `idrive/make_aa_entry_resources.py` | Links against two libraries from the head unit (see DEVELOPMENT.md). |
 

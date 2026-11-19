@@ -104,12 +104,12 @@ The phone's playing / paused state comes from the session: a small NBT-AAD core 
   dropped, so the phone stays at most its window of 10 frames ahead of the decoder instead of filling the queue
   (`patches/nbt-aad-aa_session-video-acks.patch`; a frame not taken within `NBT_AA_VIDEO_ACK_FORCE_MS`, default 1500, is
   acked anyway; `NBT_AA_VIDEO_ACKS=0` = ack on arrival as before).
-- **Decoder mode (optional, `decoder.mode`):** `nbt_decoder` decodes the picture with FFmpeg 2.8 (H.264 only, with its
-  SIMD assembly) and shows it through the car's own video library in iDrive's EARLYVIDEO window, instead of
-  fifo_http + Cinemo + nbt_hwvideo (Cinemo needs ~45 % CPU for ~28 fps; with the USB sound it fell behind and the
-  picture lagged). Full width, or with `split800` 1:1 in an 800x480 window; `decoder.60fps` asks the phone for 60 fps
-  (`NBT_VID_FPS`, core patch `nbt-aad-sdr_builder-video-fps.patch`) and sets the car's stream to 60. Car: ~7 ms decode,
-  ~13 ms upload per picture. Details, settings, the car's video interface and the FFmpeg build:
+- **Decoder mode (default):** `nbt_decoder` decodes the picture with FFmpeg 2.8 (H.264 only, with its SIMD assembly)
+  and shows it through the car's own video library in iDrive's EARLYVIDEO window, instead of fifo_http + Cinemo +
+  nbt_hwvideo (Cinemo needs ~45 % CPU for ~28 fps; with the USB sound it fell behind and the picture lagged). Used
+  whenever `nbt_decoder` is installed; `decoder.off` = the old path. Full width, or with `split800` 1:1 in an 800x480
+  window. 60 fps by default: asked from the phone (`NBT_VID_FPS`, core patch `nbt-aad-sdr_builder-video-fps.patch`)
+  and set for the car's stream; `decoder.30fps` = 30. Car: ~7 ms decode, ~13 ms upload per picture. Details, settings, the car's video interface and the FFmpeg build:
   [DECODER.md](DECODER.md).
 
 ## Build, tools

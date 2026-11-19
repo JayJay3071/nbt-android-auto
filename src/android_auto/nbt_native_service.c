@@ -20,8 +20,9 @@
  *   center800   phone canvas 800x480 1:1 in the middle of the display      split800  same, at the left edge
  *   anamorph    phone canvas 800x480 stretched 1.6x horizontally ("wide")  res720    1280x720 canvas, cropped
  *   gate.mode   only touch the phone after the HMI page was opened
- *   decoder.mode  with nbt_decoder present: it decodes and shows the picture instead of fifo_http + decode_runner +
- *               nbt_hwvideo; decoder.60fps = ask the phone for 60 fps
+ *   decoder.mode  with nbt_decoder present (boot.sh: always, unless decoder.off in the package): it decodes and shows
+ *               the picture instead of fifo_http + decode_runner + nbt_hwvideo; decoder.60fps = ask the phone for 60 fps
+ *               (boot.sh: unless decoder.30fps)
  *   peer.pin    pin the phone's TLS certificate instead of checking the chain
  *   shadow.path, wal.args   old experimental modes (see experiments/), not used by the installed package
  *

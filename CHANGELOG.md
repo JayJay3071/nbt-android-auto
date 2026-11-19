@@ -4,8 +4,8 @@ Versions are named after the build date of the installer payload.
 
 ## Unreleased (fork valinet/nbt-android-auto)
 
-- **Decoder mode (optional):** the picture decoded with FFmpeg and shown through the car's own video path; no more lag
-  when the USB sound runs, up to 60 pictures/s with `decoder.60fps`. Turned on with the file `decoder.mode`; see
+- **Decoder mode (default):** the picture decoded with FFmpeg and shown through the car's own video path; no more lag
+  when the USB sound runs, up to 60 pictures/s. Used whenever `nbt_decoder` is installed (`decoder.off` = the old path); see
   [docs/DECODER.md](docs/DECODER.md).
 - **Parking assistant:** while it is on, Android Auto stays out of the way; when it closes, Android Auto comes back
   (NAV).
