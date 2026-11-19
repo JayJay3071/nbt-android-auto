@@ -277,14 +277,42 @@ bool onGear(void*,const bmw::BasicString<unsigned short>& v){cdsLog("driving.gea
 // table has no day/night property (car 2026-11-17). controls.headlights ('{"headlights":%d}') is used instead and goes
 // to /fs/ram3/nbt-aa-headlights, read by the session: headlights on = night.
 bool onHeadlights(void*,const bmw::BasicString<unsigned short>& v){cdsLog("controls.headlights","/fs/ram3/nbt-aa-headlights",v);return true;}
-bool g_pdcFromAa=false;   // the parking assistant came up over the Android Auto picture
+// Parking assistant over Android Auto (car 2026-11-19, decoder mode):
+// - on: the Checker sometimes saw the hold page still visible under it and took the focus back, so the picture covered
+//   the parking assistant. Now the picture is hidden at once and nothing is held while it is on.
+// - "was Android Auto on screen": iDrive took the focus from our page ~0.9 s BEFORE PDCStatus became 1, so the hidden flag
+//   alone said no. Our page losing the focus with the picture shown less than 3 s before counts too.
+// - off with its button: iDrive stays on its inactive parking screen (on other pages it returns) and ignores our focus
+//   events there (log: 5 events, none taken); the driver's NAV there brings Android Auto back. So nbt_knob is asked for
+//   one NAV (/fs/ram3/nbt-aa-hmi-nav), handled like the driver's: show request, and the Checker takes the focus back
+//   from iDrive's navigation.
+bool g_pdcFromAa=false;       // the parking assistant came up over the Android Auto picture
+bool g_pdcActive=false;       // parking assistant on: never hold, picture hidden
+long long g_pdcOffMs=-100000; // when it last went off over Android Auto
+long long g_aaLeftMs=-100000; // our page last lost the focus with the picture shown
 bool onPdc(void*,const bmw::BasicString<unsigned short>& v){
     cdsLog("sensors.PDCStatus","/fs/ram3/nbt-aa-pdc",v);
     char text[160];cdsText(v,text,sizeof(text));
     const char* d=text;while(*d&&(*d<'0'||*d>'9'))++d;
     const int st=*d?atoi(d):-1;
-    if(st==1){g_pdcFromAa=access(kHidden,F_OK)!=0;plog("parking assistant on, Android Auto was on screen",g_pdcFromAa?1:0);}
-    else if(st==2&&g_pdcFromAa){g_pdcFromAa=false;touch(kShowRequest);plog("parking assistant off: back to Android Auto",0);}
+    if(st==1){
+        if(!g_pdcActive){
+            g_pdcFromAa=access(kHidden,F_OK)!=0||now_ms()-g_aaLeftMs<3000||now_ms()-g_pdcOffMs<3000;
+            plog("parking assistant on, Android Auto was on screen",g_pdcFromAa?1:0);
+        }
+        g_pdcActive=true;
+        touch(kHidden);
+    }
+    else if(st==2){
+        g_pdcActive=false;
+        if(g_pdcFromAa){
+            g_pdcFromAa=false;
+            g_pdcOffMs=now_ms();
+            unlink(kLeave);
+            touch("/fs/ram3/nbt-aa-hmi-nav");                // nbt_knob: NAV, as the driver would press it
+            plog("parking assistant off: NAV -> back to Android Auto",0);
+        }
+    }
     return true;
 }
 class CdsSubscribe : public bmw::Runnable {
@@ -339,6 +367,7 @@ public:
         // review 2026-11-09: on every entry with Android Auto running the checker (+30 ms) and the status poll (+50 ms)
         // each sent the event, 50 ms apart and in the middle of iDrive's page transition; in the log of 2026-11-09 the
         // first ignored event was exactly such a pair. One event per second at most.
+        if(g_pdcActive){plog("hold skipped: parking assistant on");touch(kHidden);return;}
         const long long tm=now_ms();
         if(tm-lastHoldMs<1000){plog("hold skipped (one was just sent)");return;}
         lastHoldMs=tm;lastAutoHold=now_s();
@@ -447,8 +476,11 @@ public:
         e->lastFocusMs=now_ms();
         plog(focused?"hold focus 1, level":"hold focus 0, level",(int)s->idx);
         e->target.start();
-        if(focused){unlink(kLeave);unlink(kHidden);touch(kRequest);e->ignoredHolds=0;e->startPolling(500);}
-        else e->check(150);            // decide after the HMI has finished its transition (see Checker)
+        if(focused){unlink(kLeave);if(!g_pdcActive)unlink(kHidden);touch(kRequest);e->ignoredHolds=0;e->startPolling(500);}
+        else {
+            if(access(kHidden,F_OK)!=0)g_aaLeftMs=now_ms();   // lost the focus with the picture on screen
+            e->check(150);             // decide after the HMI has finished its transition (see Checker)
+        }
         return true;
     }
     static bool holdVisibility(void* self,const bmw::Parcel& p) {
@@ -471,9 +503,13 @@ void TargetPoll::run() {
         if(running)e->showUntilMs=now_ms()+4000;
         unlink(kLeave);                    // an iDrive key from before this request (written also while hidden)
         if(!running)plog("show request ignored: Android Auto not running",0);
-        else if(e->holdFocused())plog("show request: already on screen",0);
+        else if(e->holdFocused()){
+            if(!g_pdcActive&&unlink(kHidden)==0)plog("show request: page still focused, picture shown again",0);
+            else plog("show request: already on screen",0);
+        }
         else e->showHold("show request");
     }
+
     if(e->showRetryAtMs&&now_ms()>=e->showRetryAtMs){
         e->showRetryAtMs=0;
         // the driver left Android Auto with an iDrive key in between (car 2026-11-18: RADIO right after NAV was pulled

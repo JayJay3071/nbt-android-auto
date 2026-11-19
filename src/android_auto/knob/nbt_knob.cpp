@@ -137,10 +137,22 @@ long long nowMs() { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); retur
 // --- BACK after a tilt right (split-screen mode), see the header ---
 pthread_mutex_t g_backMx = PTHREAD_MUTEX_INITIALIZER;
 uint16_t g_ccsSrc = 0, g_ccsDst = 0;   // addresses of the controller's last C20
+// Message counter at start (car 2026-11-19): iDrive only acts on a C20 that carries the controller's running counter
+// (our NAV with a guessed 01 was ignored, the driver's next one had 9d), and the controller keeps counting across iDrive
+// restarts. So right after the link is up nbt_knob asks the controller (Get, E5/01 fkt C20, to 3002 from our own
+// device) and takes the counter from its answer; the answer's addresses are not the controller -> HMI ones.
+uint16_t g_selfDev = 0;
+bool g_counterKnown = false;
 uint8_t g_ccsCounter = 0;              // its last counter
 bool g_tiltRightDown = false;
 bool g_backPending = false;            // tilt right released: the main loop sends BACK
 long long g_ignoreBackUntil = 0;       // our own BACK coming back: not for the phone
+// NAV on request (2026-11-19, parking assistant): switched off with its button while it had come up over Android Auto,
+// iDrive stays on its inactive parking screen and ignores the HMI plugin's focus events there (car log: 5 events, none
+// taken); the driver's NAV there brings Android Auto back (iDrive leaves the screen, our NAV handler sends the show
+// request). The plugin creates /fs/ram3/nbt-aa-hmi-nav; nbt_knob sends one NAV (C20 hard key bit 0x20, as the
+// controller would), which comes back here and is handled exactly like the driver's NAV.
+bool g_navKeyPending = false;
 // BACK guard (2026-11-17, test): iDrive's BACK goes back in its history and leaves Android Auto; bringing the page back
 // with a focus event per BACK made iDrive ignore the event after a burst (car log 2026-11-17, as on 2026-11-07). A BACK
 // pressed while iDrive's focus is in the split screen only brings the focus back (car: our BACK after a tilt right).
@@ -171,7 +183,15 @@ bool aaActive() { return access("/fs/ram3/nbt-aa-hidden", F_OK) != 0 && sessionR
 void onC20(const nbt::most::View& m, void*) {
     if (m.len < 7) return;
     pthread_mutex_lock(&g_backMx);
-    if (m.data[2] != 0xFF) { g_ccsSrc = m.src; g_ccsDst = m.dst; g_ccsCounter = m.data[2]; }
+    if (g_selfDev && m.dst == g_selfDev) {   // the answer to our Get: only its counter
+        const bool fresh = !g_counterKnown;
+        if (m.data[2] != 0xFF) { g_ccsCounter = m.data[2]; g_counterKnown = true; }
+        pthread_mutex_unlock(&g_backMx);
+        if (fresh) printf("[Knob] controller answered the Get (from %04X): counter %02x%s\n", m.src, m.data[2],
+                          m.data[2] == 0xFF ? " (none)" : "");
+        return;
+    }
+    if (m.data[2] != 0xFF) { g_ccsSrc = m.src; g_ccsDst = m.dst; g_ccsCounter = m.data[2]; g_counterKnown = true; }
     const long long tm = nowMs();
     if (g_backGuard && m.data[5] == 0x00 && m.data[3] == 1 && (m.data[6] & 0x02) && tm >= g_ignoreBackUntil &&
         aaActive())
@@ -198,13 +218,23 @@ void onC20(const nbt::most::View& m, void*) {
 
 uint8_t nextCounter(uint8_t c) { c = (uint8_t)(c + 1); return c == 0xFF ? 0 : c; }   // 0xFF = "ignore" (firmware)
 
-nbt::most::Msg backMsg(uint16_t src, uint16_t dst, uint8_t counter, bool down) {
+// hard key message as the controller sends it; sensor bit = slot of ccs_decoder.hpp (0x01 MENU, 0x02 BACK, ...)
+nbt::most::Msg hardKeyMsg(uint16_t src, uint16_t dst, uint8_t counter, bool down, uint8_t bit) {
     nbt::most::Msg m;
     m.txType = 0; m.varTag = 1; m.varVal = 0;      // as nbt_hwvideo sends (vehicle-tested)
     m.dst = dst; m.src = src; m.fblock = 0xE5; m.inst = 0x01; m.fkt = 0xC20; m.opType = 0xC; m.hdrTag = 0xFFFFu;
-    const uint8_t d[7] = { 0x01, 0x1D, counter, (uint8_t)(down ? 1 : 0), 0x00, 0x00, 0x02 };   // hard key, sensor BACK
+    const uint8_t d[7] = { 0x01, 0x1D, counter, (uint8_t)(down ? 1 : 0), 0x00, 0x00, bit };
     m.data.assign(d, d + 7);
     return m;
+}
+// counter ff, status 3 (no change): dropped by iDrive, which then re-bases on the next counter
+nbt::most::Msg rebaseMsg(uint16_t src, uint16_t dst) {
+    nbt::most::Msg m = hardKeyMsg(src, dst, 0xFF, false, 0x00);
+    m.data[3] = 0x03;
+    return m;
+}
+nbt::most::Msg backMsg(uint16_t src, uint16_t dst, uint8_t counter, bool down) {
+    return hardKeyMsg(src, dst, counter, down, 0x02);   // hard key, sensor BACK
 }
 
 // --- steering wheel roller -> media keys (see the header) ---
@@ -573,6 +603,31 @@ void sendGuardIfPending(nbt::most::Client& most) {
     printf("[Knob] BACK guard: tilt right to iDrive (%04X->%04X, counters %02x %02x)\n", src, dst, c1, c2);
 }
 
+// main thread: the NAV asked for by the HMI plugin. Without a controller message seen yet (Android Auto shown by "start at
+// boot", parking assistant on its own button), the addresses every C20 of this car has used: controller 3002 -> HMI 2025.
+void sendNavIfPending(nbt::most::Client& most) {
+    pthread_mutex_lock(&g_backMx);
+    if (!g_navKeyPending) { pthread_mutex_unlock(&g_backMx); return; }
+    g_navKeyPending = false;
+    if (!g_ccsSrc || !g_ccsDst) { g_ccsSrc = 0x3002; g_ccsDst = 0x2025; }
+    const uint16_t src = g_ccsSrc, dst = g_ccsDst;
+    const uint8_t c1 = nextCounter(g_ccsCounter), c2 = nextCounter(c1);
+    g_ccsCounter = c2;
+    const bool known = g_counterKnown;
+    pthread_mutex_unlock(&g_backMx);
+    // Counter unknown (controller not touched since boot; its answer to the Get carries ff): HmiMain3D drops a message
+    // with counter ff ("controller not configured") and re-bases on the next one (firmware notes, ccs_decoder.hpp). So
+    // one ff message first makes our 01 / 02 acceptable, and one more ff after them lets iDrive re-base again on the
+    // controller's own next counter. Car 2026-11-19: without it our NAV (01 02) was ignored.
+    printf("[Knob] NAV to iDrive for the HMI plugin (%04X->%04X, counters %02x %02x%s)\n", src, dst, c1, c2,
+           known ? "" : ", counter unknown: framed by ff messages");
+    if (!known) { most.send(rebaseMsg(src, dst)); usleep(30000); }
+    most.send(hardKeyMsg(src, dst, c1, true, 0x20));
+    usleep(100000);
+    most.send(hardKeyMsg(src, dst, c2, false, 0x20));
+    if (!known) { usleep(30000); most.send(rebaseMsg(src, dst)); }
+}
+
 // main thread: never send from the DSI callback thread
 void sendBackIfPending(nbt::most::Client& most) {
     pthread_mutex_lock(&g_backMx);
@@ -797,11 +852,36 @@ int main(int argc, char** argv) {
         g_mydev = most.deviceId();
     }
     bool subscribed = false;
+    int counterAsks = 0;
+    long long nextCounterAsk = 0;
     while (!g_stop) {
         usleep(20000);
         if (most.state() != nbt::most::kUp) subscribed = false;
         else if (!subscribed) subscribed = sourceNotification(most, true);   // answered with the current source
-        if (!trace) { sendGuardIfPending(most); sendBackIfPending(most); }
+        // ask the controller for its counter (see g_selfDev): at start, again after 5 s and 30 s if no answer
+        if (!trace && most.state() == nbt::most::kUp && counterAsks < 3 && nowMs() >= nextCounterAsk) {
+            pthread_mutex_lock(&g_backMx);
+            const bool known = g_counterKnown;
+            pthread_mutex_unlock(&g_backMx);
+            if (known) counterAsks = 3;
+            else {
+                g_selfDev = (uint16_t)most.deviceId();
+                nbt::most::Msg q;
+                q.txType = 0; q.varTag = 1; q.varVal = 0;
+                q.dst = 0x3002; q.src = g_selfDev; q.fblock = 0xE5; q.inst = 0x01; q.fkt = 0xC20; q.opType = 0x1;
+                q.hdrTag = 0xFFFFu;
+                const bool ok = most.send(q);
+                printf("[Knob] Get E5/01 C20 to the controller 3002 (counter): %s\n", ok ? "sent" : "FAILED");
+                ++counterAsks;
+                nextCounterAsk = nowMs() + (counterAsks == 1 ? 5000 : 25000);
+            }
+        }
+        if (!trace && unlink("/fs/ram3/nbt-aa-hmi-nav") == 0) {
+            pthread_mutex_lock(&g_backMx);
+            g_navKeyPending = true;
+            pthread_mutex_unlock(&g_backMx);
+        }
+        if (!trace) { sendGuardIfPending(most); sendBackIfPending(most); sendNavIfPending(most); }
         favouritesIfNeeded(most);
         playSwitchIfNeeded(most);
         navAudioIfNeeded(most);
