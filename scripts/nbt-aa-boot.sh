@@ -32,6 +32,18 @@ rm -f $R/wal.args $R/shadow.path
 # once): touch $P/gate-on
 rm -f $R/gate.mode
 if test -e $P/gate-on; then touch $R/gate.mode; echo 'gate on'; fi
+# Optional decoder mode (2026-11-18): nbt_decoder (FFmpeg decoder, the car's video path, src/android_auto/decoder).
+# touch $P/decoder.mode = use it, touch $P/decoder.60fps = ask the phone for 60 fps, $P/decoder.args = extra arguments,
+# $P/decoder.stale = ms without a picture before its window hides (default 5000).
+rm -f $R/decoder.mode $R/decoder.60fps $R/nbt_decoder $R/decoder.args $R/decoder.stale $R/decoder.delay
+if test -f $P/nbt_decoder -a -e $P/decoder.mode; then
+  cp $P/nbt_decoder $R/nbt_decoder && chmod 700 $R/nbt_decoder && touch $R/decoder.mode
+  test -e $P/decoder.60fps && touch $R/decoder.60fps
+  test -f $P/decoder.args && cp $P/decoder.args $R/decoder.args
+  test -f $P/decoder.stale && cp $P/decoder.stale $R/decoder.stale
+  test -f $P/decoder.delay && cp $P/decoder.delay $R/decoder.delay   # seconds after "MARKER HMIReady" at boot (default 2)
+  echo "video: nbt_decoder (decoder.mode`test -e $P/decoder.60fps && echo ', 60 fps'`)"
+fi
 DPI=140
 if test -f $P/vid.dpi; then DPI=`sed 1q $P/vid.dpi`; fi
 # picture mode (car-tested 2026-11-08), one flag file in $P, none = classic 800x300 stretched to the whole display:

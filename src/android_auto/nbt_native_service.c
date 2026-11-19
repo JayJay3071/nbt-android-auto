@@ -20,6 +20,8 @@
  *   center800   phone canvas 800x480 1:1 in the middle of the display      split800  same, at the left edge
  *   anamorph    phone canvas 800x480 stretched 1.6x horizontally ("wide")  res720    1280x720 canvas, cropped
  *   gate.mode   only touch the phone after the HMI page was opened
+ *   decoder.mode  with nbt_decoder present: it decodes and shows the picture instead of fifo_http + decode_runner +
+ *               nbt_hwvideo; decoder.60fps = ask the phone for 60 fps
  *   peer.pin    pin the phone's TLS certificate instead of checking the chain
  *   shadow.path, wal.args   old experimental modes (see experiments/), not used by the installed package
  *
@@ -43,6 +45,7 @@
 #define HMI_REQUEST_FILE "/fs/ram3/nbt-aa-request"
 #define CINEMO_LIBRARY_PATH "/opt/mm/lib/cinemo:/opt/mm/lib:/lib:/usr/lib"
 #define SYSTEM_LIBRARY_PATH "/opt/sys/lib:/lib:/usr/lib"
+#define DECODER_LIBRARY_PATH "/proc/boot:/lib:/usr/lib:/opt/sys/lib"
 
 static volatile sig_atomic_t stopping;
 
@@ -387,12 +390,13 @@ int main(int argc, char** argv)
     Child capture = {0, 0}; /* oneplus_native --capture-video: the Android Auto session */
     Child knob = {0, 0};    /* nbt_knob: iDrive controller -> input.fifo */
     Child hwv = {0, 0};     /* nbt_hwvideo: shows the video window in front of iDrive */
+    Child ndec = {0, 0};    /* decoder mode: nbt_decoder, started once and kept across sessions */
     (void)argv;
     int guard = -1, lock = -1, bus, device, type, attempts = 0, resets = 0;
     long long absent_since = 0;
-    int live = 0, wal = 0, gate = 0, hw = 0, res720 = 0, center = 0, ana = 0, right = 0; /* mode switches */
+    int live = 0, wal = 0, gate = 0, hw = 0, res720 = 0, center = 0, ana = 0, right = 0, dmode = 0; /* mode switches */
     unsigned session = 0;
-    char bus_text[16], device_text[16], shadow[200], walargs[160], *wargv[16];
+    char bus_text[16], device_text[16], shadow[200], walargs[160], *wargv[16], ndecargs[160], *ndargv[24];
 
     if (argc != 1 || geteuid() != 0 || chdir(RUNTIME_DIR))
         return 2;
@@ -550,6 +554,55 @@ int main(int argc, char** argv)
         setenv("NBT_VID_INSETS", "0,0,0,0", 1);
         setenv("NBT_VID_PAR", "16000", 0);
     }
+    /* decoder mode (optional, 2026-11-18): the picture is decoded and shown by nbt_decoder (src/android_auto/decoder:
+     * FFmpeg H.264 on the CPU, shown through the car's INvVideo in iDrive's EARLYVIDEO window). Replaces fifo_http +
+     * Cinemo (decode_runner) + nbt_hwvideo for each session; the window hides itself while /fs/ram3/nbt-aa-hidden
+     * exists. Whole 800x480 canvas: full width (anamorph, stretched to 1280x480) or, with split800, 1:1 in an 800x480
+     * window (--size 800x480) so iDrive's split screen stays visible on the right. center800 is not offered here.
+     * decoder.60fps: ask the phone for 60 fps (NBT_VID_FPS) and configure the car's stream for 60 (--fps 60). decoder.args: extra
+     * arguments for nbt_decoder (one line, after ours). */
+    dmode = hw && access("decoder.mode", F_OK) == 0 && access("nbt_decoder", X_OK) == 0;
+    if (dmode) {
+        int n = 0;
+        const int gsplit = right;
+        const int want60 = access("decoder.60fps", F_OK) == 0;
+        center = right = res720 = 0;
+        ana = !gsplit;
+        setenv("NBT_VID_RES", "1", 1);
+        setenv("NBT_VID_INSETS", "0,0,0,0", 1);
+        if (gsplit)
+            unsetenv("NBT_VID_PAR");
+        else
+            setenv("NBT_VID_PAR", "16000", 0);
+        if (want60)
+            setenv("NBT_VID_FPS", "60", 1);
+        ndargv[n++] = "./nbt_decoder";
+        ndargv[n++] = "--input";
+        ndargv[n++] = "annexb.fifo";
+        ndargv[n++] = "--ready";
+        ndargv[n++] = "http.ready";
+        if (gsplit) {
+            ndargv[n++] = "--size";
+            ndargv[n++] = "800x480";
+        }
+        if (want60) {
+            ndargv[n++] = "--fps";
+            ndargv[n++] = "60";
+        }
+        ndargv[n] = 0;
+        {
+            FILE* f = fopen("decoder.args", "r");
+            if (f) {
+                if (fgets(ndecargs, sizeof(ndecargs), f)) {
+                    size_t k = strlen(ndecargs);
+                    while (k && (ndecargs[k - 1] == '\n' || ndecargs[k - 1] == '\r'))
+                        ndecargs[--k] = 0;
+                    split(ndecargs, ndargv + n, 24 - n);
+                }
+                fclose(f);
+            }
+        }
+    }
 
     /* ---- processes that run for the whole service life ---- */
     if (live) {
@@ -581,6 +634,33 @@ int main(int argc, char** argv)
         setenv("LD_LIBRARY_PATH", SYSTEM_LIBRARY_PATH, 1);
         knob = spawn(args, 0, "knob.log");
         setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
+    }
+
+    /* decoder mode at boot (car 2026-11-18): with the phone already plugged in, nbt_decoder started ~19 s after boot
+     * (our plugin starts the service as soon as iDrive loads it) showed its first pictures from 23 s on, and from
+     * ~26 s every upload waited 3 s (VideoFrame 0x800f0053) for good. At 26 s iDrive logs "MARKER HMIReady" and its
+     * navigation guidance viewer attaches its views; started after that (phone plugged in later) it works. So right
+     * after boot the phone is not touched until "MARKER HMIReady" is in the system log, plus decoder.delay seconds
+     * (default 2). Later starts (mode change, service restart) do not wait: after 90 s of uptime the check is
+     * skipped, and the wait ends at 60 s of uptime at the latest. */
+    if (dmode && ms() < 90000) {
+        long grace = 2;
+        FILE* f = fopen("decoder.delay", "r");
+        if (f) {
+            long v;
+            if (fscanf(f, "%ld", &v) == 1 && v >= 0 && v <= 60)
+                grace = v;
+            fclose(f);
+        }
+        while (!stopping && ms() < 60000 && system("sloginfo 2>/dev/null | grep -q 'MARKER HMIReady'") != 0) {
+            report("waiting_for_hmi", session);
+            usleep(500000);
+        }
+        {
+            long long until = ms() + grace * 1000;
+            while (!stopping && ms() < until)
+                usleep(100000);
+        }
     }
 
     /* ---- one Android Auto session per loop pass ---- */
@@ -672,7 +752,25 @@ int main(int argc, char** argv)
             setenv("NBT_AOA_PRODUCT", "2d01", 1);
         else
             unsetenv("NBT_AOA_PRODUCT");
-        if (!live) {
+        if (dmode) {
+            /* nbt_decoder reads the FIFO itself and creates http.ready when it waits for a writer. It is started once
+             * and kept for the following sessions (a closed FIFO only ends that session's stream): car
+             * 2026-11-18/19, starting and killing it for every session froze the whole iDrive display when the phone
+             * was plugged in again (once "NO SIGNAL" and an iDrive restart). Started again only if it ended. */
+            if (!alive(&ndec)) {
+                char ndecname[40];
+                unlink("http.ready");
+                snprintf(ndecname, sizeof(ndecname), "nbt_decoder-%u.log", session);
+                setenv("LD_LIBRARY_PATH", DECODER_LIBRARY_PATH, 1);
+                ndec = spawn(ndargv, 0, ndecname);
+                setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
+            }
+            {
+                long long limit = ms() + 10000;
+                while (!stopping && access("http.ready", F_OK) && alive(&ndec) && ms() < limit)
+                    usleep(100000);
+            }
+        } else if (!live) {
             unlink("http.ready");
             {
                 char* args[] = {"./fifo_http", "annexb.fifo", "http.ready", 0};
@@ -715,7 +813,8 @@ int main(int argc, char** argv)
         }
 
         /* step 4: the Android Auto session itself (old live mode: nbt_live_file, kept in 'http', runs all the time) */
-        if (!stopping && (live ? alive(&http) : (!access("http.ready", F_OK) && alive(&decoder) && alive(&http)))) {
+        if (!stopping && (dmode ? (!access("http.ready", F_OK) && alive(&ndec))
+                              : live ? alive(&http) : (!access("http.ready", F_OK) && alive(&decoder) && alive(&http)))) {
             char* args[] = {"./oneplus_native", "--capture-video", bus_text, device_text, 0};
             snprintf(bus_text, sizeof(bus_text), "%d", bus);
             snprintf(device_text, sizeof(device_text), "%d", device);
@@ -728,8 +827,8 @@ int main(int argc, char** argv)
             report("running", session);
             {
                 long long began = ms();
-                while (!stopping && alive(&capture) && alive(&http) &&
-                       (live || (alive(&decoder) && (hw || alive(&frames))))) {
+                while (!stopping && alive(&capture) && (dmode ? alive(&ndec) : alive(&http)) &&
+                       (live || dmode || (alive(&decoder) && (hw || alive(&frames))))) {
                     usleep(200000);
                     keep_reported(session);
                 }
@@ -762,10 +861,11 @@ int main(int argc, char** argv)
         }
         end(&frames);
         drain(guard);
-        if (!live)
+        if (!live && !dmode)
             unlink("http.ready");
-        /* Clear only the FIFO bytes left by this completed session (live mode: nbt_live_file owns the FIFO reader). */
-        if (!live) {
+        /* Clear only the FIFO bytes left by this completed session (live mode: nbt_live_file owns the FIFO reader;
+         * decoder mode: nbt_decoder keeps reading it). */
+        if (!live && !dmode) {
             int fd = open("annexb.fifo", O_RDONLY | O_NONBLOCK);
             if (fd >= 0) {
                 drain(fd);
@@ -777,6 +877,7 @@ int main(int argc, char** argv)
     }
 
 done:
+    end(&ndec);
     end(&hwv);
     if (center)
         hmi_visible();

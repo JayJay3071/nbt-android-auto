@@ -74,6 +74,9 @@ def main():
     parser.add_argument('version', nargs='?', default=time.strftime('%Y.%m.%d'))
     parser.add_argument('--built', type=Path, help='output folder of scripts/build_all.py')
     parser.add_argument('--pem-dir', type=Path, default=OUT / 'rt', help='folder with cert.pem, key.pem, ca.pem')
+    parser.add_argument('--decoder', type=Path,
+                        help='nbt_decoder to include (decoder mode). Default: the one --built has '
+                             '(src/android_auto/decoder/nbt_decoder.c)')
     args = parser.parse_args()
     version = args.version
     if args.built:
@@ -88,6 +91,11 @@ def main():
         plugin_bin = ENTRY / 'NbtAndroidAuto' / 'libNbtAndroidAuto.so'
         if plugin_bin.stat().st_mtime < plugin_src.stat().st_mtime:
             sys.exit('libNbtAndroidAuto.so is older than aa_entry_plugin.cpp: rebuild it in the QNX VM first.')
+    if not args.decoder and args.built:
+        args.decoder = args.built.resolve() / 'programs' / 'nbt_decoder'
+    if args.decoder and args.decoder.is_file():
+        files = list(files) + [(args.decoder, 'rt/nbt_decoder', RT + '/nbt_decoder', '700')]
+        print('including', args.decoder, '(decoder mode: touch decoder.mode on the car to use it)')
     if OUT.exists():
         shutil.rmtree(OUT)
     entries = []

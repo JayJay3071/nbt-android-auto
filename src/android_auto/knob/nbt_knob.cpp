@@ -563,6 +563,32 @@ void favouritesIfNeeded(nbt::most::Client& most) {
     const uint16_t dst = g_hmiDev, src = g_hmiSrc;
     pthread_mutex_unlock(&g_backMx);
     if (g_auxButton && (!dst || !src)) return;                    // HMI address not known yet (favourite only)
+    // Decoder mode (2026-11-19): brought to the front automatically while iDrive was still starting, nbt_decoder's
+    // window got stuck for good (picture up at 22.8, 31.5, 32.0, 33.3 s after boot: stuck; 34.3 s: worked; opened by
+    // hand later: always worked). With decoder.mode the show waits until the head unit
+    // has run for decoder.showdelay seconds (default 40); the session itself starts as early as before.
+    if (access("/fs/ram3/nbt-aa-native/decoder.mode", F_OK) == 0) {
+        static long long minUp = -1;
+        if (minUp < 0) {
+            minUp = 40;
+            if (FILE* d = fopen("/var/opt/hmi/data/rw/NbtAndroidAutoRT/decoder.showdelay", "r")) {
+                long v;
+                if (fscanf(d, "%ld", &v) == 1 && v >= 0 && v <= 300) minUp = v;
+                fclose(d);
+            }
+        }
+        struct timespec up;
+        clock_gettime(CLOCK_MONOTONIC, &up);
+        if (up.tv_sec < minUp) {
+            static bool told = false;
+            if (!told) {
+                told = true;
+                printf("[Knob] start at boot: decoder mode, waiting until %lld s after boot (now %ld s)\n", minUp,
+                       (long)up.tv_sec);
+            }
+            return;   // checked again in 200 ms
+        }
+    }
     g_favDone = true;
     if (access(kFavDone, F_OK) == 0) { printf("[Knob] start at boot: already done in this boot\n"); return; }
     if (FILE* m = fopen(kFavDone, "w")) fclose(m);
