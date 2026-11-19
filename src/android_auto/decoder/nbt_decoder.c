@@ -12,13 +12,15 @@
  *   --size   window size on the display (default 1280x480; split screen 800x480)
  *   --fps    stream rate given to the car (default 30): picture timestamps and how long the car holds each picture
  * Files: decoder.stale in the current folder (ms without a new picture before the window is hidden, default 5000,
- *   0 = never); /var/opt/hmi/data/rw/NbtAndroidAutoRT/decoder.timeout (NV_NMSDK_TASK_TIMEOUT_MS, default 3000).
+ *   0 = never); in /var/opt/hmi/data/rw/NbtAndroidAutoRT: decoder.timeout (NV_NMSDK_TASK_TIMEOUT_MS, default 3000),
+ *   decoder.repeat (ms without a new picture before the last one is handed to the car again, default 50, 0 = never).
  *
  * Threads
  *   main, inside NvKdLaunch: reads the FIFO, cuts it into access units, decodes, writes the picture as NV12 into a
  *     three-picture mailbox (the newest picture replaces one not yet taken); runs the window policy every <= 100 ms
  *   display: takes the newest picture and, while the window is shown, uploads it (VideoFrame) and presents it
- *     (VideoRenderFrame)
+ *     (VideoRenderFrame); with nothing new for decoder.repeat ms, the last picture again (the car fades the window out
+ *     when no picture comes for a short while: still screens such as YouTube Music flickered)
  * Window policy: shown while the Android Auto page is in front (no /fs/ram3/nbt-aa-hidden), the session runs
  *   (/fs/ram3/nbt-aa-state says state=running and is at most 5 s old; a stop counts after 1.5 s) and pictures keep
  *   coming (decoder.stale). Hiding waits 400 ms (short page changes do not blink); the window is set again every 2 s.
@@ -109,8 +111,8 @@ static struct {
     const char* input;
     const char* ready;
     int width, height, fps, bench;
-    long stale_ms;
-} g_opt = {0, 0, 1280, 480, 30, 0, 5000};
+    long stale_ms, repeat_ms;
+} g_opt = {0, 0, 1280, 480, 30, 0, 5000, 50};
 
 static volatile sig_atomic_t g_quit;
 
@@ -149,7 +151,7 @@ static struct {
 /* statistics per interval (the display thread's part under g_box.lock) */
 static struct {
     long long since;
-    unsigned long decoded, errors, replaced, shown, hidden;
+    unsigned long decoded, errors, replaced, shown, hidden, repeated;
     long long decode_us, decode_max, upload_us, upload_max;
     unsigned long total;
 } g_stat;
@@ -289,10 +291,10 @@ static void window_set(int show)
 /* upload and present one picture; the buffer turns over with every picture the car took */
 static void car_present(const struct picture* p)
 {
-    static unsigned long turn;
+    static unsigned long turn, presented;
     const uint8_t* planes[3] = {p->y, p->uv, 0};
     const uint32_t pitches[3] = {(uint32_t)g_car.w, (uint32_t)g_car.w, 0};
-    const int64_t pts = (int64_t)p->number * 1000000 / g_opt.fps;
+    const int64_t pts = (int64_t)++presented * 1000000 / g_opt.fps;   /* every hand-over, repeats too */
     const long long t0 = now_us();
     int r = ((nv_frame_fn)nv_method(g_car.nv, NV_FRAME))(g_car.nv, g_car.stream, FORMAT_NV12, planes, pitches, pts,
                                                          PICTURE_FRAME, 0);
@@ -318,26 +320,48 @@ static void car_present(const struct picture* p)
 
 /* ---- display thread ---- */
 
+/* the newest picture; with nothing new for repeat_ms while the window is shown, the last one again: the car fades the
+ * window out when no picture comes for a short while (car 2026-11-19: YouTube Music, ~6 pictures/s, the picture and
+ * iDrive's page alternating about twice a second; Waze at ~30/s was steady) */
 static void* display_thread(void* arg)
 {
     (void)arg;
+    int have = 0;
     for (;;) {
         pthread_mutex_lock(&g_box.lock);
-        while (!g_box.fresh && !g_quit)
-            pthread_cond_wait(&g_box.posted, &g_box.lock);
+        int repeat = 0;
+        while (!g_box.fresh && !g_quit && !repeat) {
+            if (!have || g_win.shown != 1 || g_opt.repeat_ms <= 0) {
+                pthread_cond_wait(&g_box.posted, &g_box.lock);
+                continue;
+            }
+            struct timespec until;
+            clock_gettime(CLOCK_REALTIME, &until);
+            until.tv_nsec += g_opt.repeat_ms % 1000 * 1000000;
+            until.tv_sec += g_opt.repeat_ms / 1000 + until.tv_nsec / 1000000000;
+            until.tv_nsec %= 1000000000;
+            if (pthread_cond_timedwait(&g_box.posted, &g_box.lock, &until) == ETIMEDOUT && !g_box.fresh)
+                repeat = 1;
+        }
         if (g_quit) {
             pthread_mutex_unlock(&g_box.lock);
             return 0;
         }
-        const int take = g_box.newest;
-        g_box.newest = g_box.showing;
-        g_box.showing = take;
-        g_box.fresh = 0;
-        if (g_win.shown != 1)
-            ++g_stat.hidden;
+        if (repeat)
+            ++g_stat.repeated;
+        else {
+            const int take = g_box.newest;
+            g_box.newest = g_box.showing;
+            g_box.showing = take;
+            g_box.fresh = 0;
+            have = 1;
+            if (g_win.shown != 1)
+                ++g_stat.hidden;
+        }
+        const int show = g_box.showing;
         pthread_mutex_unlock(&g_box.lock);
         if (g_win.shown == 1)
-            car_present(&g_box.pic[take]);
+            car_present(&g_box.pic[show]);
     }
 }
 
@@ -438,9 +462,9 @@ static void stats_maybe(void)
     pthread_mutex_lock(&g_box.lock);
     const double secs = (now - g_stat.since) / 1000.0;
     if (g_stat.decoded || g_stat.errors)
-        say("stats %.1f s: %lu decoded (%.1f/s), %lu shown, %lu replaced, %lu while hidden, %lu errors; decode %.1f ms "
-            "(max %.1f), upload %.1f ms (max %.1f)", secs, g_stat.decoded, g_stat.decoded / secs, g_stat.shown,
-            g_stat.replaced, g_stat.hidden, g_stat.errors,
+        say("stats %.1f s: %lu decoded (%.1f/s), %lu shown (%lu repeats), %lu replaced, %lu while hidden, %lu errors; "
+            "decode %.1f ms (max %.1f), upload %.1f ms (max %.1f)", secs, g_stat.decoded, g_stat.decoded / secs,
+            g_stat.shown, g_stat.repeated, g_stat.replaced, g_stat.hidden, g_stat.errors,
             g_stat.decoded ? g_stat.decode_us / 1000.0 / g_stat.decoded : 0.0, g_stat.decode_max / 1000.0,
             g_stat.shown ? g_stat.upload_us / 1000.0 / g_stat.shown : 0.0, g_stat.upload_max / 1000.0);
     const unsigned long total = g_stat.total;
@@ -733,14 +757,15 @@ int main(int argc, char** argv)
     if (!g_opt.input)
         return usage();
     g_opt.stale_ms = read_number("decoder.stale", 5000);
+    g_opt.repeat_ms = read_number(RT_DIR "/decoder.repeat", 50);
     signal(SIGTERM, on_signal);
     signal(SIGINT, on_signal);
     signal(SIGPIPE, SIG_IGN);
     char timeout[16];
     snprintf(timeout, sizeof(timeout), "%ld", read_number(RT_DIR "/decoder.timeout", 3000));
     setenv("NV_NMSDK_TASK_TIMEOUT_MS", timeout, 0);
-    say("nbt_decoder: %s %s, window %dx%d, %d fps, stale %ld ms", g_opt.bench ? "bench" : "input", g_opt.input,
-        g_opt.width, g_opt.height, g_opt.fps, g_opt.stale_ms);
+    say("nbt_decoder: %s %s, window %dx%d, %d fps, stale %ld ms, repeat after %ld ms", g_opt.bench ? "bench" : "input",
+        g_opt.input, g_opt.width, g_opt.height, g_opt.fps, g_opt.stale_ms, g_opt.repeat_ms);
     if (g_opt.bench)
         _exit(run());
     /* the video calls need libKD's thread setup: run inside NvKdLaunch */

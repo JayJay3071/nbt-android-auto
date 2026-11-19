@@ -23,6 +23,7 @@ Files in `/var/opt/hmi/data/rw/NbtAndroidAutoRT`, read at boot:
 | `decoder.delay` | Seconds after iDrive's `MARKER HMIReady` before the first session at boot (default 2) |
 | `decoder.showdelay` | Seconds of uptime before "start at boot" brings Android Auto to the front (default 40) |
 | `decoder.timeout` | `NV_NMSDK_TASK_TIMEOUT_MS` for the video calls (default 3000) |
+| `decoder.repeat` | Milliseconds without a new picture before the last one is handed to the car again (default 50, `0` = never) |
 
 Reboot after changing them.
 
@@ -41,7 +42,10 @@ Inside `nbt_decoder`:
   picture into a three-picture mailbox; a picture not yet taken is replaced by the newer one. It also runs the window
   policy at least every 100 ms.
 - **Display thread:** takes the newest picture and, while the window is shown, uploads it (`VideoFrame`) and presents
-  it (`VideoRenderFrame`).
+  it (`VideoRenderFrame`). With nothing new for 50 ms (`decoder.repeat`) it hands the car the last picture again: the car
+  fades the window out when no picture comes for a short while. On still screens the phone sends few pictures
+  (YouTube Music ~6/s against ~30/s in Waze), and the picture and iDrive's page alternated about twice a second
+  (car 2026-11-19).
 - **Window policy:** shown while the Android Auto page is in front (no `/fs/ram3/nbt-aa-hidden`), the session runs
   (`/fs/ram3/nbt-aa-state` says `state=running` and is at most 5 s old; a stop counts after 1.5 s), the session has
   sent its first picture and pictures keep coming (`decoder.stale`). Hiding waits 400 ms so short page changes do not
@@ -127,7 +131,7 @@ Without the assembly the car decoded a picture in ~10 ms, with it ~7 ms.
 `/fs/ram3/nbt-aa-native/nbt_decoder-<session>.log` (RAM, the session it was started in). Every 5 s, for that interval:
 
 ```
-stats 5.0 s: 150 decoded (30.0/s), 149 shown, 1 replaced, 0 while hidden, 0 errors; decode 6.8 ms (max 14.1), upload 12.9 ms (max 21.0)
+stats 5.0 s: 150 decoded (30.0/s), 149 shown (0 repeats), 1 replaced, 0 while hidden, 0 errors; decode 6.8 ms (max 14.1), upload 12.9 ms (max 21.0)
 ```
 
 ```
