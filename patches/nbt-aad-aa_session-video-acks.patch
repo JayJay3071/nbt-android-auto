@@ -1,0 +1,183 @@
+NBT-AAD patch: video flow control (deferred video acks, AASession::setDeferredVideoAcks / postVideoConsumed).
+Upstream: https://github.com/Sq00ky/Supra-iDrive6-Android-Auto commit 41975f2 (PolyForm Noncommercial 1.0.0).
+Apply inside the upstream checkout after the overlay and nbt-aad-aa_session-media-state.patch: git apply <this file>
+
+diff --git a/milestone-7/src/aa_session.cpp b/milestone-7/src/aa_session.cpp
+index b002717..c22067e 100644
+--- a/milestone-7/src/aa_session.cpp
++++ b/milestone-7/src/aa_session.cpp
+@@ -50,6 +50,17 @@ AASession::AASession()
+     pthread_mutex_init(&lifecycle_mutex_, NULL);
+     pthread_mutex_init(&fd_mutex_, NULL);
+     pthread_mutex_init(&touch_mutex_, NULL);
++    pthread_mutex_init(&vack_mutex_, NULL);
++    vack_on_ = vack_session_ = false;
++    vack_outstanding_ = vack_consumed_ = vack_credit_ = 0;
++    vack_oldest_s_ = 0;
++    vack_forced_ = vack_force_runs_ = vack_acked_ = 0;
++    vack_stats_s_ = 0;
++    {
++        const char* e = getenv("NBT_AA_VIDEO_ACK_FORCE_MS");
++        const long v = (e && *e) ? strtol(e, NULL, 10) : 1500;
++        vack_force_s_ = (v >= 200 && v <= 10000 ? v : 1500) / 1000.0;
++    }
+     input_ready_ = false;
+     memset(av_session_, 0, sizeof(av_session_));
+     pending_focus_ = 0;
+@@ -83,6 +94,7 @@ AASession::~AASession() {
+     stop();
+     pthread_mutex_destroy(&fd_mutex_);
+     pthread_mutex_destroy(&touch_mutex_);
++    pthread_mutex_destroy(&vack_mutex_);
+     if (wake_pipe_[0] >= 0) close(wake_pipe_[0]);
+     if (wake_pipe_[1] >= 0) close(wake_pipe_[1]);
+     pthread_mutex_destroy(&lifecycle_mutex_);
+@@ -236,6 +248,67 @@ bool AASession::sendAckThunk(uint8_t channel, uint64_t rx_wall_ns, void* self) {
+ 
+ void AASession::drainAcks() {
+     acks_.drain(&sendAckThunk, this);
++    drainVideoAcks();
++}
++
++// ---- Video flow control (NBT project 2026-11-19, see setDeferredVideoAcks) ------------------------------------------
++
++void AASession::setDeferredVideoAcks(bool on) { vack_on_ = on; }
++
++void AASession::postVideoConsumed(uint32_t frames) {
++    if (!frames) return;
++    pthread_mutex_lock(&vack_mutex_);
++    const bool on = vack_session_;
++    if (on) {
++        const uint32_t late = frames < vack_credit_ ? frames : vack_credit_;   // reports for frames acked by force
++        vack_credit_ -= late;
++        vack_consumed_ += frames - late;
++    }
++    pthread_mutex_unlock(&vack_mutex_);
++    if (on) wakeSessionThread();
++}
++
++bool AASession::videoAcksPending() {
++    pthread_mutex_lock(&vack_mutex_);
++    const bool p = vack_session_ && vack_outstanding_ > 0;
++    pthread_mutex_unlock(&vack_mutex_);
++    return p;
++}
++
++void AASession::drainVideoAcks() {
++    pthread_mutex_lock(&vack_mutex_);
++    if (!vack_session_ || !vack_outstanding_) {
++        pthread_mutex_unlock(&vack_mutex_);
++        return;
++    }
++    const double now = monoS();
++    uint32_t n = vack_consumed_ < vack_outstanding_ ? vack_consumed_ : vack_outstanding_;
++    vack_consumed_ -= n;
++    vack_outstanding_ -= n;
++    if (n && vack_outstanding_) vack_oldest_s_ = now;   // the rest arrived later than the ones just acked
++    uint32_t forced = 0;
++    if (vack_outstanding_ && now - vack_oldest_s_ >= vack_force_s_) {
++        forced = vack_outstanding_;
++        vack_credit_ += forced;
++        vack_outstanding_ = 0;
++        vack_forced_ += forced;
++        ++vack_force_runs_;
++    }
++    vack_acked_ += n + forced;
++    const uint32_t runs = vack_force_runs_, total_forced = vack_forced_, acked = vack_acked_;
++    bool stats = false;
++    if (now >= vack_stats_s_) {
++        stats = true;
++        vack_stats_s_ = now + 30;
++    }
++    pthread_mutex_unlock(&vack_mutex_);
++    if (forced && (runs <= 5 || runs % 50 == 0))
++        printf("[AASession] video: %u frame(s) not handed to the decoder for %.0f ms: acked anyway (%u times so far)\n",
++               forced, vack_force_s_ * 1000, runs);
++    if (stats)
++        printf("[AASession] video acks, session so far: %u acked, %u of them forced in %u runs\n", acked, total_forced,
++               runs);
++    for (uint32_t i = 0; i < n + forced; ++i) sendAvMediaAck(6);
+ }
+ 
+ void AASession::setUnderflowReports(bool on) { acks_.setUnderflowReports(on); }
+@@ -344,6 +417,15 @@ bool AASession::start(int client_fd) {
+     for (int c = 0; c < 32; ++c) offered_audio_[c].clear();   // filled again when this session sends its SDR
+     audio_frames_[0] = audio_frames_[1] = audio_frames_[2] = 0;
+     acks_.startSession();
++    pthread_mutex_lock(&vack_mutex_);
++    vack_session_ = vack_on_;
++    vack_outstanding_ = vack_consumed_ = vack_credit_ = 0;
++    vack_forced_ = vack_force_runs_ = vack_acked_ = 0;
++    vack_stats_s_ = monoS() + 30;
++    pthread_mutex_unlock(&vack_mutex_);
++    if (vack_on_)
++        printf("[AASession] video acks: once handed to the decoder (window 10 frames, forced after %.0f ms)\n",
++               vack_force_s_ * 1000);
+     setRunning(true);
+ 
+     if (pthread_create(&thread_, NULL, &AASession::sessionThreadStub, this) != 0) {
+@@ -466,7 +548,7 @@ bool AASession::readExact(uint8_t* buffer, size_t length) {
+                 if (wake_pipe_[0] > maxfd) maxfd = wake_pipe_[0];
+             }
+             // 1 s ticks, 250 ms while a deferred audio ack is pending so a forced ack goes out on time.
+-            const uint32_t tick_ms = acks_.hasPending() ? 250u : 1000u;
++            const uint32_t tick_ms = (acks_.hasPending() || videoAcksPending()) ? 250u : 1000u;
+             struct timeval tv;
+             tv.tv_sec = tick_ms / 1000u;
+             tv.tv_usec = (tick_ms % 1000u) * 1000u;
+@@ -1302,7 +1384,15 @@ void AASession::sessionLoop() {
+                         // VideoManager owns the hardware decoder feed and performs any
+                         // in-band SPS/PPS prepend next to the mdev Message 3 send. Keep
+                         // AASession limited to protocol parsing and fixed-offset slicing.
++                        // Video flow control: counted before the consumer can report it (see setDeferredVideoAcks)
+                         if (video_cb_) {
++                            pthread_mutex_lock(&vack_mutex_);
++                            if (vack_session_) {
++                                if (!vack_outstanding_) vack_oldest_s_ = monoS();
++                                ++vack_outstanding_;
++                                deferred = true;
++                            }
++                            pthread_mutex_unlock(&vack_mutex_);
+                             g_crumb_stage = 4;
+                             video_cb_(media_frames_, nal_ptr, nal_len, pts, video_user_data_);
+                             g_crumb_stage = 3;
+diff --git a/milestone-7/src/aa_session.hpp b/milestone-7/src/aa_session.hpp
+index e4dab93..d6e4550 100644
+--- a/milestone-7/src/aa_session.hpp
++++ b/milestone-7/src/aa_session.hpp
+@@ -86,6 +86,16 @@ public:
+     void setUnderflowReports(bool on);
+     void postAudioUnderflow(uint8_t channel);
+ 
++    // Video flow control (NBT project 2026-11-19). On: a video frame (channel 6, AV_MEDIA_DATA) is acked only once the
++    // consumer reports it handed to the decoder or dropped (postVideoConsumed), so the phone can run at most the video
++    // window (10 frames) ahead of the decoder instead of filling a queue for seconds; a frame left unreported for
++    // NBT_AA_VIDEO_ACK_FORCE_MS (default 1500) is acked anyway (decoder stalled). Codec config is always acked on
++    // arrival. Off: acked on arrival. Set before start(); applies from the next session.
++    void setDeferredVideoAcks(bool on);
++    // The consumer took `frames` video frames, oldest first. Thread-safe (writer thread); acks go out from the session
++    // thread, woken through the wake pipe.
++    void postVideoConsumed(uint32_t frames);
++
+ private:
+     static void* sessionThreadStub(void* arg);
+     void sessionLoop();
+@@ -168,6 +178,18 @@ private:
+     // session thread records frames into it and sends what it releases.
+     AudioAcks acks_;
+     void drainAcks();                // session thread: send the acks acks_ releases
++    void drainVideoAcks();           // session thread: video acks consumed or forced since the last drain
++    bool videoAcksPending();
++    pthread_mutex_t vack_mutex_;
++    bool vack_on_;                   // setDeferredVideoAcks
++    bool vack_session_;              // this session defers (guarded by vack_mutex_)
++    uint32_t vack_outstanding_;      // frames received, not acked yet (guarded)
++    uint32_t vack_consumed_;         // frames the consumer reported, not acked yet (guarded)
++    uint32_t vack_credit_;           // frames acked by force whose report is still to come (guarded)
++    double vack_oldest_s_;           // when the oldest outstanding frame arrived (guarded)
++    uint32_t vack_forced_, vack_force_runs_, vack_acked_;   // stats (guarded)
++    double vack_force_s_;            // NBT_AA_VIDEO_ACK_FORCE_MS
++    double vack_stats_s_;            // next stats line
+     void drainUnderflows();          // session thread: send the underflow reports posted since the last drain
+     void wakeSessionThread();        // a byte down the wake pipe (consumer thread)
+     static bool sendAckThunk(uint8_t channel, uint64_t rx_wall_ns, void* self);

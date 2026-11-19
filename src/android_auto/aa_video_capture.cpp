@@ -353,6 +353,7 @@ struct LiveQueue {
     pthread_mutex_t m;
     pthread_cond_t cv;
     std::deque<std::vector<uint8_t> > items; // H.264 access units
+    std::deque<bool> frame;                  // per item: a video frame (true) or codec config (video flow control)
     size_t bytes;                            // total size of items
     bool stop, dropping;                     // dropping: skipping frames until the next IDR / config
     unsigned dropped, drops;                 // dropped frames, number of drop runs
@@ -381,7 +382,13 @@ struct Capture {
     unsigned frames, configs, frame_limit;
     bool live;
     LiveQueue queue;
-    Capture() : socket(-1), data(-1), index(-1), error(0), bytes(0), frames(0), configs(0), frame_limit(300), live(false)
+    // Video flow control (2026-11-19, AASession::setDeferredVideoAcks): each video frame is reported once it was written
+    // into the decoder FIFO or dropped, and only then acked to the phone; so the phone can be at most its video window
+    // (10 frames) ahead of the decoder. NBT_AA_VIDEO_ACKS=0: acked on arrival as before.
+    nbt::AASession* session;
+    bool vacks;
+    Capture() : socket(-1), data(-1), index(-1), error(0), bytes(0), frames(0), configs(0), frame_limit(300), live(false),
+                session(0), vacks(false)
     {
         pthread_mutex_init(&mutex, 0);
     }
@@ -397,6 +404,13 @@ bool has_idr(const uint8_t* p, size_t n)
     return false;
 }
 
+// video flow control: frames handed to the decoder or dropped (any thread)
+void video_consumed(Capture* c, unsigned frames)
+{
+    if (frames && c->vacks && c->session)
+        c->session->postVideoConsumed(frames);
+}
+
 // session thread: never blocks on the decoder
 void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
 {
@@ -406,25 +420,32 @@ void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
     if (q.dropping && !restart) {
         ++q.dropped;
         pthread_mutex_unlock(&q.m);
+        video_consumed(c, 1);
         return;
     }
+    unsigned gone = 0;   // queued frames thrown away below
     if (q.bytes + n > kLiveBudget) {
         if (!restart) {
             q.dropping = true;
             ++q.drops;
             ++q.dropped;
             pthread_mutex_unlock(&q.m);
+            video_consumed(c, 1);
             return;
         }
         // a fresh IDR/config does not fit: throw away the old backlog, the decoder restarts on this picture
         while (!q.items.empty() && q.bytes + n > kLiveBudget) {
             q.bytes -= q.items.front().size();
             q.items.pop_front();
+            if (q.frame.front())
+                ++gone;
+            q.frame.pop_front();
             ++q.dropped;
         }
     }
     q.dropping = false;
     q.items.push_back(std::vector<uint8_t>(p, p + n));
+    q.frame.push_back(!config);
     // NBT_AA_PAD (bytes, car 2026-11-07): a static Android Auto screen is only ~600 bytes per frame (~16 KB/s), so any
     // byte-sized input buffer of the decoder chain (HTTP client, demuxer) delays the picture by seconds. Each access
     // unit is padded with one H.264 filler NAL (type 12, ignored by decoders) up to this size.
@@ -446,6 +467,7 @@ void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
     q.bytes += q.items.back().size();
     pthread_cond_signal(&q.cv);
     pthread_mutex_unlock(&q.m);
+    video_consumed(c, gone);
 }
 
 long long now_ms();
@@ -483,11 +505,15 @@ bool write_all(int fd, const unsigned char* p, size_t n)
 void save(Capture* c, const uint8_t* p, size_t n, uint64_t pts, bool config)
 {
     pthread_mutex_lock(&c->mutex);
+    if (c->live && !config && (c->error || c->frames >= c->frame_limit))
+        video_consumed(c, 1);   // not taken: must not hold the phone's video window
     if (!c->error && c->frames < c->frame_limit) {
         const bool annexb = n >= 4 && p[0] == 0 && p[1] == 0 && (p[2] == 1 || (p[2] == 0 && p[3] == 1));
-        if (!annexb || n > 2 * 1024 * 1024 || (!c->live && n > 8 * 1024 * 1024 - c->bytes))
+        if (!annexb || n > 2 * 1024 * 1024 || (!c->live && n > 8 * 1024 * 1024 - c->bytes)) {
             c->error = 1;
-        else {
+            if (c->live && !config)
+                video_consumed(c, 1);   // refused: must not hold the phone's video window
+        } else {
             char row[160];
             int k = snprintf(row, sizeof(row), "%s,%u,%llu,%u,%u\n", config ? "config" : "frame", c->frames,
                              (unsigned long long)pts, (unsigned)c->bytes, (unsigned)n);
@@ -591,6 +617,8 @@ void* live_writer(void* v)
         std::vector<uint8_t> item;
         item.swap(q.items.front());
         q.items.pop_front();
+        const bool frame = q.frame.front();
+        q.frame.pop_front();
         q.bytes -= item.size();
         pthread_mutex_unlock(&q.m);
         size_t off = 0;
@@ -621,6 +649,8 @@ void* live_writer(void* v)
             printf("AA_LIVE_WRITER_FAILED errno=%d\n", errno);
             return 0;
         }
+        if (frame)
+            video_consumed(c, 1);   // in the decoder FIFO: the phone may send the next one
     }
 }
 
@@ -779,6 +809,10 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     session.setVideoFrameCallback(video, &c);
     session.setCodecConfigCallback(config, &c);
     if (c.live) {
+        const char* va = getenv("NBT_AA_VIDEO_ACKS");
+        c.session = &session;
+        c.vacks = !(va && !strcmp(va, "0"));
+        session.setDeferredVideoAcks(c.vacks);
         session.setNavStatusCallback(nav_status, 0);
         unlink("/fs/ram3/nbt-aa-native/nav.state");
         g_refocus_at = 0;
