@@ -177,8 +177,9 @@ static int capture_transfer(void* context,int input,unsigned char* data,unsigned
     /* Session reads (car 2026-11-17: a session ended with "Phone closed socket or read error" after 94 s of normal
      * streaming, no RX-timeout message): a bulk IN read gave up after 2 s without data, which ended the reader and the
      * session, while the session itself allows 5 s of silence (NBT_RX_TIMEOUT_S). Now 8 s per IN read, and a failure is
-     * logged with its USB status, so a real USB drop can be told from a pause. */
-    rc=bulk_transfer_t(c->urb[input],c->pipe[input],c->dma[input],*size,input,&status,&actual,input?8000:2000);
+     * logged with its USB status, so a real USB drop can be told from a pause. 2026-11-19: the session allows 15 s
+     * (native_service), so an IN read waits 20 s. */
+    rc=bulk_transfer_t(c->urb[input],c->pipe[input],c->dma[input],*size,input,&status,&actual,input?20000:2000);
     if(rc!=EOK || (status&USBD_URB_STATUS_MASK)!=USBD_STATUS_CMP || actual>*size){
         printf("AA_USB_%s_FAILED rc=%d status=%08x bytes=%u\n",input?"IN":"OUT",rc,(unsigned)status,(unsigned)actual);
         return 0;

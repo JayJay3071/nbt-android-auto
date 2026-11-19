@@ -478,7 +478,11 @@ int main(int argc, char** argv)
         unsetenv("NBT_AA_MEDIA_OUT");
         unsetenv("NBT_AA_PROMPT_OUT");
     }
-    setenv("NBT_RX_TIMEOUT_S", "5", 1);
+    /* 15 s of silence before the session counts as dead (was 5; car 2026-11-17 and 2026-11-19: sessions ended after 5 s
+     * without anything from the phone, while it had not crashed and its USB link stayed up). The phone pings once a
+     * second, so silence is never normal; a short stall now freezes the picture instead of ending the session. A real
+     * unplug still ends it at once (the USB transfer fails). */
+    setenv("NBT_RX_TIMEOUT_S", "15", 1);
 
     /* ---- mode switches (files in the runtime directory) ---- */
     /* Old experimental mode: if shadow.path names a file under /fs/usb0/, nbt_live_file shadows that file with the live

@@ -592,10 +592,15 @@ void* reader(void* v)
 {
     Capture* c = (Capture*)v;
     unsigned char b[65536];
+    long long last = 0;   // the phone pings once a second: a longer pause is a stall (logged, this thread only)
     for (;;) {
         unsigned n = sizeof(b);
         if (!c->transfer(c->transport, 1, b, &n) || !n || n > sizeof(b) || !write_all(c->socket, b, n))
             break;
+        const long long t = now_ms();
+        if (last && t - last >= 1500)
+            printf("AA_USB_PAUSE %lld ms without data from the phone, then %u bytes\n", t - last, n);
+        last = t;
     }
     shutdown(c->socket, SHUT_RDWR);
     return 0;
