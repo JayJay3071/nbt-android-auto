@@ -5,6 +5,7 @@
 #   src/                 this repository's src/ folder
 #   reference/           NBT-AAD milestone-7 src/ and include/ with our overlay and patches applied
 #   mbedtls-3.6.7/       Mbed TLS release with the legacy-UTCTime patch and the QNX config
+#   ffmpeg/, ffmpeg-config/, ffmpeg-asm/, build-ffmpeg-qnx.sh   FFmpeg for nbt_decoder (scripts/ffmpeg_qnx.py)
 #   expected/            optional: binaries of an installer payload to compare against
 # Environment: HMI_LIBS = folder with libAppFramework.A.so and libCoreFramework.A.so copied from your own NBT
 #              (needed only for the HMI plugin; without it the plugin is skipped).
@@ -61,6 +62,20 @@ $CXX -Iref nbt_key.cpp ref/dsi_client.cpp ref/most/client.cpp -o $OUT/nbt_key
 
 echo "== nbt_a2i_beep (test: beeps into an io-amp input)"
 $CC -Wall $A/audio/nbt_a2i_beep.c -o $OUT/nbt_a2i_beep -lm
+echo "== nbt_decoder (decoder mode: FFmpeg 2.8.22 H.264 decoder + the car's video interface)"
+cd $W
+if test ! -f ffmpeg-config/KEY; then
+  echo "SKIPPED: no FFmpeg sources (build_all.py could not get them)"
+elif sh build-ffmpeg-qnx.sh > ffmpeg.log 2>&1; then
+  cat ffmpeg.log
+  if ! $CC -O2 -Wall -Wextra -Wc,-std=gnu99 -I$W/ffmpeg-lib/include -I$W/ffmpeg $A/decoder/nbt_decoder.c \
+      $W/ffmpeg-lib/libavcodec.a $W/ffmpeg-lib/libavutil.a -lm -o $OUT/nbt_decoder; then
+    echo "SKIPPED: nbt_decoder did not compile (see above)"
+  fi
+else
+  cat ffmpeg.log
+  echo "SKIPPED: FFmpeg build failed (see above)"
+fi
 
 echo "== HMI plugin libNbtAndroidAuto.so"
 cd $W/src/idrive

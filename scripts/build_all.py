@@ -3,7 +3,8 @@
 What it does:
   1. checks the NBT-AAD checkout (must be commit 41975f2, unmodified)
   2. downloads Mbed TLS 3.6.7 once (SHA-256 checked, cached in .local/), applies the legacy-UTCTime patch and the
-     QNX configuration
+     QNX configuration; clones FFmpeg n2.8.22 once into .local/ for nbt_decoder (files SHA-256 checked, see
+     scripts/ffmpeg_qnx.py) and assembles its assembly with yasm 1.3.0 (downloaded once on Windows)
   3. prepares the NBT-AAD core: upstream milestone-7 + scripts/aa_session_overlay.py + patches/*.patch + our
      Mbed TLS crypto backend (src/android_auto/aa_cryptor_mbedtls.cpp)
   4. sends everything plus src/ and scripts/build-qnx.sh to the VM and runs the build there
@@ -30,6 +31,7 @@ import urllib.request
 from pathlib import Path
 
 from aa_session_overlay import harden_session
+from ffmpeg_qnx import add_ffmpeg
 from mbedtls_legacy_time import patch_x509
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,7 +46,7 @@ MBEDTLS_DISABLED = ["MBEDTLS_AESNI_C", "MBEDTLS_HAVE_ASM", "MBEDTLS_PADLOCK_C"]
 PROGRAMS = {"oneplus_native": "rt", "native_service": "rt", "decode_runner": "rt", "fifo_http": "rt",
             "accessory_window": "rt", "nbt_knob": "rt", "nbt_hwvideo": "rt", "nbt_cluster": "rt",
             "libNbtAndroidAuto.so": "plugin", "nbt_reset": "rt", "nbt_key": "test",
-            "nbt_a2i_beep": "test"}
+            "nbt_a2i_beep": "test", "nbt_decoder": "rt"}
 
 
 def git(*args, cwd=None):
@@ -183,6 +185,10 @@ def main():
     add_mbedtls(archive)
     add_nbt_aad(archive, args.nbt_aad.resolve())
     add_repo_sources(archive)
+    try:
+        add_ffmpeg(archive)   # FFmpeg for nbt_decoder; without it the other programs are still built
+    except (OSError, subprocess.CalledProcessError, SystemExit) as error:
+        print("FFmpeg not available, nbt_decoder is skipped:", error)
     if args.compare:
         add_expected(archive, args.compare.resolve())
     archive.close()
