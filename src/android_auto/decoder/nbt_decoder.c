@@ -659,6 +659,14 @@ static int read_session(int fd)
             if (start >= 0 && at > (size_t)start)
                 nal_unit(g_input + start, at - (size_t)start);
             start = (long)at;
+            /* an access unit delimiter ends the picture before it: decode now, not when the next frame comes (the
+             * writer puts one after each frame) */
+            const size_t h = g_input[at + 2] == 1 ? at + 3 : at + 4;
+            if (h < fill && (g_input[h] & 0x1f) == 9 && g_au_slices) {
+                decode(g_au, g_au_len);
+                g_au_len = 0;
+                g_au_slices = 0;
+            }
             i += 2;
         }
         if (start > 0) {

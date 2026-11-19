@@ -464,6 +464,14 @@ void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
         v.insert(v.end(), fill, (uint8_t)0xff);
         v.push_back(0x80); // rbsp trailing bits
     }
+    // End of the picture (2026-11-19): the decoder only knows a NAL unit, and so a picture, is complete when the next
+    // start code arrives, i.e. with the phone's NEXT frame. Waze / the Android Auto screens send ~30-60 frames per second,
+    // YouTube Music only a few, so the knob's focus change showed up late there. An access unit delimiter (type 9) after
+    // each frame starts the next access unit at once; nbt_decoder decodes the picture as soon as it sees it.
+    if (!config) {
+        static const uint8_t aud[6] = {0, 0, 0, 1, 0x09, 0xf0};
+        q.items.back().insert(q.items.back().end(), aud, aud + 6);
+    }
     q.bytes += q.items.back().size();
     pthread_cond_signal(&q.cv);
     pthread_mutex_unlock(&q.m);
