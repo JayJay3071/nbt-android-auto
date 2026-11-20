@@ -87,6 +87,10 @@ again when Android Auto's source, muted by the dialog (state `04` in the 100E ta
 dialog never muted it. Leaving Android Auto's source in between drops the resume.
 A call made or answered in iDrive (connection `090` in the 100E table, `093` presumably for a second phone) pauses the
 phone if it plays on Android Auto's source; it plays again once the call connection is gone (`NBT_CALL_PAUSE=0` off).
+iDrive's call screen: a call event (connection `090` coming or going, `nbt_knob` marks it with `/fs/ram3/nbt-aa-call`,
+or a change of the CDS property `communication.currentCallInfo`) while Android Auto is on screen, or left it less than
+3 s before, arms the HMI plugin for 4 s: our page losing the focus then is iDrive's call screen, and a show request
+(as NAV) takes it back. An iDrive key in the meantime leaves iDrive on screen.
 
 | Function | How |
 | --- | --- |

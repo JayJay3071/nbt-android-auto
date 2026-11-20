@@ -315,18 +315,34 @@ bool onPdc(void*,const bmw::BasicString<unsigned short>& v){
     }
     return true;
 }
+// iDrive's call screen (user 2026-11-20: during calls iDrive takes the screen from Android Auto; NAV brought it back).
+// A call event is a change of connection 090 in the 100E table (nbt_knob: /fs/ram3/nbt-aa-call while a call is up, car
+// 2026-11-20) or of the CDS property communication.currentCallInfo (logged to /fs/ram3/nbt-aa-callinfo; the first value
+// after registration is not an event). At a call event with Android Auto on screen, or left less than 3 s before (the
+// call screen can come first), our page losing the focus within the next 4 s is iDrive's call screen: a show request
+// takes it back (as NAV), at most every 1.5 s. An iDrive key in the meantime (the driver chose iDrive) ends that.
+const char* const kCall="/fs/ram3/nbt-aa-call";
+long long g_callEventMs=0,g_callEventSeen=0,g_callArmUntilMs=0,g_callShowMs=-100000,g_driverLeftMs=-100000;
+bool g_callUp=false,g_callInfoSeen=false;
+bool onCallInfo(void*,const bmw::BasicString<unsigned short>& v){
+    cdsLog("communication.currentCallInfo","/fs/ram3/nbt-aa-callinfo",v);
+    if(g_callInfoSeen)g_callEventMs=now_ms();
+    g_callInfoSeen=true;
+    return true;
+}
 class CdsSubscribe : public bmw::Runnable {
 public:
     bmw::PluginApp* app;
     CdsSubscribe():app(0) {}
     void run() {
         if(!app)return;
-        bmw::BasicString<char> g("driving.gear"),p("sensors.PDCStatus"),d("controls.headlights");
-        bmw::CdsDelegate dg={app,&onGear},dp={app,&onPdc},dd={app,&onHeadlights};
+        bmw::BasicString<char> g("driving.gear"),p("sensors.PDCStatus"),d("controls.headlights"),c("communication.currentCallInfo");
+        bmw::CdsDelegate dg={app,&onGear},dp={app,&onPdc},dd={app,&onHeadlights},dc={app,&onCallInfo};
         app->cdsAddPropertyChangedEventHandler(g,0,dg);
         app->cdsAddPropertyChangedEventHandler(p,0,dp);
         app->cdsAddPropertyChangedEventHandler(d,0,dd);
-        plog("CDS handlers for driving.gear, sensors.PDCStatus and controls.headlights registered",0);
+        app->cdsAddPropertyChangedEventHandler(c,0,dc);
+        plog("CDS handlers for driving.gear, sensors.PDCStatus, controls.headlights and communication.currentCallInfo registered",0);
     }
 };
 CdsSubscribe g_cds;
@@ -516,6 +532,24 @@ void TargetPoll::run() {
     readStatus(&running);
     const int want=running?(int)(kHoldState+kHoldCount-1):(int)kEntryState;
     if(want!=target){app->updateModel(kTargetModel,want);target=want;plog("entry target ->",want);}
+    {   // iDrive's call screen (see kCall)
+        const long long now=now_ms();
+        const bool up=access(kCall,F_OK)==0;
+        if(up!=g_callUp){g_callUp=up;g_callEventMs=now;plog(up?"call: connection 090 up":"call: connection 090 gone",0);}
+        if(g_callEventMs!=g_callEventSeen){
+            g_callEventSeen=g_callEventMs;
+            if(running&&(access(kHidden,F_OK)!=0||now-g_aaLeftMs<3000)){
+                g_callArmUntilMs=now+4000;
+                plog("call event over Android Auto: iDrive's call screen is sent back for 4 s",0);
+            }
+        }
+        if(now<g_callArmUntilMs&&g_driverLeftMs>g_callEventSeen){g_callArmUntilMs=0;plog("call screen: the driver chose iDrive",0);}
+        if(now<g_callArmUntilMs&&running&&!e->holdFocused()&&now-g_callShowMs>=1500){
+            g_callShowMs=now;
+            touch(kShowRequest);
+            plog("call screen over Android Auto -> show request",0);
+        }
+    }
     if(access(kShowRequest,F_OK)==0&&!showTooEarly()&&unlink(kShowRequest)==0){
         // NAV (car 2026-11-18): iDrive opens its navigation ~1.3 s after the key, after the show request has already
         // brought Android Auto back, and so took the screen again; with Android Auto already on screen (NAV pressed in
@@ -546,7 +580,7 @@ void Checker::run() {
     pending=false;
     if(!e||e->stopping||!e->app||e->holdFocused())return;    // BACK only climbed one hold level: nothing to do
     readStatus(&e->running);
-    if(unlink(kLeave)==0){plog("check: leave key");touch(kHidden);e->showUntilMs=0;e->showRetryAtMs=0;return;}
+    if(unlink(kLeave)==0){plog("check: leave key");g_driverLeftMs=now_ms();touch(kHidden);e->showUntilMs=0;e->showRetryAtMs=0;return;}
     {   // BACK guard (nbt_knob): its tilt right moved the focus into the split screen; the driver's BACK release brings it
         // back. Wait for that instead of sending a hold event (up to 1.5 s after the guard).
         struct stat st;

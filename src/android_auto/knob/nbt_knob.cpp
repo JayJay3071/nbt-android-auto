@@ -505,6 +505,9 @@ void callState(int call) {
     pthread_mutex_lock(&g_voiceMx);
     if ((call >= 0) == g_callActive) { pthread_mutex_unlock(&g_voiceMx); return; }
     g_callActive = call >= 0;
+    // the HMI plugin sends iDrive's call screen back while Android Auto was on screen (aa_entry_plugin, kCall)
+    if (g_callActive) { if (FILE* cf = fopen("/fs/ram3/nbt-aa-call", "w")) fclose(cf); }
+    else unlink("/fs/ram3/nbt-aa-call");
     const int st = mediaState();
     if (g_callActive) {
         if (g_callPause && !g_voicePaused && sessionRunning() && g_lastSource == (int)g_auxSource && st == 2) {
@@ -1022,6 +1025,7 @@ int main(int argc, char** argv) {
     }
     unlink(kPromptReady);
     unlink(kSourceFile);
+    if (!trace) unlink("/fs/ram3/nbt-aa-call");
     if (trace && !most.setTap(&onTap, NULL)) return 3;
     if (!most.start("NBTPROJ_KNOB")) return 3;
     printf("nbt_knob: observing the iDrive controller, forwarding to %s%s\n", g_fifo, seconds ? "" : " until SIGTERM");
