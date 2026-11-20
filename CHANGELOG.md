@@ -8,7 +8,11 @@ Versions are named after the build date of the installer payload.
   when the USB sound runs, up to 60 pictures/s. Used whenever `nbt_decoder` is installed (`decoder.off` = the old path); see
   [docs/DECODER.md](docs/DECODER.md).
 - **Parking assistant:** while it is on, Android Auto stays out of the way; when it closes, Android Auto comes back
-  (NAV).
+  (NAV), also right after boot before the controller has been touched.
+- **Decoder:** each picture is shown as soon as it has arrived, not when the next one comes (the knob reacted late in
+  apps that send few pictures, such as YouTube Music).
+- **Session:** 15 s without data from the phone before a session counts as dead (was 5 s), so a short stall freezes
+  the picture instead of disconnecting; pauses are logged (`AA_USB_PAUSE`).
 - **Video flow control:** the phone sends video only as fast as the decoder takes it.
 - **USB sound:** three 4096-byte packages queued, writer threads at a higher priority.
 

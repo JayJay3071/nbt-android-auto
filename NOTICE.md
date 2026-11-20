@@ -33,6 +33,16 @@ Copyright The Mbed TLS Contributors, licensed under the Apache License 2.0
 (<https://www.apache.org/licenses/LICENSE-2.0>). Mbed TLS is not included in this repository; the build scripts
 download the release archive.
 
+## FFmpeg
+
+`nbt_decoder` is statically linked against FFmpeg 2.8.22 (<https://ffmpeg.org/>, tag `n2.8.22`), built with only the
+H.264 decoder and no GPL or non-free parts, licensed under the GNU Lesser General Public License 2.1 or later
+(<https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html>). FFmpeg is not included in this repository; the build
+scripts download that tag, and [scripts/ffmpeg_qnx.py](scripts/ffmpeg_qnx.py),
+[scripts/build-ffmpeg-qnx.sh](scripts/build-ffmpeg-qnx.sh) and `src/android_auto/decoder/ffmpeg/` (configuration,
+list of files with their SHA-256) rebuild the same libraries, so `nbt_decoder` can be relinked against a modified
+FFmpeg. The assembly is built with yasm 1.3.0 (BSD), which is not part of the binaries.
+
 ## Installer
 
 The installer app bundles Python, Tcl/Tk and paramiko (LGPL-2.1, <https://www.paramiko.org/>) with its dependencies
