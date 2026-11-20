@@ -315,22 +315,21 @@ bool onPdc(void*,const bmw::BasicString<unsigned short>& v){
     }
     return true;
 }
-// iDrive's call screen (user 2026-11-20: during calls iDrive takes the screen from Android Auto; NAV brought it back).
-// A call event is a change of connection 090 in the 100E table (nbt_knob: /fs/ram3/nbt-aa-call while a call is up, car
-// 2026-11-20) or of the CDS property communication.currentCallInfo (logged to /fs/ram3/nbt-aa-callinfo; the first value
-// after registration is not an event). At a call event with Android Auto on screen, or left less than 3 s before (the
-// call screen can come first), our page losing the focus within the next 6 s is iDrive's call screen. Car 2026-11-20: iDrive
-// ignores our focus events while its call screen is up (show request not taken, twice), but the driver's NAV gets
-// Android Auto back (the key leaves the call screen for iDrive's navigation, which the Checker takes back after the show
-// request). So the same: nbt_knob sends one NAV to iDrive (/fs/ram3/nbt-aa-hmi-nav, as after the parking assistant),
-// 250 ms later the show request; at most every 2.5 s. An iDrive key in the meantime (the driver chose iDrive) ends that.
+// iDrive's call screens (user 2026-11-20: during calls iDrive takes the screen from Android Auto; NAV brought it back).
+// A call that starts (connection 090 in the 100E table; nbt_knob: /fs/ram3/nbt-aa-call while it is up) with Android
+// Auto on screen, or left less than 3 s before (the call screen can come first), is "over Android Auto" until 6 s after
+// it ends. Meanwhile our page losing the focus for 1 s without an iDrive key is one of iDrive's call screens (car
+// 2026-11-20: one when the call is made, another ~8 s after the other party answered, which the Checker's hold did not
+// get back). iDrive ignores our focus events while its call screen is up, but the driver's NAV gets Android Auto back
+// (the key leaves the call screen for iDrive's navigation, which the Checker takes back after the show request). So the
+// same: nbt_knob sends one NAV to iDrive (/fs/ram3/nbt-aa-hmi-nav, as after the parking assistant), the show request
+// follows 250 ms later; at most every 3 s. An iDrive key (the driver chose iDrive) ends it for this call.
+// communication.currentCallInfo (CDS) is only logged (/fs/ram3/nbt-aa-callinfo): it did not change during a call.
 const char* const kCall="/fs/ram3/nbt-aa-call";
-long long g_callEventMs=0,g_callEventSeen=0,g_callArmUntilMs=0,g_callShowMs=-100000,g_driverLeftMs=-100000,g_callShowAtMs=0;
-bool g_callUp=false,g_callInfoSeen=false;
+long long g_callStartMs=0,g_callEndMs=0,g_callShowMs=-100000,g_driverLeftMs=-100000,g_callShowAtMs=0,g_lostSinceMs=0;
+bool g_callUp=false,g_callOverAa=false;
 bool onCallInfo(void*,const bmw::BasicString<unsigned short>& v){
     cdsLog("communication.currentCallInfo","/fs/ram3/nbt-aa-callinfo",v);
-    if(g_callInfoSeen)g_callEventMs=now_ms();
-    g_callInfoSeen=true;
     return true;
 }
 class CdsSubscribe : public bmw::Runnable {
@@ -535,26 +534,33 @@ void TargetPoll::run() {
     readStatus(&running);
     const int want=running?(int)(kHoldState+kHoldCount-1):(int)kEntryState;
     if(want!=target){app->updateModel(kTargetModel,want);target=want;plog("entry target ->",want);}
-    {   // iDrive's call screen (see kCall)
+    {   // iDrive's call screens (see kCall)
         const long long now=now_ms();
         const bool up=access(kCall,F_OK)==0;
-        if(up!=g_callUp){g_callUp=up;g_callEventMs=now;plog(up?"call: connection 090 up":"call: connection 090 gone",0);}
-        if(g_callEventMs!=g_callEventSeen){
-            g_callEventSeen=g_callEventMs;
-            if(running&&(access(kHidden,F_OK)!=0||now-g_aaLeftMs<3000)){
-                g_callArmUntilMs=now+6000;
-                plog("call event over Android Auto: iDrive's call screen is sent back for 6 s",0);
+        if(up!=g_callUp){
+            g_callUp=up;
+            plog(up?"call: connection 090 up":"call: connection 090 gone",0);
+            if(up){
+                g_callStartMs=now;
+                g_callOverAa=running&&(access(kHidden,F_OK)!=0||now-g_aaLeftMs<3000);
+                if(g_callOverAa)plog("call over Android Auto: iDrive's call screens are sent back until 6 s after it",0);
             }
+            else g_callEndMs=now;
         }
-        if(now<g_callArmUntilMs&&g_driverLeftMs>g_callEventSeen){g_callArmUntilMs=0;g_callShowAtMs=0;plog("call screen: the driver chose iDrive",0);}
+        if(running&&!e->holdFocused()){if(!g_lostSinceMs)g_lostSinceMs=now;}
+        else g_lostSinceMs=0;
         if(g_callShowAtMs&&now>=g_callShowAtMs){g_callShowAtMs=0;touch(kShowRequest);plog("call screen: show request after the NAV",0);}
-        if(now<g_callArmUntilMs&&running&&!e->holdFocused()&&now-g_callShowMs>=2500){
-            g_callShowMs=now;
-            touch(kHidden);       // the call screen is on screen; and nbt_knob must not take our NAV for NAV in Android Auto
-            unlink(kLeave);
-            touch("/fs/ram3/nbt-aa-hmi-nav");
-            g_callShowAtMs=now+250;
-            plog("call screen over Android Auto -> NAV to iDrive",0);
+        if(g_callOverAa){
+            if(g_driverLeftMs>g_callStartMs){g_callOverAa=false;g_callShowAtMs=0;plog("call screen: the driver chose iDrive",0);}
+            else if(!g_callUp&&now-g_callEndMs>6000){g_callOverAa=false;plog("call screens: over",0);}
+            else if(running&&!g_pdcActive&&g_lostSinceMs&&now-g_lostSinceMs>=1000&&now-g_callShowMs>=3000){
+                g_callShowMs=now;
+                touch(kHidden);   // the call screen is on screen; and nbt_knob must not take our NAV for NAV in Android Auto
+                unlink(kLeave);
+                touch("/fs/ram3/nbt-aa-hmi-nav");
+                g_callShowAtMs=now+250;
+                plog("call screen over Android Auto -> NAV to iDrive",0);
+            }
         }
     }
     if(access(kShowRequest,F_OK)==0&&!showTooEarly()&&unlink(kShowRequest)==0){
