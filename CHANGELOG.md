@@ -12,7 +12,8 @@ Versions are named after the build date of the installer payload.
 - **Decoder:** each picture is shown as soon as it has arrived, not when the next one comes (the knob reacted late in
   apps that send few pictures, such as YouTube Music).
 - **Car microphone:** Google Assistant and voice search hear the car's microphone (endpoint `/output_multich_0`,
-  converted to 16 kHz mono); `NBT_MIC=0` turns it off.
+  converted to 16 kHz mono); `NBT_MIC=0` turns it off. A long press of the steering-wheel voice button starts the
+  Assistant while Android Auto is on screen; a short press stays with BMW's voice control.
 - **Session:** 15 s without data from the phone before a session counts as dead (was 5 s), so a short stall freezes
   the picture instead of disconnecting; pauses are logged (`AA_USB_PAUSE`).
 - **Video flow control:** the phone sends video only as fast as the decoder takes it.

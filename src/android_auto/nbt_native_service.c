@@ -636,6 +636,10 @@ int main(int argc, char** argv)
      * with the Cinemo library path), so it gets its own library path for the fork. */
     if (!access("nbt_knob", X_OK) && (!mkfifo("input.fifo", 0600) || errno == EEXIST)) {
         char* args[] = {"./nbt_knob", 0};
+        /* steering-wheel voice button: a long press starts the Google Assistant while Android Auto is on screen (the
+         * car's microphone goes to the phone, aa_mic); a short press stays with BMW's voice control.
+         * NBT_PTT_ASSISTANT=0 leaves the long press to iDrive too. */
+        setenv("NBT_PTT_ASSISTANT", "1", 0);
         setenv("LD_LIBRARY_PATH", SYSTEM_LIBRARY_PATH, 1);
         knob = spawn(args, 0, "knob.log");
         setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);

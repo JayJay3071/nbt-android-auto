@@ -11,7 +11,8 @@
 //   NBT_KEY_<SLOT>=n       Android keycode for a hard key, 0 = ignore
 //                          (SLOT = MENU OPTIONS BACK COM MEDIA NAV MAP;
 //                           defaults 3 HOME, 0, 4 BACK, 5 CALL, 65537 MEDIA, 65538 NAV, 65538 NAV)
-//   NBT_PTT_ASSISTANT=1    a long press of the steering-wheel voice button starts the Google Assistant
+//   NBT_PTT_ASSISTANT=1    a long press of the steering-wheel voice button starts the Google Assistant (on in the fork,
+//                          set by native_service)
 
 #include "car/ccs_decoder.hpp"
 #include "nbt_env.hpp"

@@ -76,8 +76,9 @@ averaged, interpolated to 16 kHz mono, amplified x4 (`NBT_MIC_GAIN` 1..16) and s
 closes the microphone. No echo cancellation (the phone turns its own sound down while the Assistant listens).
 `NBT_MIC=0` turns it off; `NBT_MIC_ENDPOINT` / `NBT_MIC_RATE` / `NBT_MIC_CHANNELS` select another endpoint. Each
 capture ends with an `AA_MIC ... closed` line in the session log with the level (peak and RMS), so silence can be told
-from speech. A long press of the steering-wheel voice button starts the Assistant with `NBT_PTT_ASSISTANT=1`
-(`nbt_knob`, NBT-AAD's code; off by default, a short press stays with iDrive's voice control).
+from speech. A long press (0.75 s or more) of the steering-wheel voice button starts the Assistant while Android Auto
+is on screen (`nbt_knob`, NBT-AAD's code, sends the phone key 84 on release; `native_service` sets
+`NBT_PTT_ASSISTANT=1`, `=0` leaves the button to iDrive). A short press stays with BMW's voice control.
 
 | Function | How |
 | --- | --- |
