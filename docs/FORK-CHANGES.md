@@ -79,6 +79,12 @@ capture ends with an `AA_MIC ... closed` line in the session log with the level 
 from speech. A long press (0.75 s or more) of the steering-wheel voice button starts the Assistant while Android Auto
 is on screen (`nbt_knob`, NBT-AAD's code, sends the phone key 84 on release; `native_service` sets
 `NBT_PTT_ASSISTANT=1`, `=0` leaves the button to iDrive). A short press stays with BMW's voice control.
+From the phone's voice session start to its end (the session marks it with `/fs/ram3/nbt-aa-voice`, patch
+`nbt-aad-aa_session-voice-session`), while another source plays (radio, Bluetooth, ...), `nbt_knob` builds connection
+`b8` as for a prompt: that source is muted while the Assistant listens, thinks and answers, however long that takes.
+A short press (BMW's voice control) while Android Auto's source plays and the phone plays pauses the phone; it plays
+again when Android Auto's source, muted by the dialog (state `04` in the 100E table), plays again, or after 4 s if the
+dialog never muted it. Leaving Android Auto's source in between drops the resume.
 
 | Function | How |
 | --- | --- |

@@ -1,0 +1,20 @@
+NBT-Project patch: the session marks the phone's voice session (VoiceSessionRequest START .. STOP, control
+message 0x0011) with /fs/ram3/nbt-aa-voice. Read by nbt_knob, which mutes another playing source (connection b8)
+while it exists, so the Google Assistant hears the driver and its answer is heard, however long either takes.
+Apply AFTER scripts/aa_session_overlay.py; scripts/build_all.py does both.
+
+diff --git a/milestone-7/src/aa_session.cpp b/milestone-7/src/aa_session.cpp
+index c22067e..2d5a226 100644
+--- a/milestone-7/src/aa_session.cpp
++++ b/milestone-7/src/aa_session.cpp
+@@ -1475,6 +1475,10 @@ void AASession::sessionLoop() {
+                 } else if (msg_id == 0x0011) { // VoiceSessionRequest {type=1}: 1 START, 2 STOP (informational)
+                     uint32_t vs = pbFirstVarint(frame_data, 2, 1);
+                     printf("[AASession] >>> VoiceSessionRequest: %s\n", vs == 1 ? "START" : vs == 2 ? "STOP" : "?");
++                    // NBT-Project (2026-11-20): for nbt_knob, which mutes another playing source (connection b8)
++                    // from START to STOP: the Assistant listens, thinks and answers in between, however long it takes.
++                    if (vs == 1) { if (FILE* vf = fopen("/fs/ram3/nbt-aa-voice", "w")) fclose(vf); }
++                    else if (vs == 2) unlink("/fs/ram3/nbt-aa-voice");
+                 } else if (msg_id == 0x000F) { // ByeByeRequest {reason=1}: the phone ends the session
+                     // Answer with ByeByeResponse (0x0010, empty) and end the session ourselves, as aasdk/openauto do.
+                     // Up to v1.8.41 this was only logged as an unknown control message and the session waited for the

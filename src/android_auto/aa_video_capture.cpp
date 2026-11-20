@@ -845,6 +845,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
             }
         }
         // car microphone to the phone while it asks for it (Google Assistant, voice search), aa_mic.hpp
+        unlink("/fs/ram3/nbt-aa-voice");   // the voice session flag (session patch voice-session): none yet
         nbt::mic::start(session);
     }
     setenv("NBT_VID_RES", "1", 0); // 800x480 unless the service asks for 1280x720 (res720)
@@ -980,6 +981,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     shutdown(c.socket, SHUT_RDWR);
     nbt::mediaout::stop();   // before the session: its writer reports consumed audio to the session
     nbt::mic::stop();        // before the session: the capture sends to it
+    unlink("/fs/ram3/nbt-aa-voice");   // a voice session the phone did not end
     session.stop();
     if (c.live)
         unlink("/fs/ram3/nbt-aa-native/nav.state");

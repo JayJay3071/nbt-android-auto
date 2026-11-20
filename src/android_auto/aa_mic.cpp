@@ -56,7 +56,12 @@ bool wanted() {
 }
 
 // session thread: never blocks
+// nbt_knob: while this file exists and another source plays, connection b8 mutes it (as for a prompt)
+const char* const kMicOpen = "/fs/ram3/nbt-aa-mic";
+
 void onRequest(bool open, void*) {
+    if (open) { if (FILE* f = fopen(kMicOpen, "w")) fclose(f); }
+    else unlink(kMicOpen);
     pthread_mutex_lock(&g_m);
     g_want = open;
     pthread_cond_broadcast(&g_c);
@@ -215,6 +220,7 @@ void stop() {
     pthread_mutex_unlock(&g_m);
     pthread_join(g_thread, 0);
     g_threadOn = false;
+    unlink(kMicOpen);
 }
 
 } // namespace mic

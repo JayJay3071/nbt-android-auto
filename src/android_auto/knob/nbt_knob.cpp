@@ -276,7 +276,9 @@ bool wheelAllowed(const char* what) {
 long long g_listUntil = 0;      // roller for iDrive's phone list until then
 unsigned g_listHoldMs = 4000;
 
+void onVoiceButton(const nbt::most::View& m);   // below, with the audio source
 void onWheel(const nbt::most::View& m, void*) {
+    if (m.fkt == 0x512) { onVoiceButton(m); return; }                    // voice button (PTTButton1)
     if (m.fkt == 0x400 && m.len >= 1 && m.data[0] == 1 && g_listHoldMs) {   // phone button pressed
         const bool copy = g_listUntil - (nowMs() + g_listHoldMs) > -200;   // the same press, once per HMI receiver
         g_listUntil = nowMs() + g_listHoldMs;
@@ -386,12 +388,27 @@ bool g_promptBuilt = false;        // our b8 is up or requested
 unsigned g_promptHandle = 0;       // handle of our b8 build
 long long g_promptNext = 0;
 
+// The Google Assistant (2026-11-20): from the phone's voice session START to its STOP (the session creates and removes
+// kVoice; aa_mic creates kMicOpen while the microphone is open), while another source plays (radio, Bluetooth, ...),
+// b8 is built as for a prompt: the main source is muted, so the Assistant hears the driver and its answer is heard,
+// however long listening, thinking and answering take. Not on Android Auto's own source: the phone handles its music.
+const char* const kVoice = "/fs/ram3/nbt-aa-voice";
+const char* const kMicOpen = "/fs/ram3/nbt-aa-mic";
+bool g_voiceMute = false;
+
 void promptRouteIfNeeded(nbt::most::Client& most) {
     if (!g_promptConn) return;
     const long long now = nowMs();
     if (now < g_promptNext) return;
     g_promptNext = now + 50;
-    const bool want = access(kPromptReq, F_OK) == 0 && sessionRunning();
+    const bool voice = (access(kVoice, F_OK) == 0 || access(kMicOpen, F_OK) == 0) && g_lastSource >= 0 &&
+                       g_lastSource != (int)g_auxSource && sessionRunning();
+    if (voice != g_voiceMute) {
+        g_voiceMute = voice;
+        if (voice) printf("[Prompt] Google Assistant while the source is %02X: mute it (%02X)\n", g_lastSource, g_promptConn);
+        else printf("[Prompt] Google Assistant over\n");
+    }
+    const bool want = (access(kPromptReq, F_OK) == 0 || voice) && sessionRunning();
     if (want && !g_promptBuilt) {
         unlink(kPromptReady);
         g_promptHandle = connectionCmd(most, 0x053, g_promptConn);
@@ -419,6 +436,77 @@ void onSourceResult(const nbt::most::View& m, void*) {
     }
 }
 
+// --- BMW's voice control over Android Auto music (2026-11-20) ---
+// A short press of the steering-wheel voice button starts the car's own voice dialog, which mutes the music; the phone
+// would keep playing into the mute. While Android Auto's source plays and the phone plays, the short press pauses the
+// phone (PLAY_PAUSE), and it plays again when the dialog is over: when Android Auto's source, muted by the dialog's
+// interrupting connection (state 04 in the 100E table), plays again (state 00). If the source is not muted within 4 s
+// of the press, the dialog did not take the sound and the phone plays again then. Leaving Android Auto's source in the
+// meantime drops the resume. A long press is the Google Assistant (CcsInput, NBT_PTT_ASSISTANT): nothing here.
+bool g_voiceHeld = false;
+long long g_voiceDownMs = 0;
+bool g_voicePaused = false, g_voiceMuted = false;
+long long g_voicePausedMs = 0;
+int g_auxState = -1;            // Android Auto's source in the 100E table: 0 playing, 4 muted, -1 not in it
+pthread_mutex_t g_voiceMx = PTHREAD_MUTEX_INITIALIZER;   // the button and the table come on the MOST thread, the timer on main
+
+void voiceResume(const char* why) {
+    g_voicePaused = false;
+    const int st = mediaState();
+    const bool play = sessionRunning() && g_lastSource == (int)g_auxSource && st != 2;
+    printf("[Voice] %s: phone media state %d%s\n", why, st, play ? ", play again" : ", nothing to do");
+    if (play) { wheelKeyLine(85, 1, "VOICE_RESUME"); wheelKeyLine(85, 0, "VOICE_RESUME"); }
+}
+
+void onVoiceButton(const nbt::most::View& m) {
+    if (m.len < 1) return;
+    const uint8_t v = m.data[0];
+    const long long t = nowMs();
+    if (v == 1) {                                  // pressed (copies for the other receivers: already held)
+        if (!g_voiceHeld) { g_voiceHeld = true; g_voiceDownMs = t; }
+        return;
+    }
+    if ((v != 0 && v != 3) || !g_voiceHeld) return; // 2 ignored; a release copy after the first one
+    g_voiceHeld = false;
+    if (v == 3 || t - g_voiceDownMs >= 750) return; // cancelled, or a long press (the Assistant)
+    const int st = mediaState();
+    pthread_mutex_lock(&g_voiceMx);
+    if (g_voicePaused || !sessionRunning() || g_lastSource != (int)g_auxSource || st != 2) {
+        printf("[Voice] short press: BMW voice control (source %02X, phone media state %d: no pause)\n",
+               g_lastSource < 0 ? 0xFF : g_lastSource, st);
+    } else {
+        printf("[Voice] short press: BMW voice control, pause the phone until it is over\n");
+        wheelKeyLine(85, 1, "VOICE_PAUSE");
+        wheelKeyLine(85, 0, "VOICE_PAUSE");
+        g_voicePaused = true;
+        g_voiceMuted = g_auxState == 4;
+        g_voicePausedMs = t;
+    }
+    pthread_mutex_unlock(&g_voiceMx);
+}
+
+// main thread: the dialog did not mute Android Auto's source within 4 s
+void voiceIfNeeded() {
+    pthread_mutex_lock(&g_voiceMx);
+    if (g_voicePaused && !g_voiceMuted && nowMs() - g_voicePausedMs > 4000) voiceResume("source not muted within 4 s");
+    pthread_mutex_unlock(&g_voiceMx);
+}
+
+// from onSource: Android Auto's source muted / playing again / gone
+void voiceSourceState(int auxState) {
+    pthread_mutex_lock(&g_voiceMx);
+    if (auxState == g_auxState) { pthread_mutex_unlock(&g_voiceMx); return; }
+    printf("[Voice] Android Auto source %02X: %s\n", g_auxSource,
+           auxState == 0 ? "playing" : auxState == 4 ? "muted (interrupting connection)" : auxState < 0 ? "not in the table" : "other state");
+    g_auxState = auxState;
+    if (g_voicePaused) {
+        if (auxState == 4) g_voiceMuted = true;
+        else if (auxState == 0 && g_voiceMuted) voiceResume("voice dialog over");
+        else if (auxState < 0) { g_voicePaused = false; printf("[Voice] Android Auto source left: no resume\n"); }
+    }
+    pthread_mutex_unlock(&g_voiceMx);
+}
+
 // Main audio sources: the connection IDs of category 01 in HmiMain3D's connection table (0x9877344, car 2026-11-18).
 // The C03 table can list more than one connection: an interrupting one (traffic news, a prompt, the browser b8) sits
 // next to the main source and mutes it. The source is the first main-source entry; none = -2 (car 2026-11-18: CD/DVD
@@ -441,11 +529,13 @@ int g_prevMain = -1;            // the last real main source (for "AUX chosen", 
 void onSource(const nbt::most::View& m, void*) {
     if (m.fkt != 0xC03 || m.len < 2) return;
     // {00 00} then per connection {id hi, id lo, state}: state 00 playing, 04 muted by an interrupting connection
-    int s = -2;
+    int s = -2, aux = -1;
     for (size_t i = 2; i + 2 < (size_t)m.len && i < 2 + 3 * 8; i += 3) {
         const unsigned id = (unsigned)m.data[i] << 8 | m.data[i + 1];
-        if (isMainSource(id)) { s = (int)id; break; }
+        if (id == g_auxSource && aux < 0) aux = m.data[i + 2];
+        if (s == -2 && isMainSource(id)) s = (int)id;
     }
+    voiceSourceState(aux);
     if (s == g_lastSource) return;                        // the same status once per receiver
     const int prev = g_lastSource;
     g_lastSource = s;
@@ -926,6 +1016,7 @@ int main(int argc, char** argv) {
         playSwitchIfNeeded(most);
         navAudioIfNeeded(most);
         if (!trace) promptRouteIfNeeded(most);
+        voiceIfNeeded();
         clock_gettime(CLOCK_MONOTONIC, &t);
         long el = (long)(t.tv_sec - t0.tv_sec);
         if (seconds && el >= seconds) break;
