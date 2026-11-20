@@ -69,6 +69,16 @@ removed 0.8 s after it (like traffic news). Flag file `prompts-off`: prompts onl
 Both inputs are written in 4096-byte packages (21 ms, three queued) by writer threads at priority 21 (`NBT_A2I_PRIO`); the writer sleeps until a package is due instead of
 polling every millisecond (1024-byte packages are the fallback; env `NBT_A2I_BUF`, `NBT_A2I_PACKAGES`).
 
+**Car microphone (2026-11-20, not yet car-tested here):** when the phone opens the microphone (Google Assistant,
+voice search; channel 14, already offered by the NBT-AAD service discovery), `aa_mic` captures from the car's audio
+manager through the A2I client: endpoint `/output_multich_0`, 22050 Hz, 4 channels, 16-bit. Channels 0 and 1 are
+averaged, interpolated to 16 kHz mono, amplified x4 (`NBT_MIC_GAIN` 1..16) and sent in 16 ms chunks until the phone
+closes the microphone. No echo cancellation (the phone turns its own sound down while the Assistant listens).
+`NBT_MIC=0` turns it off; `NBT_MIC_ENDPOINT` / `NBT_MIC_RATE` / `NBT_MIC_CHANNELS` select another endpoint. Each
+capture ends with an `AA_MIC ... closed` line in the session log with the level (peak and RMS), so silence can be told
+from speech. A long press of the steering-wheel voice button starts the Assistant with `NBT_PTT_ASSISTANT=1`
+(`nbt_knob`, NBT-AAD's code; off by default, a short press stays with iDrive's voice control).
+
 | Function | How |
 | --- | --- |
 | Read the source | Notification registration at 100E (`03/00 fkt 001`); 100E answers at once and on every switch with `fkt C03`: `00 00`, then {id (2 bytes), state} per connection. The source is the first main-source entry (`f6` Android Auto, `bb` AUX, `c7` Bluetooth, `01` radio, ...); an empty table (CD/DVD without a disc) = none. A plain Get is refused |

@@ -16,6 +16,7 @@
 #include "aa_video_capture.h"
 #include "aa_session.hpp"
 #include "aa_media_out.hpp"
+#include "aa_mic.hpp"
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <sys/stat.h>
@@ -843,6 +844,8 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
                 printf("AA_MEDIA_OUT not available: no Android Auto sound in the car this session\n");
             }
         }
+        // car microphone to the phone while it asks for it (Google Assistant, voice search), aa_mic.hpp
+        nbt::mic::start(session);
     }
     setenv("NBT_VID_RES", "1", 0); // 800x480 unless the service asks for 1280x720 (res720)
     // Day/night before the session starts: the phone asks for the NIGHT_MODE sensor early and gets this value
@@ -976,6 +979,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
         printf("AA_BYEBYE %s\n", session.isActive() ? "session still open: closing it" : "session ended cleanly");
     shutdown(c.socket, SHUT_RDWR);
     nbt::mediaout::stop();   // before the session: its writer reports consumed audio to the session
+    nbt::mic::stop();        // before the session: the capture sends to it
     session.stop();
     if (c.live)
         unlink("/fs/ram3/nbt-aa-native/nav.state");
