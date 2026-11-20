@@ -158,6 +158,11 @@ bool g_navKeyPending = false;
 // our own C20 (BACK guard, BACK, NAV) comes back here with our own device as its source (car 2026-11-19: 2032): while
 // they can still come back, a C20 does not change the controller's addresses or counter
 long long g_ownC20Until = 0;
+// Our own NAV to iDrive (sendNavIfPending: after the parking assistant, iDrive's call screens) comes back to onKnob like
+// the driver's. Car 2026-11-20: during a call (on another phone over Bluetooth) the call screen's NAV was taken for NAV
+// in Android Auto, which toggled play / pause: the music paused for the call played again when the call was answered.
+// Until this time a NAV is ours: the show request still, never the audio action.
+volatile long long g_ownNavUntil = 0;
 // BACK guard (2026-11-17, test): iDrive's BACK goes back in its history and leaves Android Auto; bringing the page back
 // with a focus event per BACK made iDrive ignore the event after a burst (car log 2026-11-17, as on 2026-11-07). A BACK
 // pressed while iDrive's focus is in the split screen only brings the focus back (car: our BACK after a tilt right).
@@ -841,6 +846,7 @@ void sendNavIfPending(nbt::most::Client& most) {
     const uint8_t c1 = nextCounter(g_ccsCounter), c2 = nextCounter(c1);
     g_ccsCounter = c2;
     g_ownC20Until = nowMs() + 1000;
+    g_ownNavUntil = nowMs() + 1500;
     pthread_mutex_unlock(&g_backMx);
     printf("[Knob] NAV to iDrive for the HMI plugin (%04X->%04X from the %s, counters %02x %02x%s)\n", src, dst, from,
            c1, c2, known ? "" : ", controller silent since boot: ff first");
@@ -892,7 +898,9 @@ void onKnob(const nbt::car::CcsEvent& ev, void*) {
     // NAV opens Android Auto (user 2026-11-17): iDrive still gets the key and opens its navigation, the show request
     // (HMI plugin, checked every 250 ms) brings Android Auto back over it. NBT_NAV_OPENS_AA=0: NAV stays with iDrive.
     if (!ev.keycode && ev.kind == 1 && ev.down && !ev.cancel && g_navOpensAa && !strcmp(ev.what, "NAV") && sessionRunning()) {
-        if (g_navAudio && aaActive()) {                             // already in Android Auto: its audio (main thread)
+        const bool own = nowMs() < g_ownNavUntil;
+        if (own) printf("[Knob] NAV: our own (HMI plugin), no audio action\n");
+        else if (g_navAudio && aaActive()) {                        // already in Android Auto: its audio (main thread)
             pthread_mutex_lock(&g_backMx);
             g_navAudioPending = true;
             pthread_mutex_unlock(&g_backMx);
