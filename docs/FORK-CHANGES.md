@@ -86,7 +86,8 @@ A short press (BMW's voice control) while Android Auto's source plays and the ph
 again when Android Auto's source, muted by the dialog (state `04` in the 100E table), plays again, or after 4 s if the
 dialog never muted it. Leaving Android Auto's source in between drops the resume.
 A call made or answered in iDrive (connection `090` in the 100E table, `093` presumably for a second phone) pauses the
-phone if it plays on Android Auto's source; it plays again once the call connection is gone (`NBT_CALL_PAUSE=0` off).
+phone if it plays on Android Auto's source; it plays again once the table has had no call connection (nor another
+interrupting one) for 2 s, so ringing and picking up count as one call (`NBT_CALL_PAUSE=0` off).
 iDrive's call screens: a call (connection `090`, `nbt_knob` marks it with `/fs/ram3/nbt-aa-call`) that starts while
 Android Auto is on screen, or left it less than 3 s before, is over Android Auto until 6 s after it ends. Meanwhile our
 page losing the focus for 1 s is one of iDrive's call screens; iDrive ignores our focus events while it is up, so

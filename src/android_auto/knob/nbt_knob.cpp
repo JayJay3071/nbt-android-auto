@@ -500,26 +500,19 @@ void voiceIfNeeded() {
     pthread_mutex_unlock(&g_voiceMx);
 }
 
-// from onSource: a call connection in the table (call = its id) or none (-1)
-void callState(int call) {
-    pthread_mutex_lock(&g_voiceMx);
-    if ((call >= 0) == g_callActive) { pthread_mutex_unlock(&g_voiceMx); return; }
-    g_callActive = call >= 0;
-    // the HMI plugin sends iDrive's call screen back while Android Auto was on screen (aa_entry_plugin, kCall)
-    if (g_callActive) { if (FILE* cf = fopen("/fs/ram3/nbt-aa-call", "w")) fclose(cf); }
-    else unlink("/fs/ram3/nbt-aa-call");
+// Call end (user 2026-11-20: an incoming call paused the music, picking it up played it again; it must stay paused
+// until the call is over). Ringing and talking need not be one unbroken connection 090 in the table. So the call ends
+// only once the table has had no call connection and no other interrupting connection (not a main source, not our b8)
+// for 2 s; the [Source] table lines show what the car did.
+long long g_callGoneMs = 0;                    // under g_voiceMx: the call connection left the table (0 = still there)
+
+// under g_voiceMx: the call is over
+void callOver() {
+    g_callActive = false;
+    g_callGoneMs = 0;
+    unlink("/fs/ram3/nbt-aa-call");
     const int st = mediaState();
-    if (g_callActive) {
-        if (g_callPause && !g_voicePaused && sessionRunning() && g_lastSource == (int)g_auxSource && st == 2) {
-            printf("[Call] call (connection %03X): pause the phone until it is over\n", call);
-            wheelKeyLine(85, 1, "CALL_PAUSE");
-            wheelKeyLine(85, 0, "CALL_PAUSE");
-            g_callPaused = true;
-        } else {
-            printf("[Call] call (connection %03X), source %02X, phone media state %d: nothing to pause\n", call,
-                   g_lastSource < 0 ? 0xFF : g_lastSource, st);
-        }
-    } else if (g_callPaused) {
+    if (g_callPaused) {
         g_callPaused = false;
         const bool play = sessionRunning() && g_lastSource == (int)g_auxSource && st != 2;
         printf("[Call] call over: phone media state %d%s\n", st, play ? ", play again" : ", nothing to do");
@@ -527,6 +520,45 @@ void callState(int call) {
     } else {
         printf("[Call] call over\n");
     }
+}
+
+// from onSource: a call connection in the table (call = its id, -1 none); other: another interrupting connection is
+// in it (not a main source, not our b8)
+void callState(int call, bool other) {
+    pthread_mutex_lock(&g_voiceMx);
+    if (g_callActive) {
+        if (call >= 0 || other) {
+            if (g_callGoneMs) printf("[Call] call still on (connection %03X)\n", call >= 0 ? call : 0xfff);
+            g_callGoneMs = 0;
+        } else if (!g_callGoneMs) {
+            g_callGoneMs = nowMs();
+            printf("[Call] call connection gone: the call is over if it stays gone for 2 s\n");
+        }
+        pthread_mutex_unlock(&g_voiceMx);
+        return;
+    }
+    if (call < 0) { pthread_mutex_unlock(&g_voiceMx); return; }
+    g_callActive = true;
+    g_callGoneMs = 0;
+    // the HMI plugin sends iDrive's call screen back while Android Auto was on screen (aa_entry_plugin, kCall)
+    if (FILE* cf = fopen("/fs/ram3/nbt-aa-call", "w")) fclose(cf);
+    const int st = mediaState();
+    if (g_callPause && !g_voicePaused && sessionRunning() && g_lastSource == (int)g_auxSource && st == 2) {
+        printf("[Call] call (connection %03X): pause the phone until it is over\n", call);
+        wheelKeyLine(85, 1, "CALL_PAUSE");
+        wheelKeyLine(85, 0, "CALL_PAUSE");
+        g_callPaused = true;
+    } else {
+        printf("[Call] call (connection %03X), source %02X, phone media state %d: nothing to pause\n", call,
+               g_lastSource < 0 ? 0xFF : g_lastSource, st);
+    }
+    pthread_mutex_unlock(&g_voiceMx);
+}
+
+// main thread: the call connection has stayed gone for 2 s
+void callIfNeeded() {
+    pthread_mutex_lock(&g_voiceMx);
+    if (g_callActive && g_callGoneMs && nowMs() - g_callGoneMs >= 2000) callOver();
     pthread_mutex_unlock(&g_voiceMx);
 }
 
@@ -573,12 +605,14 @@ void onSource(const nbt::most::View& m, void*) {
     if (m.fkt != 0xC03 || m.len < 2) return;
     // {00 00} then per connection {id hi, id lo, state}: state 00 playing, 04 muted by an interrupting connection
     int s = -2, aux = -1, other = -1, call = -1;
+    bool interrupting = false;
     for (size_t i = 2; i + 2 < (size_t)m.len && i < 2 + 3 * 8; i += 3) {
         const unsigned id = (unsigned)m.data[i] << 8 | m.data[i + 1];
         if (id == g_auxSource && aux < 0) aux = m.data[i + 2];
         if (s == -2 && isMainSource(id)) s = (int)id;
         if (other < 0 && !isMainSource(id)) other = (int)id;
         if (call < 0 && isCallConnection(id)) call = (int)id;
+        if (!isMainSource(id) && id != 0xb8 && id != g_auxSource) interrupting = true;
     }
     static uint8_t lastTable[24];
     static size_t lastLen = 0;
@@ -591,7 +625,7 @@ void onSource(const nbt::most::View& m, void*) {
         printf("\n");
     }
     voiceSourceState(aux, other, m);
-    callState(call);
+    callState(call, interrupting);
     if (s == g_lastSource) return;                        // the same status once per receiver
     const int prev = g_lastSource;
     g_lastSource = s;
@@ -1078,6 +1112,7 @@ int main(int argc, char** argv) {
         navAudioIfNeeded(most);
         if (!trace) promptRouteIfNeeded(most);
         voiceIfNeeded();
+        callIfNeeded();
         clock_gettime(CLOCK_MONOTONIC, &t);
         long el = (long)(t.tv_sec - t0.tv_sec);
         if (seconds && el >= seconds) break;
