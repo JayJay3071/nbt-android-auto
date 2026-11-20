@@ -615,6 +615,9 @@ void playSwitchIfNeeded(nbt::most::Client& most) {
     const long long now = nowMs();
     if (now < g_mediaNextCheck) return;
     g_mediaNextCheck = now + 200;
+    // Google Assistant (2026-11-20): its reply plays over b8 (aa_media_out) without a source switch; a "playing" that
+    // starts during the voice session (music asked for) is taken once the session is over
+    if (access(kVoice, F_OK) == 0) return;
     const int st = mediaState(), prev = g_prevMedia;
     g_prevMedia = st;
     if (prev < 0 || st != 2 || prev == 2) return;                // only the change to "playing"

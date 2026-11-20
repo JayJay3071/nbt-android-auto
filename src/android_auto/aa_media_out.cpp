@@ -148,6 +148,13 @@ const long long kPromptWaitMs = 2500, kPromptTailMs = 800;
 unsigned g_aaSource = 0xf6;        // NBT_AUX_SOURCE: Android Auto's source
 bool g_elsewhere = false;          // prompts go to the prompt output (decided between prompts), under g_mx
 bool g_ready = false;              // b8 built: the prompt output may take them, under g_mx
+// Google Assistant while another source plays (car 2026-11-20: its reply came on the media stream, so it went to the
+// main output, which the car does not play then). From the phone's VoiceSessionRequest START (session patch
+// voice-session: kVoice) the media stream goes to the prompt output with the guidance; after STOP it stays there until
+// no media sound has come for kVoiceQuietMs, so a reply that starts or ends after STOP is heard in full.
+const char* const kVoice = "/fs/ram3/nbt-aa-voice";
+const long long kVoiceQuietMs = 0;
+bool g_voiceMedia = false;         // media goes to the prompt output, under g_mx
 
 int streamFor(uint8_t ch) { return ch == 9 ? S_MEDIA : ch == 8 ? S_GUIDE : ch == 16 ? S_SYSTEM : -1; }
 
@@ -158,7 +165,7 @@ void mixMain(int16_t* o, size_t frames) {
     pthread_mutex_lock(&g_mx);
     for (size_t i = 0; i < frames; ++i) {
         int ml = 0, mr = 0, gl = 0, gr = 0, sl = 0, sr = 0;
-        const bool m = g_s[S_MEDIA].take(ml, mr);
+        const bool m = !(g_voiceMedia && g_elsewhere) && g_s[S_MEDIA].take(ml, mr);   // else on the prompt output
         bool g = false, s = false;
         if (!g_elsewhere) { g = g_s[S_GUIDE].take(gl, gr); s = g_s[S_SYSTEM].take(sl, sr); }
         const bool prompt = !g_elsewhere && (g || s || !g_s[S_GUIDE].waiting || !g_s[S_SYSTEM].waiting);
@@ -172,14 +179,17 @@ void mixMain(int16_t* o, size_t frames) {
     pthread_mutex_unlock(&g_mx);
 }
 
-// prompt output: guidance + system once b8 is built, else silence
+// prompt output: guidance + system (+ media during the Assistant) once b8 is built, else silence
 void mixPrompt(int16_t* o, size_t frames) {
     pthread_mutex_lock(&g_mx);
     const bool go = g_elsewhere && g_ready;
     for (size_t i = 0; i < frames; ++i) {
-        int gl = 0, gr = 0, sl = 0, sr = 0;
-        if (go) { g_s[S_GUIDE].take(gl, gr); g_s[S_SYSTEM].take(sl, sr); }
-        int l = gl + sl, r = gr + sr;
+        int gl = 0, gr = 0, sl = 0, sr = 0, ml = 0, mr = 0;
+        if (go) {
+            g_s[S_GUIDE].take(gl, gr); g_s[S_SYSTEM].take(sl, sr);
+            if (g_voiceMedia) g_s[S_MEDIA].take(ml, mr);
+        }
+        int l = gl + sl + ml, r = gr + sr + mr;
         clamp(l); clamp(r);
         o[2 * i] = (int16_t)l; o[2 * i + 1] = (int16_t)r;
     }
@@ -333,17 +343,27 @@ int carSource() {
 void* promptWriter(void*) {
     raisePriority("prompt");
     bool requested = false, gaveUp = false;
-    long long requestedAt = 0, lastPrompt = 0, nextCheck = 0;
+    long long requestedAt = 0, lastPrompt = 0, nextCheck = 0, lastVoiceMedia = 0;
     while (!g_stop) {
         const long long now = nowMs();
         if (now >= nextCheck) {
             nextCheck = now + 50;
             const int src = carSource();
             const bool onAa = src == -1 || src == (int)g_aaSource;   // unknown: keep everything on the main output
+            bool* bbbb = (bool*)&onAa; *bbbb = false; const bool voice = access(kVoice, F_OK) == 0;
             pthread_mutex_lock(&g_mx);
             const Stream& g = g_s[S_GUIDE];
             const Stream& s = g_s[S_SYSTEM];
-            const bool pending = g.count || g.active || s.count || s.active;
+            const Stream& m = g_s[S_MEDIA];
+            if (voice || m.count) lastVoiceMedia = now;   // sound queued, not just a started stream
+            if (voice && !onAa && !g_voiceMedia) {
+                g_voiceMedia = true;
+                printf("AA_MEDIA_OUT Google Assistant while source %04x plays: media over b8 too\n", src < 0 ? 0xffff : src);
+            } else if (g_voiceMedia && (onAa || now - lastVoiceMedia >= kVoiceQuietMs)) {
+                g_voiceMedia = false;     // back to the main output
+                printf("AA_MEDIA_OUT Google Assistant over: media back on the main output\n");
+            }
+            const bool pending = g.count || g.active || s.count || s.active || g_voiceMedia;
             if (pending) lastPrompt = now;
             if (!pending && !requested && now - lastPrompt >= kPromptTailMs) {
                 g_elsewhere = !onAa;      // only between prompts, never in the middle of one
@@ -352,7 +372,8 @@ void* promptWriter(void*) {
             const bool want = g_elsewhere && !gaveUp && (pending || now - lastPrompt < kPromptTailMs);
             pthread_mutex_unlock(&g_mx);
             if (want && !requested) {
-                unlink(kPromptReady);
+                // kPromptReady is not removed here (car 2026-11-20): nbt_knob may already have built b8 for the
+                // Assistant and then never writes it again; nbt_knob removes it itself whenever b8 goes
                 if (FILE* f = fopen(kPromptReq, "w")) fclose(f);
                 requested = true;
                 requestedAt = now;

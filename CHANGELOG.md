@@ -14,7 +14,7 @@ Versions are named after the build date of the installer payload.
 - **Car microphone:** Google Assistant and voice search hear the car's microphone (endpoint `/output_multich_0`,
   converted to 16 kHz mono); `NBT_MIC=0` turns it off. A long press of the steering-wheel voice button starts the
   Assistant while Android Auto is on screen; a short press stays with BMW's voice control. While the Assistant
-  listens and answers, another playing source (radio, Bluetooth) is muted; BMW's voice control pauses Android Auto music and
+  listens and answers, another playing source (radio, Bluetooth) is muted and the answer plays in its place; BMW's voice control pauses Android Auto music and
   plays it again afterwards.
 - **Session:** 15 s without data from the phone before a session counts as dead (was 5 s), so a short stall freezes
   the picture instead of disconnecting; pauses are logged (`AA_USB_PAUSE`).
