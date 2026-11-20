@@ -85,6 +85,9 @@ From the phone's voice session start to its end (the session marks it with `/fs/
 A short press (BMW's voice control) while Android Auto's source plays and the phone plays pauses the phone; it plays
 again when Android Auto's source, muted by the dialog (state `04` in the 100E table), plays again, or after 4 s if the
 dialog never muted it. Leaving Android Auto's source in between drops the resume.
+A call made or answered in iDrive (any interrupting connection other than our `b8` that mutes Android Auto's source
+while the phone plays: also traffic news or BMW navigation) pauses the phone the same way; it plays again when the
+source plays again (`NBT_INTERRUPT_PAUSE=0` off).
 
 | Function | How |
 | --- | --- |

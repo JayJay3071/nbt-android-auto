@@ -16,6 +16,8 @@ Versions are named after the build date of the installer payload.
   Assistant while Android Auto is on screen; a short press stays with BMW's voice control. While the Assistant
   listens and answers, another playing source (radio, Bluetooth) is muted and the answer plays in its place; BMW's voice control pauses Android Auto music and
   plays it again afterwards.
+- **Calls:** a call made or answered in iDrive pauses Android Auto music; it plays again when the call ends (the same for
+  traffic news and BMW navigation announcements; `NBT_INTERRUPT_PAUSE=0` off).
 - **Session:** 15 s without data from the phone before a session counts as dead (was 5 s), so a short stall freezes
   the picture instead of disconnecting; pauses are logged (`AA_USB_PAUSE`).
 - **Video flow control:** the phone sends video only as fast as the decoder takes it.
