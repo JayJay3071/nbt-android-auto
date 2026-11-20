@@ -443,12 +443,14 @@ void onSourceResult(const nbt::most::View& m, void*) {
 // interrupting connection (state 04 in the 100E table), plays again (state 00). If the source is not muted within 4 s
 // of the press, the dialog did not take the sound and the phone plays again then. Leaving Android Auto's source in the
 // meantime drops the resume. A long press is the Google Assistant (CcsInput, NBT_PTT_ASSISTANT): nothing here.
-// Calls (user 2026-11-20: pause on a call made / answered in iDrive, play again after it): any other interrupting
-// connection that mutes Android Auto's source while the phone plays (a call; also traffic news, BMW navigation) pauses
-// the phone the same way, and it plays again when the source plays again. Not our own b8 (prompts, Assistant).
-// NBT_INTERRUPT_PAUSE=0 off. That a call mutes the source with state 04 is a guess: the [Voice] line names the
-// connection and shows the table.
-bool g_interruptPause = true;
+// Calls (user 2026-11-20: pause on a call made / answered in iDrive, play again after it). Car 2026-11-20: a call
+// does not mute Android Auto's source with state 04; it adds connection 090 to the 100E table (00 f6 01 00 90 01, then
+// 00 f6 00 00 90 00). While 090 (or 093, the second phone's in the same category: a guess) is in the table, the
+// phone is paused if it played on Android Auto's source; it plays again when the call connection is gone.
+// NBT_CALL_PAUSE=0 off.
+bool g_callPause = true;
+bool g_callActive = false, g_callPaused = false;   // under g_voiceMx
+bool isCallConnection(unsigned id) { return id == 0x090 || id == 0x093; }
 bool g_voiceHeld = false;
 long long g_voiceDownMs = 0;
 bool g_voicePaused = false, g_voiceMuted = false;
@@ -498,8 +500,35 @@ void voiceIfNeeded() {
     pthread_mutex_unlock(&g_voiceMx);
 }
 
+// from onSource: a call connection in the table (call = its id) or none (-1)
+void callState(int call) {
+    pthread_mutex_lock(&g_voiceMx);
+    if ((call >= 0) == g_callActive) { pthread_mutex_unlock(&g_voiceMx); return; }
+    g_callActive = call >= 0;
+    const int st = mediaState();
+    if (g_callActive) {
+        if (g_callPause && !g_voicePaused && sessionRunning() && g_lastSource == (int)g_auxSource && st == 2) {
+            printf("[Call] call (connection %03X): pause the phone until it is over\n", call);
+            wheelKeyLine(85, 1, "CALL_PAUSE");
+            wheelKeyLine(85, 0, "CALL_PAUSE");
+            g_callPaused = true;
+        } else {
+            printf("[Call] call (connection %03X), source %02X, phone media state %d: nothing to pause\n", call,
+                   g_lastSource < 0 ? 0xFF : g_lastSource, st);
+        }
+    } else if (g_callPaused) {
+        g_callPaused = false;
+        const bool play = sessionRunning() && g_lastSource == (int)g_auxSource && st != 2;
+        printf("[Call] call over: phone media state %d%s\n", st, play ? ", play again" : ", nothing to do");
+        if (play) { wheelKeyLine(85, 1, "CALL_RESUME"); wheelKeyLine(85, 0, "CALL_RESUME"); }
+    } else {
+        printf("[Call] call over\n");
+    }
+    pthread_mutex_unlock(&g_voiceMx);
+}
+
 // from onSource: Android Auto's source muted / playing again / gone; other = the first connection in the table that is
-// not a main source (the interrupting one), -1 none
+// not a main source, -1 none
 void voiceSourceState(int auxState, int other, const nbt::most::View& m) {
     pthread_mutex_lock(&g_voiceMx);
     if (auxState == g_auxState) { pthread_mutex_unlock(&g_voiceMx); return; }
@@ -512,21 +541,8 @@ void voiceSourceState(int auxState, int other, const nbt::most::View& m) {
     g_auxState = auxState;
     if (g_voicePaused) {
         if (auxState == 4) g_voiceMuted = true;
-        else if (auxState == 0 && g_voiceMuted) voiceResume("interruption over");
+        else if (auxState == 0 && g_voiceMuted) voiceResume("voice dialog over");
         else if (auxState < 0) { g_voicePaused = false; printf("[Voice] Android Auto source left: no resume\n"); }
-    } else if (auxState == 4 && g_interruptPause && other != 0xb8 && sessionRunning() &&
-               g_lastSource == (int)g_auxSource) {
-        const int st = mediaState();
-        if (st == 2) {
-            printf("[Voice] call / announcement (connection %03X): pause the phone until it is over\n", other < 0 ? 0xfff : other);
-            wheelKeyLine(85, 1, "CALL_PAUSE");
-            wheelKeyLine(85, 0, "CALL_PAUSE");
-            g_voicePaused = true;
-            g_voiceMuted = true;
-            g_voicePausedMs = nowMs();
-        } else {
-            printf("[Voice] call / announcement: phone media state %d, nothing to pause\n", st);
-        }
     }
     pthread_mutex_unlock(&g_voiceMx);
 }
@@ -553,14 +569,26 @@ int g_prevMain = -1;            // the last real main source (for "AUX chosen", 
 void onSource(const nbt::most::View& m, void*) {
     if (m.fkt != 0xC03 || m.len < 2) return;
     // {00 00} then per connection {id hi, id lo, state}: state 00 playing, 04 muted by an interrupting connection
-    int s = -2, aux = -1, other = -1;
+    int s = -2, aux = -1, other = -1, call = -1;
     for (size_t i = 2; i + 2 < (size_t)m.len && i < 2 + 3 * 8; i += 3) {
         const unsigned id = (unsigned)m.data[i] << 8 | m.data[i + 1];
         if (id == g_auxSource && aux < 0) aux = m.data[i + 2];
         if (s == -2 && isMainSource(id)) s = (int)id;
         if (other < 0 && !isMainSource(id)) other = (int)id;
+        if (call < 0 && isCallConnection(id)) call = (int)id;
+    }
+    static uint8_t lastTable[24];
+    static size_t lastLen = 0;
+    const size_t n = m.len - 2 < sizeof(lastTable) ? m.len - 2 : sizeof(lastTable);
+    if (n != lastLen || memcmp(lastTable, m.data + 2, n)) {       // every change, for calls and announcements
+        memcpy(lastTable, m.data + 2, n);
+        lastLen = n;
+        printf("[Source] table:");
+        for (size_t i = 0; i < n; ++i) printf(" %02x", lastTable[i]);
+        printf("\n");
     }
     voiceSourceState(aux, other, m);
+    callState(call);
     if (s == g_lastSource) return;                        // the same status once per receiver
     const int prev = g_lastSource;
     g_lastSource = s;
@@ -973,7 +1001,7 @@ int main(int argc, char** argv) {
     g_auxOpensAa = wheelKey("NBT_AUX_OPENS_AA", 1) != 0 && !trace;
     g_navOpensAa = wheelKey("NBT_NAV_OPENS_AA", 1) != 0 && !trace;
     g_navAudio = wheelKey("NBT_NAV_AUDIO", 1) != 0 && !trace;
-    g_interruptPause = wheelKey("NBT_INTERRUPT_PAUSE", 1) != 0 && !trace;
+    g_callPause = wheelKey("NBT_CALL_PAUSE", 1) != 0 && !trace;
     g_backGuard = wheelKey("NBT_BACK_GUARD", 1) != 0 && !trace;
     g_tiltGuard = wheelKey("NBT_TILT_GUARD", 1) != 0 && !trace;
     if (!most.addRoute(0xE5, 0x0F, 0xC06, 0xC, &onE5Periodic, NULL)) printf("[Knob] no room for the HMI address route\n");
