@@ -22,7 +22,7 @@ Used whenever `nbt_decoder` is installed, at 60 fps; no file is needed. Optional
 | `decoder.stale` | Milliseconds without a new picture before the window is hidden (default 5000, `0` = never) |
 | `decoder.args` | One line of extra arguments for `nbt_decoder` |
 | `decoder.delay` | Seconds after iDrive's `MARKER HMIReady` before the first session at boot (default 2) |
-| `decoder.showdelay` | Seconds of uptime before "start at boot" brings Android Auto to the front (default 40) |
+| `decoder.showdelay` | Seconds of uptime before Android Auto is brought to the front (start at boot, NAV, AUX; default 40) |
 | `decoder.timeout` | `NV_NMSDK_TASK_TIMEOUT_MS` for the video calls (default 3000) |
 | `decoder.repeat` | Milliseconds without a new picture before the last one is handed to the car again (default 50, `0` = never) |
 
@@ -98,7 +98,8 @@ Shown at boot before about 34-40 s, the picture stalls for good: every `VideoFra
 
 - with the phone plugged in at boot, the session waits for iDrive's `MARKER HMIReady` in the system log (+`decoder.delay`);
 - "start at boot" brings Android Auto to the front only from 40 s of uptime (`decoder.showdelay`); the session itself
-  starts as early as before.
+  starts as early as before. Since 2026-11-20 every show request (NAV, AUX, after parking) waits for that too; the HMI
+  plugin keeps the request and takes it at 40 s.
 
 Plugged in later, nothing waits.
 

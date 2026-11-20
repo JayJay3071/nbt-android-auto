@@ -490,13 +490,33 @@ public:
         return true;
     }
 };
+// Decoder mode at boot (car 2026-11-20): shown before about 34-40 s of uptime, nbt_decoder's window stalls for good
+// (docs/DECODER.md, Boot). Only nbt_knob's "start at boot" waited; NAV at 33.5 s brought the picture up at 34.6 s and
+// iDrive's own screen stayed. Every show request now waits until decoder.showdelay (default 40) s of uptime: the request
+// file stays and is taken by the first poll after that.
+bool showTooEarly() {
+    if(access("/fs/ram3/nbt-aa-native/decoder.mode",F_OK)!=0)return false;
+    static long minUp=-1;
+    if(minUp<0){
+        minUp=40;
+        if(FILE* d=fopen("/var/opt/hmi/data/rw/NbtAndroidAutoRT/decoder.showdelay","r")){
+            long v;
+            if(fscanf(d,"%ld",&v)==1&&v>=0&&v<=300)minUp=v;
+            fclose(d);
+        }
+    }
+    if(now_s()>=minUp)return false;
+    static bool told=false;
+    if(!told){told=true;plog("show request held until this many s of uptime (decoder mode)",(int)minUp);}
+    return true;
+}
 void TargetPoll::run() {
     if(!app||!e||e->stopping){active=false;return;}
     bool running=false;
     readStatus(&running);
     const int want=running?(int)(kHoldState+kHoldCount-1):(int)kEntryState;
     if(want!=target){app->updateModel(kTargetModel,want);target=want;plog("entry target ->",want);}
-    if(unlink(kShowRequest)==0){
+    if(access(kShowRequest,F_OK)==0&&!showTooEarly()&&unlink(kShowRequest)==0){
         // NAV (car 2026-11-18): iDrive opens its navigation ~1.3 s after the key, after the show request has already
         // brought Android Auto back, and so took the screen again; with Android Auto already on screen (NAV pressed in
         // Android Auto) it always did. For 4 s the Checker takes the focus back once more.
