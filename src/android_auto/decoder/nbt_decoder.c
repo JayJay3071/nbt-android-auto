@@ -13,6 +13,11 @@
  *   --fps    stream rate given to the car (default 30): picture timestamps and how long the car holds each picture
  *   --rows   show only the top N rows of the phone's picture (1280x720 canvas with the interface in its top 480 rows:
  *            --rows 480 shows them 1:1 on the 1280x480 display)
+ *   --hw     decode with the car's own hardware H.264 decoder (test, 2026-11-22): FFmpeg only parses (hwaccel
+ *            h264_vdpau), libnmsdk's VideoDecode decodes into the car's surfaces, VideoRenderFrame shows them without
+ *            any copy on the CPU (nbt_hwdec.h). If the car refuses the decoder at the start, the CPU path takes over;
+ *            if hardware decoding keeps failing later, the program writes decoder.hwfail into the current folder and
+ *            ends (native_service then starts the next session without --hw)
  * Files: decoder.stale in the current folder (ms without a new picture before the window is hidden, default 5000,
  *   0 = never); in /var/opt/hmi/data/rw/NbtAndroidAutoRT: decoder.timeout (NV_NMSDK_TASK_TIMEOUT_MS, default 3000),
  *   decoder.repeat (ms without a new picture before the last one is handed to the car again, default 50, 0 = never).
@@ -63,7 +68,10 @@
 #include <unistd.h>
 
 #include "libavcodec/avcodec.h"
+#include "libavcodec/vdpau.h"
 #include "libavutil/cpu.h"
+#include "libavutil/pixdesc.h"
+#include "nbt_hwdec.h"
 
 #define RT_DIR "/var/opt/hmi/data/rw/NbtAndroidAutoRT"
 #define HIDDEN_FILE "/fs/ram3/nbt-aa-hidden"
@@ -91,14 +99,20 @@ typedef int (*nv_rect_fn)(void*, void*, const struct rect*);
 typedef int (*nv_buffer_fn)(void*, void**, uint32_t, uint32_t, float, int);
 typedef int (*nv_render_fn)(void*, void*, void*, uint8_t*);
 typedef int (*nv_stream_fn)(void*, void*, void**, uint32_t);
+/* VideoDecode(h, CBitStreamList* ({data, size} pairs), count, pts, bool, nvh264bspPictureDecode*, reference table
+ * (8 bytes per row, the surface first), rows, surface in/out: -1 = take a free one and keep it, else decode into it) */
+typedef int (*nv_decode_fn)(void*, void*, const void*, uint32_t, int64_t, int, void*, void**, uint32_t, void**);
 typedef void* (*wal_create_fn)(void);
 typedef void (*wal_place_fn)(void*, unsigned long, unsigned long, unsigned long, unsigned long, unsigned long);
 typedef void (*wal_order_fn)(void*, const void*, unsigned long);
 typedef void (*wal_visible_fn)(void*, unsigned long, int);
 
-enum { NV_INIT = 0, NV_OPEN = 2, NV_CONFIGURE = 4, NV_FRAME = 5, NV_SOURCE = 12, NV_DEST = 13, NV_BUFFER = 14,
-       NV_RENDER = 16, NV_STREAM = 17 };
+enum { NV_INIT = 0, NV_OPEN = 2, NV_CONFIGURE = 4, NV_FRAME = 5, NV_DECODE = 6, NV_SOURCE = 12, NV_DEST = 13,
+       NV_BUFFER = 14, NV_RENDER = 16, NV_STREAM = 17 };
 enum { FORMAT_NV12 = 1, PICTURE_FRAME = 3, BUFFERS = 3, SURFACES = 4 };
+/* hardware decoding: CConfVideo decoder type 3 = H.264 (NVVADecoderCreate with 16 reference frames), the library's
+ * most surfaces (1-20); our handles 1..HW_HANDLES stand for them in FFmpeg's VDPAU frames */
+enum { DECODER_H264 = 3, HW_HANDLES = 20, HW_GIVE_UP = 10 };
 
 static void* nv_method(void* obj, int index) { return (*(void***)obj)[index]; }
 
@@ -115,7 +129,8 @@ static struct {
     int width, height, fps, bench;
     long stale_ms, repeat_ms;
     int rows;   /* 0 = the whole picture */
-} g_opt = {0, 0, 1280, 480, 30, 0, 5000, 50, 0};
+    int hw;     /* --hw */
+} g_opt = {0, 0, 1280, 480, 30, 0, 5000, 50, 0, 0};
 
 /* rows of a decoded picture that are shown */
 static int shown_rows(int height) { return g_opt.rows && height > g_opt.rows ? g_opt.rows : height; }
@@ -134,10 +149,13 @@ static struct {
     unsigned long window;
 } g_car;
 
-/* three NV12 pictures: one being written, the newest finished one, one being shown */
+/* three NV12 pictures: one being written, the newest finished one, one being shown; with --hw the decoded surface
+ * instead (the frame is held so FFmpeg does not decode into its surface while it may still be shown) */
 struct picture {
     uint8_t* y;
     uint8_t* uv;
+    AVFrame* hw;
+    void* surface;
     unsigned long number;
 };
 static struct {
@@ -164,6 +182,19 @@ static struct {
 
 static AVCodecContext* g_dec;
 static AVFrame* g_frame;
+
+static struct {
+    int active;                       /* this stream is decoded by the car */
+    int failed;                       /* not for this program any more: the CPU path */
+    AVVDPAUContext* ctx;
+    void* surf[HW_HANDLES + 1];       /* the car's surface for each handle, 0 = none yet */
+    void* table[2 * (HW_HANDLES + 1)];/* reference table for VideoDecode: row = handle */
+    int in_use[HW_HANDLES + 1];
+    uint8_t token[HW_HANDLES + 1];
+    uint8_t bsp[BSP_SIZE];
+    unsigned long pictures, errors, in_a_row;
+    int64_t pts;
+} g_hw;
 
 /* ---- helpers ---- */
 
@@ -240,8 +271,10 @@ static int car_open(void)
     return 0;
 }
 
-/* the stream, sized like the first picture */
-static int car_stream(int w, int h)
+/* the stream, sized like the first picture: decoder 0 = pictures from VideoFrame, DECODER_H264 = from VideoDecode;
+ * source = the part of the picture shown, destination = where it goes in the stream (both 0 = the whole picture) */
+static int car_stream_with(int w, int h, uint32_t decoder, uint32_t surfaces, const struct rect* source,
+                           const struct rect* destination)
 {
     for (int i = 0; i < 32; ++i)
         g_callback_methods[i] = (void*)callback_nothing;
@@ -252,8 +285,8 @@ static int car_stream(int w, int h)
         say("video: VideoOpen failed 0x%08x", r);
         return -1;
     }
-    const struct conf_video conf = {(uint32_t)w, (uint32_t)h, 1.0f, (float)g_opt.fps, 0, 0, 0, 0, 0, 50000000u, 0,
-                                    SURFACES, STREAM_ID};
+    const struct conf_video conf = {(uint32_t)w, (uint32_t)h, 1.0f, (float)g_opt.fps, 0, decoder, 0, 0, 0, 50000000u, 0,
+                                    surfaces, STREAM_ID};
     r = ((nv_configure_fn)nv_method(nv, NV_CONFIGURE))(nv, g_car.stream, &conf);
     if (r < 0) {
         say("video: VideoConfigure failed 0x%08x", r);
@@ -272,15 +305,17 @@ static int car_stream(int w, int h)
         return -1;
     }
     const struct rect all = {0, 0, (uint32_t)w, (uint32_t)h};
-    ((nv_rect_fn)nv_method(nv, NV_SOURCE))(nv, g_car.stream, &all);
-    ((nv_rect_fn)nv_method(nv, NV_DEST))(nv, g_car.stream, &all);
+    ((nv_rect_fn)nv_method(nv, NV_SOURCE))(nv, g_car.stream, source ? source : &all);
+    ((nv_rect_fn)nv_method(nv, NV_DEST))(nv, g_car.stream, destination ? destination : &all);
     g_car.w = w;
     g_car.h = h;
     g_car.ready = 1;
-    say("video: stream %dx%d at %d fps, id %d (window %lu, %dx%d on the display)", w, h, g_opt.fps, STREAM_ID,
-        g_car.window, g_opt.width, g_opt.height);
+    say("video: stream %dx%d at %d fps, id %d, %s (window %lu, %dx%d on the display)", w, h, g_opt.fps, STREAM_ID,
+        decoder ? "decoded by the car" : "pictures from the CPU", g_car.window, g_opt.width, g_opt.height);
     return 0;
 }
+
+static int car_stream(int w, int h) { return car_stream_with(w, h, 0, SURFACES, 0, 0); }
 
 static void window_set(int show)
 {
@@ -294,10 +329,38 @@ static void window_set(int show)
     g_car.visible(g_car.wal, g_car.window, show);
 }
 
+static unsigned long g_turn;
+
+/* --hw: show a surface the car decoded (no copy) */
+static void car_present_surface(const struct picture* p)
+{
+    uint8_t params[64];
+    memset(params, 0, sizeof(params));
+    params[0] = PICTURE_FRAME;
+    memcpy(params + 0xc, &p->surface, sizeof(p->surface));   /* the surface to show (0 = the one VideoFrame filled) */
+    params[0x14] = 1;
+    const long long t0 = now_us();
+    const int r = ((nv_render_fn)nv_method(g_car.nv, NV_RENDER))(g_car.nv, g_car.buffers[g_turn++ % BUFFERS], g_car.stream,
+                                                                params);
+    const long long dt = now_us() - t0;
+    if (r < 0)
+        say("video: VideoRenderFrame failed 0x%08x (picture %lu, surface %p)", r, p->number, p->surface);
+    pthread_mutex_lock(&g_box.lock);
+    ++g_stat.shown;
+    g_stat.upload_us += dt;
+    if (dt > g_stat.upload_max)
+        g_stat.upload_max = dt;
+    pthread_mutex_unlock(&g_box.lock);
+}
+
 /* upload and present one picture; the buffer turns over with every picture the car took */
 static void car_present(const struct picture* p)
 {
-    static unsigned long turn, presented;
+    static unsigned long presented;
+    if (p->surface) {
+        car_present_surface(p);
+        return;
+    }
     const uint8_t* planes[3] = {p->y, p->uv, 0};
     const uint32_t pitches[3] = {(uint32_t)g_car.w, (uint32_t)g_car.w, 0};
     const int64_t pts = (int64_t)++presented * 1000000 / g_opt.fps;   /* every hand-over, repeats too */
@@ -313,7 +376,7 @@ static void car_present(const struct picture* p)
     memset(params, 0, sizeof(params));
     params[0] = PICTURE_FRAME;
     params[0x14] = 1;   /* set on the car since the first working picture; its meaning is not traced in the library */
-    r = ((nv_render_fn)nv_method(g_car.nv, NV_RENDER))(g_car.nv, g_car.buffers[turn++ % BUFFERS], g_car.stream, params);
+    r = ((nv_render_fn)nv_method(g_car.nv, NV_RENDER))(g_car.nv, g_car.buffers[g_turn++ % BUFFERS], g_car.stream, params);
     if (r < 0)
         say("video: VideoRenderFrame failed 0x%08x (picture %lu)", r, p->number);
     pthread_mutex_lock(&g_box.lock);
@@ -473,11 +536,158 @@ static void stats_maybe(void)
             g_stat.shown, g_stat.repeated, g_stat.replaced, g_stat.hidden, g_stat.errors,
             g_stat.decoded ? g_stat.decode_us / 1000.0 / g_stat.decoded : 0.0, g_stat.decode_max / 1000.0,
             g_stat.shown ? g_stat.upload_us / 1000.0 / g_stat.shown : 0.0, g_stat.upload_max / 1000.0);
+    if (g_hw.active)
+        say("hw: %lu pictures decoded by the car, %lu errors so far", g_hw.pictures, g_hw.errors);
     const unsigned long total = g_stat.total;
     memset(&g_stat, 0, sizeof(g_stat));
     g_stat.total = total;
     g_stat.since = now;
     pthread_mutex_unlock(&g_box.lock);
+}
+
+/* ---- the car's hardware decoder (--hw) ---- */
+
+/* decoding by the car does not work out after all: note it for native_service (no --hw for the next sessions) and
+ * end, the session ends with us (switching to the CPU in the middle of a stream would need a new car stream) */
+static void hw_give_up(const char* why)
+{
+    say("hw: %s, giving up: decoder.hwfail written, the next session decodes on the CPU", why);
+    const int fd = open("decoder.hwfail", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd >= 0) {
+        if (write(fd, why, strlen(why)) < 0) {
+        }
+        close(fd);
+    }
+    if (g_car.ready)
+        window_set(0);
+    _exit(3);
+}
+
+/* a reference picture's row in the reference table: its handle, once the car has a surface for it */
+static int hw_row(VdpVideoSurface handle)
+{
+    return handle >= 1 && handle <= HW_HANDLES && g_hw.surf[handle] ? (int)handle : -1;
+}
+
+/* a picture the car did not decode; gives up when it never worked or keeps failing */
+static VdpStatus hw_failed(VdpStatus status)
+{
+    ++g_hw.errors;
+    ++g_hw.in_a_row;
+    if (g_hw.in_a_row >= HW_GIVE_UP && !g_hw.pictures)
+        hw_give_up("VideoDecode never worked");
+    if (g_hw.in_a_row >= 10 * HW_GIVE_UP)
+        hw_give_up("VideoDecode keeps failing");
+    return status;
+}
+
+/* FFmpeg's VDPAU render call: one picture (its slices, each after 00 00 01) into the surface of handle target */
+static VdpStatus hw_render(VdpDecoder decoder, VdpVideoSurface target, VdpPictureInfo const* info, uint32_t count,
+                           VdpBitstreamBuffer const* buffers)
+{
+    (void)decoder;
+    const VdpPictureInfoH264* pic = (const VdpPictureInfoH264*)info;
+    static struct { const void* data; uint32_t size; } list[512];
+    static int said_scaling;
+    if (target < 1 || target > HW_HANDLES || count > 512)
+        return VDP_STATUS_INVALID_HANDLE;
+    if (!hw_flat_scaling(pic)) {
+        if (!said_scaling)
+            say("hw: the stream uses its own scaling matrices, which this hand-over does not carry");
+        said_scaling = 1;
+        hw_give_up("own scaling matrices");
+    }
+    if (hw_bsp_fill(g_hw.bsp, pic, hw_row) < 0) {
+        if (g_hw.in_a_row < 3 || g_hw.in_a_row % 50 == 0)
+            say("hw: a reference picture without a surface (picture %lu)", g_hw.pictures);
+        return hw_failed(VDP_STATUS_INVALID_HANDLE);
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+        list[i].data = buffers[i].bitstream;
+        list[i].size = buffers[i].bitstream_bytes;
+    }
+    for (int i = 0; i <= HW_HANDLES; ++i) {
+        g_hw.table[2 * i] = g_hw.surf[i];
+        g_hw.table[2 * i + 1] = 0;
+    }
+    void* surface = g_hw.surf[target] ? g_hw.surf[target] : (void*)-1;
+    g_hw.pts += 1000000 / g_opt.fps;
+    const long long t0 = now_us();
+    const int r = ((nv_decode_fn)nv_method(g_car.nv, NV_DECODE))(g_car.nv, g_car.stream, list, count, g_hw.pts, 0,
+                                                                g_hw.bsp, g_hw.table, HW_HANDLES + 1, &surface);
+    const long long dt = now_us() - t0;
+    if (r < 0 || !surface || surface == (void*)-1) {
+        if (g_hw.in_a_row < 3 || g_hw.in_a_row % 50 == 0)
+            say("hw: VideoDecode failed 0x%08x after %lld ms (picture %lu, handle %u, %u buffers, %d slices)", r,
+                dt / 1000, g_hw.pictures, (unsigned)target, (unsigned)count, (int)pic->slice_count);
+        return hw_failed(VDP_STATUS_ERROR);
+    }
+    if (!g_hw.pictures)
+        say("hw: first picture decoded by the car in %lld ms (surface %p, %d slices, frame_num %u, %s)", dt / 1000,
+            surface, (int)pic->slice_count, (unsigned)pic->frame_num, pic->is_reference ? "reference" : "not a reference");
+    if (!g_hw.surf[target])
+        say("hw: handle %u = surface %p", (unsigned)target, surface);
+    g_hw.surf[target] = surface;
+    g_hw.in_a_row = 0;
+    ++g_hw.pictures;
+    return VDP_STATUS_OK;
+}
+
+static void hw_release(void* opaque, uint8_t* data)
+{
+    (void)data;
+    g_hw.in_use[(intptr_t)opaque] = 0;
+}
+
+static int hw_get_buffer(AVCodecContext* avctx, AVFrame* frame, int flags)
+{
+    if (frame->format != AV_PIX_FMT_VDPAU)
+        return avcodec_default_get_buffer2(avctx, frame, flags);
+    for (int h = 1; h <= HW_HANDLES; ++h) {
+        if (g_hw.in_use[h])
+            continue;
+        frame->buf[0] = av_buffer_create(&g_hw.token[h], 1, hw_release, (void*)(intptr_t)h, 0);
+        if (!frame->buf[0])
+            return AVERROR(ENOMEM);
+        g_hw.in_use[h] = 1;
+        frame->data[3] = (uint8_t*)(intptr_t)h;
+        return 0;
+    }
+    say("hw: all %d surfaces in use", HW_HANDLES);
+    return AVERROR(ENOMEM);
+}
+
+/* FFmpeg asks for the output format once it knows the stream (SPS): the car decodes it if it takes the decoder */
+static enum AVPixelFormat hw_get_format(AVCodecContext* avctx, const enum AVPixelFormat* formats)
+{
+    const enum AVPixelFormat* f = formats;
+    while (*f != AV_PIX_FMT_NONE && *f != AV_PIX_FMT_VDPAU)
+        ++f;
+    if (*f == AV_PIX_FMT_VDPAU && !g_hw.failed && !g_opt.bench) {
+        const int w = avctx->coded_width, h = avctx->coded_height;
+        if (g_car.ready && g_hw.active && (w != g_car.w || h != g_car.h)) {
+            say("hw: the stream changed to %dx%d (the car decodes %dx%d)", w, h, g_car.w, g_car.h);
+            hw_give_up("picture size changed");
+        }
+        if (!g_car.ready) {
+            const int rows = shown_rows(avctx->height);
+            const struct rect source = {0, 0, (uint32_t)avctx->width, (uint32_t)rows};
+            const struct rect destination = {0, 0, (uint32_t)w, (uint32_t)h};
+            say("hw: stream %dx%d (picture %dx%d, %d rows shown), profile %d level %d: asking the car to decode it", w, h,
+                avctx->width, avctx->height, rows, avctx->profile, avctx->level);
+            if (car_stream_with(w, h, DECODER_H264, HW_HANDLES, &source, &destination) != 0) {
+                say("hw: the car did not take the decoder, decoding on the CPU");
+                g_hw.failed = 1;
+                g_car.ready = 0;
+            } else
+                g_hw.active = 1;
+        }
+        if (g_hw.active)
+            return AV_PIX_FMT_VDPAU;
+    }
+    while (*formats != AV_PIX_FMT_NONE && (av_pix_fmt_desc_get(*formats)->flags & AV_PIX_FMT_FLAG_HWACCEL))
+        ++formats;
+    return *formats;
 }
 
 static int decoder_open(void)
@@ -490,6 +700,20 @@ static int decoder_open(void)
         return -1;
     g_dec->thread_count = 1;
     g_dec->flags |= AV_CODEC_FLAG_LOW_DELAY;   /* a picture out for every picture in */
+    if (g_opt.hw) {
+        g_hw.ctx = av_vdpau_alloc_context();
+        if (!g_hw.ctx)
+            return -1;
+        g_hw.ctx->decoder = 1;   /* "created by the application": FFmpeg only calls render */
+        g_hw.ctx->render = hw_render;
+        g_dec->hwaccel_context = g_hw.ctx;
+        g_dec->get_format = hw_get_format;
+        g_dec->get_buffer2 = hw_get_buffer;
+        g_dec->refcounted_frames = 1;   /* the frames we hold keep their surface (decode() unrefs g_frame) */
+        for (int i = 0; i < 3; ++i)
+            if (!(g_box.pic[i].hw = av_frame_alloc()))
+                return -1;
+    }
     if (avcodec_open2(g_dec, codec, 0) < 0)
         return -1;
     const int cpu = av_get_cpu_flags();
@@ -515,6 +739,8 @@ static void to_nv12(const AVFrame* f, struct picture* p)
         }
     }
 }
+
+static void picture_out(const AVFrame* f);
 
 static void decode(uint8_t* data, size_t size)
 {
@@ -543,9 +769,38 @@ static void decode(uint8_t* data, size_t size)
         return;
     ++g_stat.decoded;
     ++g_stat.total;
-    const AVFrame* f = g_frame;
+    picture_out(g_frame);
+    if (g_dec->refcounted_frames)
+        av_frame_unref(g_frame);
+}
+
+/* a decoded picture to the display thread */
+static void picture_out(const AVFrame* f)
+{
     if (g_opt.bench)
         return;
+    if (f->format == AV_PIX_FMT_VDPAU) {
+        const int handle = (int)(intptr_t)f->data[3];
+        if (handle < 1 || handle > HW_HANDLES || !g_hw.surf[handle]) {
+            ++g_stat.errors;
+            return;
+        }
+        const long long now = now_ms();
+        if (g_win.last_picture && now - g_win.last_picture >= 1000)
+            say("decoder: %lld ms without a picture%s", now - g_win.last_picture, g_win.stale_said ? ", shown again" : "");
+        g_win.last_picture = now;
+        g_win.stale_said = 0;
+        struct picture* p = &g_box.pic[g_box.writing];
+        av_frame_unref(p->hw);   /* its surface may be decoded into again */
+        if (av_frame_ref(p->hw, f) < 0) {
+            ++g_stat.errors;
+            return;
+        }
+        p->surface = g_hw.surf[handle];
+        p->number = g_stat.total;
+        post_picture();
+        return;
+    }
     if (f->format != AV_PIX_FMT_YUV420P && f->format != AV_PIX_FMT_YUVJ420P) {
         ++g_stat.errors;
         return;
@@ -742,7 +997,7 @@ static int kd_main(int argc, const char* const* argv)
 
 static int usage(void)
 {
-    fprintf(stderr, "usage: nbt_decoder --input FIFO [--ready FILE] [--size WxH] [--fps 30|60] [--rows N]\n"
+    fprintf(stderr, "usage: nbt_decoder --input FIFO [--ready FILE] [--size WxH] [--fps 30|60] [--rows N] [--hw]\n"
                     "       nbt_decoder --bench FILE\n");
     return 2;
 }
@@ -762,6 +1017,8 @@ int main(int argc, char** argv)
         } else if (!strcmp(a, "--size") && value) {
             if (sscanf(argv[++i], "%dx%d", &g_opt.width, &g_opt.height) != 2 || g_opt.width <= 0 || g_opt.height <= 0)
                 return usage();
+        } else if (!strcmp(a, "--hw")) {
+            g_opt.hw = 1;
         } else if (!strcmp(a, "--rows") && value) {
             g_opt.rows = atoi(argv[++i]);
             if (g_opt.rows < 2)
@@ -783,9 +1040,9 @@ int main(int argc, char** argv)
     char timeout[16];
     snprintf(timeout, sizeof(timeout), "%ld", read_number(RT_DIR "/decoder.timeout", 3000));
     setenv("NV_NMSDK_TASK_TIMEOUT_MS", timeout, 0);
-    say("nbt_decoder: %s %s, window %dx%d, %d fps, stale %ld ms, repeat after %ld ms%s", g_opt.bench ? "bench" : "input",
+    say("nbt_decoder: %s %s, window %dx%d, %d fps, stale %ld ms, repeat after %ld ms%s%s", g_opt.bench ? "bench" : "input",
         g_opt.input, g_opt.width, g_opt.height, g_opt.fps, g_opt.stale_ms, g_opt.repeat_ms,
-        g_opt.rows ? ", top rows only" : "");
+        g_opt.rows ? ", top rows only" : "", g_opt.hw ? ", hardware decoding (test)" : "");
     if (g_opt.bench)
         _exit(run());
     /* the video calls need libKD's thread setup: run inside NvKdLaunch */

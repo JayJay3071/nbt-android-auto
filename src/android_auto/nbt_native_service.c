@@ -598,6 +598,14 @@ int main(int argc, char** argv)
             ndargv[n++] = "--rows";
             ndargv[n++] = "480";
         }
+        /* decoder.hw (test 2026-11-22): the car's own hardware H.264 decoder; decoder.hwfail (written by nbt_decoder
+         * when it gave up on it) turns it off until the next boot */
+        if (access("decoder.hw", F_OK) == 0) {
+            if (access("decoder.hwfail", F_OK) == 0)
+                printf("[native] decoder.hw: off until the next boot (decoder.hwfail)\n");
+            else
+                ndargv[n++] = "--hw";
+        }
         if (want60) {
             ndargv[n++] = "--fps";
             ndargv[n++] = "60";
@@ -777,6 +785,15 @@ int main(int argc, char** argv)
             if (!alive(&ndec)) {
                 char ndecname[40];
                 unlink("http.ready");
+                if (access("decoder.hwfail", F_OK) == 0) {   /* nbt_decoder gave up on the hardware decoder */
+                    int k = 0, j = 0;
+                    for (; ndargv[k]; ++k)
+                        if (strcmp(ndargv[k], "--hw") != 0)
+                            ndargv[j++] = ndargv[k];
+                    if (j != k)
+                        printf("[native] decoder.hwfail: nbt_decoder again without --hw\n");
+                    ndargv[j] = 0;
+                }
                 snprintf(ndecname, sizeof(ndecname), "nbt_decoder-%u.log", session);
                 setenv("LD_LIBRARY_PATH", DECODER_LIBRARY_PATH, 1);
                 ndec = spawn(ndargv, 0, ndecname);

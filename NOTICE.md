@@ -43,6 +43,10 @@ scripts download that tag, and [scripts/ffmpeg_qnx.py](scripts/ffmpeg_qnx.py),
 list of files with their SHA-256) rebuild the same libraries, so `nbt_decoder` can be relinked against a modified
 FFmpeg. The assembly is built with yasm 1.3.0 (BSD), which is not part of the binaries.
 
+FFmpeg's VDPAU interface is built in (for the car's hardware decoder, `--hw`); it needs libvdpau's header
+`vdpau/vdpau.h`, kept in `src/android_auto/decoder/ffmpeg/vdpau/` under its MIT licence (Copyright (c) 2008-2015
+NVIDIA Corporation, notice in the file). libvdpau itself is not used.
+
 ## Installer
 
 The installer app bundles Python, Tcl/Tk and paramiko (LGPL-2.1, <https://www.paramiko.org/>) with its dependencies

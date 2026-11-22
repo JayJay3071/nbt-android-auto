@@ -1,5 +1,10 @@
 """FFmpeg 2.8.22 (H.264 decoder only) for our decoder program nbt_decoder, built in the QNX 6.5.0 VM.
 
+With FFmpeg's VDPAU interface (hwaccel h264_vdpau): FFmpeg parses the stream and keeps the reference pictures,
+nbt_decoder hands each picture to the car's own hardware decoder (libnmsdk's VideoDecode, see nbt_decoder.c).
+There is no libvdpau: the only part used is libvdpau's header vdpau.h (MIT licence), kept in
+src/android_auto/decoder/ffmpeg/vdpau/ with a stand-in vdpau_x11.h (configure and libavcodec/vdpau.h include it).
+
 The VM has no bash, perl or yasm, so FFmpeg's configure cannot run there and its assembly cannot be assembled there.
 Instead:
   - FFmpeg's configure ran once on Linux (gcc -m32, yasm, same options as below); its config.h, config.asm,
@@ -37,8 +42,9 @@ FFMPEG_GIT = "https://github.com/FFmpeg/FFmpeg.git"
 YASM_URL = "https://github.com/yasm/yasm/releases/download/v1.3.0/yasm-1.3.0-win64.exe"
 YASM_SHA256 = "d160b1d97266f3f28a71b4420a0ad2cd088a7977c2dd3b25af155652d8d8d91f"
 OUT = ROOT / "src/android_auto/decoder/ffmpeg"
-CONFIGURE_ARGS = ("--enable-cross-compile --arch=x86 --cpu=i686 --target-os=qnx --extra-cflags=-D__unix__ "
-                  "--disable-everything --enable-decoder=h264 --disable-programs --disable-doc --disable-avformat "
+CONFIGURE_ARGS = ("--enable-cross-compile --arch=x86 --cpu=i686 --target-os=qnx "
+                  "--extra-cflags='-D__unix__ -I<repo>/src/android_auto/decoder/ffmpeg' "
+                  "--disable-everything --enable-decoder=h264 --enable-vdpau --enable-hwaccel=h264_vdpau --disable-programs --disable-doc --disable-avformat "
                   "--disable-avfilter --disable-swresample --disable-swscale --disable-avdevice --disable-postproc "
                   "--disable-network --disable-iconv --disable-zlib --disable-bzlib --disable-lzma --disable-sdl "
                   "--disable-xlib --disable-debug --enable-static --disable-shared")
@@ -109,7 +115,7 @@ def generate(source, cfg):
     sources = set()
     for name in objects:
         if name.endswith(".c"):
-            command = ["gcc", "-m32", "-I" + str(include), "-I" + str(source), "-D_ISOC99_SOURCE",
+            command = ["gcc", "-m32", "-I" + str(include), "-I" + str(source), "-I" + str(OUT), "-D_ISOC99_SOURCE",
                        "-D_FILE_OFFSET_BITS=64", "-D_LARGEFILE_SOURCE", "-D_QNX_SOURCE", "-D_POSIX_C_SOURCE=200112",
                        "-D_XOPEN_SOURCE=600", "-DHAVE_AV_CONFIG_H", "-D__unix__", "-MM", str(source / name)]
         else:
@@ -191,7 +197,7 @@ def add_ffmpeg(archive):
             data = (work / obj).read_bytes()
             archive.add("ffmpeg-asm/" + obj, data)
             key.update(hashlib.sha256(data).digest())
-    for name in ("config.h", "avconfig.h", "ffversion.h", "objects.txt"):
+    for name in ("config.h", "avconfig.h", "ffversion.h", "objects.txt", "vdpau/vdpau.h", "vdpau/vdpau_x11.h"):
         data = text(OUT / name)
         archive.add("ffmpeg-config/" + name, data)
         key.update(hashlib.sha256(data).digest())

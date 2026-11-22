@@ -37,12 +37,14 @@ if test -e $P/gate-on; then touch $R/gate.mode; echo 'gate on'; fi
 # 30 fps, $P/decoder.args = extra arguments, $P/decoder.stale = ms without a picture before its window hides (default
 # 5000). In $R, decoder.mode and decoder.60fps tell native_service and nbt_knob.
 rm -f $R/decoder.mode $R/decoder.60fps $R/nbt_decoder $R/decoder.args $R/decoder.stale $R/decoder.delay $R/decoder.720
+rm -f $R/decoder.hw $R/decoder.hwfail
 if test -f $P/nbt_decoder -a ! -e $P/decoder.off; then
   cp $P/nbt_decoder $R/nbt_decoder && chmod 700 $R/nbt_decoder && touch $R/decoder.mode
   test -e $P/decoder.30fps || touch $R/decoder.60fps
   test -f $P/decoder.args && cp $P/decoder.args $R/decoder.args
   test -f $P/decoder.stale && cp $P/decoder.stale $R/decoder.stale
   test -e $P/decoder.720 && touch $R/decoder.720       # full screen 1280x720, top 480 rows 1:1 (test)
+  test -e $P/decoder.hw && touch $R/decoder.hw         # the car's hardware H.264 decoder (test)
   test -f $P/decoder.delay && cp $P/decoder.delay $R/decoder.delay   # seconds after "MARKER HMIReady" at boot (default 2)
   echo "video: nbt_decoder (`test -e $R/decoder.60fps && echo 60 || echo 30` fps)"
 fi

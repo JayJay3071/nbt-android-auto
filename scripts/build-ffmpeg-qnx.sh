@@ -2,7 +2,8 @@
 # FFmpeg 2.8.22 (H.264 decoder only) as static libraries for nbt_decoder, in the QNX 6.5.0 VM (no configure: see
 # scripts/ffmpeg_qnx.py). Started by build-qnx.sh in the folder build_all.py prepared:
 #   ffmpeg/          the FFmpeg files from src/android_auto/decoder/ffmpeg/sources.txt
-#   ffmpeg-config/   config.h, avconfig.h, ffversion.h, objects.txt, KEY
+#   ffmpeg-config/   config.h, avconfig.h, ffversion.h, objects.txt, KEY, vdpau/ (libvdpau's vdpau.h, MIT, and a
+#                    stand-in vdpau_x11.h)
 #   ffmpeg-asm/      FFmpeg's assembly as ELF objects (yasm, run by build_all.py)
 # Output: ffmpeg-lib/libavcodec.a, ffmpeg-lib/libavutil.a, ffmpeg-lib/include/ (config.h with the probed values,
 # libavutil/avconfig.h, libavutil/ffversion.h). The libraries are kept in $HOME/.nbt-build/ffmpeg-<KEY> and reused as
@@ -18,9 +19,10 @@ CACHE=${FFCACHE:-$HOME/.nbt-build}/ffmpeg-$KEY
 OUT=$W/ffmpeg-lib
 B=$W/ffmpeg-build
 rm -rf $OUT $B
-mkdir -p $OUT/include/libavutil $B
+mkdir -p $OUT/include/libavutil $OUT/include/vdpau $B
 cp ffmpeg-config/config.h $OUT/include/config.h
 cp ffmpeg-config/avconfig.h ffmpeg-config/ffversion.h $OUT/include/libavutil/
+cp ffmpeg-config/vdpau/vdpau.h ffmpeg-config/vdpau/vdpau_x11.h $OUT/include/vdpau/   # FFmpeg's VDPAU interface
 
 if test -f $CACHE/libavcodec.a -a -f $CACHE/libavutil.a -a -f $CACHE/config.h; then
   cp $CACHE/libavcodec.a $CACHE/libavutil.a $OUT/

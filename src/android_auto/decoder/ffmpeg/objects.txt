@@ -49,6 +49,8 @@ libavcodec/resample2.c
 libavcodec/simple_idct.c
 libavcodec/startcode.c
 libavcodec/utils.c
+libavcodec/vdpau.c
+libavcodec/vdpau_h264.c
 libavcodec/videodsp.c
 libavcodec/vorbis_parser.c
 libavcodec/x86/constants.c

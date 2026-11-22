@@ -21,6 +21,7 @@ Used whenever `nbt_decoder` is installed, at 60 fps; no file is needed. Optional
 | `split800` | The 800x480 picture 1:1 at the left edge (`--size 800x480`), iDrive's split screen stays visible; otherwise stretched to 1280x480 |
 | `decoder.stale` | Milliseconds without a new picture before the window is hidden (default 5000, `0` = never) |
 | `decoder.720` | Full screen sharp (test): the phone draws 1280x720 with its interface in the top 480 rows, shown 1:1 (`--rows 480`) instead of 800x480 stretched; 2.4x the pixels to decode on the CPU |
+| `decoder.hw` | Hardware decoding (test): the car's own H.264 decoder instead of FFmpeg's (`--hw`, see below); with `decoder.720` the sharp picture without the CPU cost |
 | `decoder.args` | One line of extra arguments for `nbt_decoder` |
 | `decoder.delay` | Seconds after iDrive's `MARKER HMIReady` before the first session at boot (default 2) |
 | `decoder.showdelay` | Seconds of uptime before Android Auto is brought to the front (start at boot, NAV, AUX; default 40) |
@@ -91,6 +92,33 @@ Every call is queued to the library's worker thread and waits for it, at most `N
 - **Windows** (`wal::LayerId` in libwal_nvidia): 1024 `EARLYVIDEO`, 1052 `VIDEO`. The stream with id -28 lands in
   EARLYVIDEO (1052 - 28), which iDrive leaves alone while Android Auto is in front. libwal_nvidia's
   `WalHmiInterface` (`setWindowPositionAndSize`, `setZOrder`, `setVisible`) places, raises and shows it.
+
+## Hardware decoding (`decoder.hw`, test)
+
+`libnmsdk.so` contains NVIDIA's H.264 decoder for the GPU's video engine (NVVA, microcode for G82, G98 and GT212):
+`INvVideo::VideoDecode` (method 6) takes one picture as its slices plus a picture description
+(`nvh264bspPictureDecode`) and decodes into one of the stream's surfaces; `VideoRenderFrame` shows a surface given in
+its parameters (offset 0x0c) without any copy on the CPU. With `--hw`:
+
+- FFmpeg only parses: its VDPAU interface (hwaccel `h264_vdpau`, no libvdpau) keeps the reference pictures and hands
+  each picture over as `VdpPictureInfoH264` and its slices (each after `00 00 01`). `nbt_hwdec.h` rewrites that into
+  the library's layout: the offsets are those `h264BSP2NVVA` (libnmsdk 0x34d90) reads, checked by running that
+  function in an emulator on what `hw_bsp_fill()` writes (every field and reference came out as VDPAU's).
+- The stream is configured for decoder type 3 (H.264, `NVVADecoderCreate` with 16 references) at the coded size with
+  20 surfaces. FFmpeg's frames carry handles 1-20; the first picture decoded into a handle takes a surface from the
+  library (surface `-1`: taken and kept), later ones reuse it. References are rows of a table (8 bytes per row, the
+  surface first) indexed by handle. The three pictures between decoder and display hold their frames, so FFmpeg does
+  not decode into a surface that may still be shown.
+- `--rows 480` (with `decoder.720`): the source rectangle is the top 480 rows, the destination the whole 1280x720
+  stream, which the window shows at 1280x480.
+- If the car refuses the decoder at the start, the CPU path takes over in the same run. If decoding never works
+  (10 pictures) or keeps failing (100 in a row), `nbt_decoder` writes `decoder.hwfail` (in `/fs/ram3/nbt-aa-native`)
+  and ends; the session ends with it, and `native_service` starts it again without `--hw`: the CPU decodes until
+  the next boot.
+- Not covered: streams with their own scaling matrices (High profile; the phone's encoders do not send them so far):
+  `nbt_decoder` gives up as above.
+
+Log lines start with `hw:` (stream set-up, first picture, the surface of each handle, failures, a count every 5 s).
 
 ## Boot
 
