@@ -571,11 +571,15 @@ int main(int argc, char** argv)
         int n = 0;
         const int gsplit = right;
         const int want60 = access("decoder.60fps", F_OK) == 0;
+        /* decoder.720 (full screen, test 2026-11-22): the phone draws a 1280x720 canvas with its interface in the top
+         * 480 rows (inset 0,240,0,0, as NBT-AAD's own default for this panel) and nbt_decoder shows those rows 1:1:
+         * sharp, instead of 800x480 stretched 1.6x horizontally. 2.4x the pixels to decode on the CPU. */
+        const int sharp = !gsplit && access("decoder.720", F_OK) == 0;
         center = right = res720 = 0;
-        ana = !gsplit;
-        setenv("NBT_VID_RES", "1", 1);
-        setenv("NBT_VID_INSETS", "0,0,0,0", 1);
-        if (gsplit)
+        ana = !gsplit && !sharp;
+        setenv("NBT_VID_RES", sharp ? "2" : "1", 1);
+        setenv("NBT_VID_INSETS", sharp ? "0,240,0,0" : "0,0,0,0", 1);
+        if (gsplit || sharp)
             unsetenv("NBT_VID_PAR");
         else
             setenv("NBT_VID_PAR", "16000", 0);
@@ -589,6 +593,10 @@ int main(int argc, char** argv)
         if (gsplit) {
             ndargv[n++] = "--size";
             ndargv[n++] = "800x480";
+        }
+        if (sharp) {
+            ndargv[n++] = "--rows";
+            ndargv[n++] = "480";
         }
         if (want60) {
             ndargv[n++] = "--fps";

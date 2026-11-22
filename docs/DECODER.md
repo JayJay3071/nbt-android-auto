@@ -20,6 +20,7 @@ Used whenever `nbt_decoder` is installed, at 60 fps; no file is needed. Optional
 | `decoder.30fps` | Ask the phone for 30 pictures/s instead of 60. Default: 60 (`NBT_VID_FPS`, core patch `nbt-aad-sdr_builder-video-fps.patch`, and the car's stream set to 60, `--fps 60`) |
 | `split800` | The 800x480 picture 1:1 at the left edge (`--size 800x480`), iDrive's split screen stays visible; otherwise stretched to 1280x480 |
 | `decoder.stale` | Milliseconds without a new picture before the window is hidden (default 5000, `0` = never) |
+| `decoder.720` | Full screen sharp (test): the phone draws 1280x720 with its interface in the top 480 rows, shown 1:1 (`--rows 480`) instead of 800x480 stretched; 2.4x the pixels to decode on the CPU |
 | `decoder.args` | One line of extra arguments for `nbt_decoder` |
 | `decoder.delay` | Seconds after iDrive's `MARKER HMIReady` before the first session at boot (default 2) |
 | `decoder.showdelay` | Seconds of uptime before Android Auto is brought to the front (start at boot, NAV, AUX; default 40) |

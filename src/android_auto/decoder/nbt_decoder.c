@@ -11,6 +11,8 @@
  *   --ready  created whenever the program waits for a writer (native_service starts the session after it)
  *   --size   window size on the display (default 1280x480; split screen 800x480)
  *   --fps    stream rate given to the car (default 30): picture timestamps and how long the car holds each picture
+ *   --rows   show only the top N rows of the phone's picture (1280x720 canvas with the interface in its top 480 rows:
+ *            --rows 480 shows them 1:1 on the 1280x480 display)
  * Files: decoder.stale in the current folder (ms without a new picture before the window is hidden, default 5000,
  *   0 = never); in /var/opt/hmi/data/rw/NbtAndroidAutoRT: decoder.timeout (NV_NMSDK_TASK_TIMEOUT_MS, default 3000),
  *   decoder.repeat (ms without a new picture before the last one is handed to the car again, default 50, 0 = never).
@@ -112,7 +114,11 @@ static struct {
     const char* ready;
     int width, height, fps, bench;
     long stale_ms, repeat_ms;
-} g_opt = {0, 0, 1280, 480, 30, 0, 5000, 50};
+    int rows;   /* 0 = the whole picture */
+} g_opt = {0, 0, 1280, 480, 30, 0, 5000, 50, 0};
+
+/* rows of a decoded picture that are shown */
+static int shown_rows(int height) { return g_opt.rows && height > g_opt.rows ? g_opt.rows : height; }
 
 static volatile sig_atomic_t g_quit;
 
@@ -495,9 +501,10 @@ static int decoder_open(void)
 /* I420 -> NV12 into the picture being written */
 static void to_nv12(const AVFrame* f, struct picture* p)
 {
-    for (int row = 0; row < f->height; ++row)
+    const int h = shown_rows(f->height);
+    for (int row = 0; row < h; ++row)
         memcpy(p->y + (size_t)row * g_car.w, f->data[0] + (size_t)row * f->linesize[0], (size_t)f->width);
-    for (int row = 0; row < f->height / 2; ++row) {
+    for (int row = 0; row < h / 2; ++row) {
         const uint8_t* u = f->data[1] + (size_t)row * f->linesize[1];
         const uint8_t* v = f->data[2] + (size_t)row * f->linesize[2];
         uint8_t* out = p->uv + (size_t)row * g_car.w;
@@ -544,8 +551,8 @@ static void decode(uint8_t* data, size_t size)
         return;
     }
     if (!g_car.ready) {
-        say("decoder: first picture %dx%d", f->width, f->height);
-        if (car_stream(f->width & ~1, f->height & ~1) != 0) {
+        say("decoder: first picture %dx%d%s", f->width, f->height, shown_rows(f->height) < f->height ? ", top rows only" : "");
+        if (car_stream(f->width & ~1, shown_rows(f->height) & ~1) != 0) {
             g_quit = 1;
             return;
         }
@@ -559,7 +566,7 @@ static void decode(uint8_t* data, size_t size)
             }
         }
     }
-    if (f->width > g_car.w || f->height > g_car.h) {
+    if (f->width > g_car.w || shown_rows(f->height) > g_car.h) {
         ++g_stat.errors;   /* larger than the stream set up for the first picture */
         return;
     }
@@ -735,7 +742,7 @@ static int kd_main(int argc, const char* const* argv)
 
 static int usage(void)
 {
-    fprintf(stderr, "usage: nbt_decoder --input FIFO [--ready FILE] [--size WxH] [--fps 30|60]\n"
+    fprintf(stderr, "usage: nbt_decoder --input FIFO [--ready FILE] [--size WxH] [--fps 30|60] [--rows N]\n"
                     "       nbt_decoder --bench FILE\n");
     return 2;
 }
@@ -755,6 +762,10 @@ int main(int argc, char** argv)
         } else if (!strcmp(a, "--size") && value) {
             if (sscanf(argv[++i], "%dx%d", &g_opt.width, &g_opt.height) != 2 || g_opt.width <= 0 || g_opt.height <= 0)
                 return usage();
+        } else if (!strcmp(a, "--rows") && value) {
+            g_opt.rows = atoi(argv[++i]);
+            if (g_opt.rows < 2)
+                return usage();
         } else if (!strcmp(a, "--fps") && value) {
             g_opt.fps = atoi(argv[++i]);
             if (g_opt.fps != 30 && g_opt.fps != 60)
@@ -772,8 +783,9 @@ int main(int argc, char** argv)
     char timeout[16];
     snprintf(timeout, sizeof(timeout), "%ld", read_number(RT_DIR "/decoder.timeout", 3000));
     setenv("NV_NMSDK_TASK_TIMEOUT_MS", timeout, 0);
-    say("nbt_decoder: %s %s, window %dx%d, %d fps, stale %ld ms, repeat after %ld ms", g_opt.bench ? "bench" : "input",
-        g_opt.input, g_opt.width, g_opt.height, g_opt.fps, g_opt.stale_ms, g_opt.repeat_ms);
+    say("nbt_decoder: %s %s, window %dx%d, %d fps, stale %ld ms, repeat after %ld ms%s", g_opt.bench ? "bench" : "input",
+        g_opt.input, g_opt.width, g_opt.height, g_opt.fps, g_opt.stale_ms, g_opt.repeat_ms,
+        g_opt.rows ? ", top rows only" : "");
     if (g_opt.bench)
         _exit(run());
     /* the video calls need libKD's thread setup: run inside NvKdLaunch */
