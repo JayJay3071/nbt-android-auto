@@ -242,6 +242,94 @@ static int open_bulk(struct usbd_device* dev, unsigned cfg, unsigned ifc, unsign
     return p_in->urb && p_out->urb && p_in->buf && p_out->buf ? 0 : -1;
 }
 
+/* a class request to the NCM control interface (bmRequestType a1 in / 21 out) on the default pipe: bytes moved, -1 */
+static int ncm_request(struct usbd_device* dev, int in, unsigned request, unsigned value, unsigned index,
+                       unsigned char* data, unsigned n)
+{
+    struct usbd_desc_node* node;
+    usbd_descriptors_t* d = usbd_parse_descriptors(dev, 0, USB_DESC_DEVICE, 0, &node);
+    struct usbd_pipe* pipe = 0;
+    struct usbd_urb* urb = usbd_alloc_urb(0);
+    unsigned char* buf = (unsigned char*)usbd_alloc(n ? n : 1);
+    _Uint32t status = 0, actual = 0;
+    int rc = -1;
+    if (!d || !urb || !buf || usbd_open_pipe(dev, d, &pipe) != EOK)
+        goto out;
+    if (!in && n)
+        memcpy(buf, data, n);
+    usbd_setup_vendor(urb, in ? URB_DIR_IN | URB_SHORT_XFER_OK : URB_DIR_OUT, (unsigned short)request,
+                      in ? 0xa1 : 0x21, (unsigned short)value, (unsigned short)index, buf, n);
+    rc = usbd_io(urb, pipe, 0, 0, 1000);
+    usbd_urb_status(urb, &status, &actual);
+    if (rc == EOK) {
+        if (in)
+            memcpy(data, buf, actual);
+        rc = (int)actual;
+    } else {
+        say("usb: NCM request %02x: %s, status %08x", request, strerror(rc), (unsigned)status);
+        rc = -1;
+    }
+out:
+    if (pipe)
+        usbd_close_pipe(pipe);
+    if (urb)
+        usbd_free_urb(urb);
+    if (buf)
+        usbd_free(buf);
+    return rc;
+}
+
+/* NTB parameters (GET_NTB_PARAMETERS 80) logged; the largest NTB the iPhone sends set to 16384 (SET_NTB_INPUT_SIZE
+ * 86), the read size known to work on the multiplexor's pipes. Before the data interface's alternate setting 1, as
+ * Linux's cdc_ncm. */
+static void ncm_parameters(struct usb* u, struct usbd_device* dev)
+{
+    unsigned char p[28], v[4];
+    unsigned in_max = 0;
+    const int n = ncm_request(dev, 1, 0x80, 0, u->ncm_ctrl, p, sizeof(p));
+    u->ntb_in = 16384;
+    if (n >= 28) {
+        in_max = get32le(p + 4);
+        say("usb: NCM formats %04x, in: max %u, divisor %u, remainder %u, alignment %u; out: max %u, divisor %u, "
+            "remainder %u, alignment %u, %u datagrams",
+            get16le(p + 2), in_max, get16le(p + 8), get16le(p + 10), get16le(p + 12), get32le(p + 16),
+            get16le(p + 20), get16le(p + 22), get16le(p + 24), get16le(p + 26));
+    } else
+        say("usb: no NCM parameters (%d bytes)", n);
+    if (in_max && in_max < u->ntb_in)
+        u->ntb_in = in_max;
+    put32le(v, u->ntb_in);
+    say("usb: NCM input size %u: %s", u->ntb_in, ncm_request(dev, 0, 0x86, 0, u->ncm_ctrl, v, 4) >= 0 ? "set" : "not set");
+}
+
+/* the NCM control interface's interrupt endpoint (notifications), if it can be had: only read and logged */
+static void ncm_notifications(struct usb* u)
+{
+    struct usbd_desc_node *in_node, *ep_node;
+    usbd_descriptors_t* e;
+    int k, rc;
+    u->ncm_ctrl_dev = attach(u, 0, u->cfg, u->ncm_ctrl, 0);
+    if (!u->ncm_ctrl_dev ||
+        !usbd_interface_descriptor(u->ncm_ctrl_dev, (unsigned char)u->cfg, (unsigned char)u->ncm_ctrl, 0, &in_node))
+        return;
+    for (k = 0; (e = usbd_parse_descriptors(u->ncm_ctrl_dev, in_node, USB_DESC_ENDPOINT, k, &ep_node)) != 0; ++k)
+        if ((e->endpoint.bmAttributes & 3) == 3 && (e->endpoint.bEndpointAddress & 0x80))
+            break;
+    if (!e)
+        return;
+    rc = usbd_open_pipe(u->ncm_ctrl_dev, e, &u->ncm_int.pipe);
+    say("usb: NCM notifications %02x: %s", e->endpoint.bEndpointAddress, rc == EOK ? "open" : strerror(rc));
+    if (rc != EOK)
+        return;
+    u->ncm_int.in = u->ncm_int.interrupt = 1;
+    u->ncm_int.size = 64;
+    u->ncm_int.urb = usbd_alloc_urb(0);
+    u->ncm_int.buf = (unsigned char*)usbd_alloc(64);
+    pthread_mutex_init(&u->ncm_int.m, 0);
+    pthread_cond_init(&u->ncm_int.c, 0);
+    u->have_int = u->ncm_int.urb && u->ncm_int.buf;
+}
+
 /* the NCM function's MAC address: the CDC Ethernet functional descriptor (24 / 0F) of its control interface names a
  * string of 12 hex digits */
 static void read_mac(struct usb* u, struct usbd_device* dev)
@@ -329,10 +417,12 @@ int usb_open(struct usb* u, unsigned wait_s)
         say("usb: the NCM data interface %u is not there (held by another driver?)", u->ncm_data);
         return -1;
     }
+    ncm_parameters(u, u->mux_dev);
+    ncm_notifications(u);
     u->ncm_alt = 1;
     rc = usbd_select_interface(u->ncm_dev, (unsigned char)u->ncm_data, (unsigned char)u->ncm_alt);
     say("usb: NCM data interface %u alternate %u: %s", u->ncm_data, u->ncm_alt, rc == EOK ? "OK" : strerror(rc));
-    if (rc != EOK || open_bulk(u->ncm_dev, u->cfg, u->ncm_data, u->ncm_alt, &u->ncm_in, &u->ncm_out, 65536))
+    if (rc != EOK || open_bulk(u->ncm_dev, u->cfg, u->ncm_data, u->ncm_alt, &u->ncm_in, &u->ncm_out, u->ntb_in + 2048))
         return -1;
     if (!u->have_mac) {   /* our own, locally administered */
         cp_random(u->mac, 6);
@@ -384,7 +474,10 @@ int usb_xfer(struct usb_pipe* p, void* data, unsigned n, unsigned ms, unsigned* 
     if (!p->in)
         memcpy(p->buf, data, n);
     p->done = 0;
-    usbd_setup_bulk(p->urb, p->in ? URB_DIR_IN | URB_SHORT_XFER_OK : URB_DIR_OUT, p->buf, n);
+    if (p->interrupt)
+        usbd_setup_interrupt(p->urb, URB_DIR_IN | URB_SHORT_XFER_OK, p->buf, n);
+    else
+        usbd_setup_bulk(p->urb, p->in ? URB_DIR_IN | URB_SHORT_XFER_OK : URB_DIR_OUT, p->buf, n);
     rc = usbd_io(p->urb, p->pipe, done, p, ms);
     if (rc != EOK)
         return rc;

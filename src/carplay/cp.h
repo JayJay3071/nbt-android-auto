@@ -96,6 +96,7 @@ typedef int (*ncm_send_fn)(void* ctx, const unsigned char* block, unsigned n);
 int ncm_start(const unsigned char mac[6], ncm_send_fn send, void* ctx);
 void ncm_input(const unsigned char* data, unsigned n);   /* bytes from the bulk IN pipe */
 const char* ncm_address(void);                           /* our link-local IPv6 address as text */
+void ncm_counts(unsigned long long* in, unsigned long long* out);   /* frames */
 void ncm_pcap(const char* path);
 
 /* ---- cp_iap2.c (iAP2 over the carkit service) ---- */

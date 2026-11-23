@@ -71,26 +71,69 @@ static void stopped(int s)
 
 static struct usb g_usb;
 
+static unsigned long long g_send_errors;
+
 static int ncm_send(void* ctx, const unsigned char* block, unsigned n)
 {
     unsigned actual = 0;
+    const int rc = usb_xfer(&g_usb.ncm_out, (void*)block, n, 1000, &actual);
     (void)ctx;
-    return usb_xfer(&g_usb.ncm_out, (void*)block, n, 1000, &actual) || actual != n ? -1 : 0;
+    if (rc || actual != n) {
+        if (++g_send_errors <= 5)
+            say("ncm: send of %u bytes: result %d, status %08x, %u sent", n, rc, g_usb.ncm_out.status, actual);
+        return -1;
+    }
+    return 0;
 }
 
+/* NCM in, with what the transfers end with (car 2026-11-23: no frame came from the iPhone; the reads may fail) */
 static void* ncm_rx(void* arg)
 {
     static unsigned char b[65536];
+    unsigned long long reads = 0, empty = 0, bytes = 0, fin, fout;
+    unsigned last_status = 0, logged = 0;
+    long long next = ms_now() + 10000;
     (void)arg;
     while (!g_stop && !usb_gone()) {
         unsigned actual = 0;
-        const int rc = usb_xfer(&g_usb.ncm_in, b, sizeof(b), 1000, &actual);
-        if (actual)
+        const int rc = usb_xfer(&g_usb.ncm_in, b, g_usb.ntb_in + 2048, 1000, &actual);
+        if (actual) {
+            if (!reads++)
+                hexdump("ncm: first transfer in", b, actual < 48 ? actual : 48);
+            bytes += actual;
             ncm_input(b, actual);
-        else if (rc && rc != ETIMEDOUT) {
-            say("ncm: read failed (%d)", rc);
-            sleep_ms(100);
+        } else {
+            ++empty;
+            if (g_usb.ncm_in.status != last_status && logged < 8) {
+                ++logged;
+                say("ncm: read ended without data: result %d, status %08x", rc, g_usb.ncm_in.status);
+            }
+            last_status = g_usb.ncm_in.status;
+            if (rc && rc != ETIMEDOUT)
+                sleep_ms(100);
         }
+        if (ms_now() >= next) {
+            next = ms_now() + 10000;
+            ncm_counts(&fin, &fout);
+            say("ncm: %llu transfers in (%llu bytes), %llu empty, frames %llu in / %llu out, %llu send errors", reads,
+                bytes, empty, fin, fout, g_send_errors);
+        }
+    }
+    return 0;
+}
+
+static void* ncm_notify(void* arg)
+{
+    unsigned char b[64];
+    unsigned n = 0;
+    (void)arg;
+    while (!g_stop && !usb_gone()) {
+        unsigned actual = 0;
+        const int rc = usb_xfer(&g_usb.ncm_int, b, sizeof(b), 1000, &actual);
+        if (actual && n++ < 10)
+            hexdump("ncm: notification", b, actual);
+        else if (!actual && rc && rc != ETIMEDOUT)
+            sleep_ms(500);
     }
     return 0;
 }
@@ -194,6 +237,8 @@ int main(int argc, char** argv)
         ncm_pcap(g_opt.pcap);
     if (net_init() || ncm_start(g_usb.mac, ncm_send, 0) || pthread_create(&t, 0, ncm_rx, 0))
         return 1;
+    if (g_usb.have_int)
+        pthread_create(&t, 0, ncm_notify, 0);
     cp_reached(STOP_USB);
     if (airplay_start(AIRPLAY_PORT))
         return 1;

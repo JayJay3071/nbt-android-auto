@@ -152,6 +152,12 @@ int ncm_start(const unsigned char mac[6], ncm_send_fn send, void* ctx)
     return 0;
 }
 
+void ncm_counts(unsigned long long* in, unsigned long long* out)
+{
+    *in = g_frames_in;
+    *out = g_frames_out;
+}
+
 const char* ncm_address(void)
 {
     return g_address;
