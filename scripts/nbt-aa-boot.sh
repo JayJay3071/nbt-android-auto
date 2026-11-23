@@ -48,6 +48,12 @@ if test -f $P/nbt_decoder -a ! -e $P/decoder.off; then
   test -f $P/decoder.delay && cp $P/decoder.delay $R/decoder.delay   # seconds after "MARKER HMIReady" at boot (default 2)
   echo "video: nbt_decoder (`test -e $R/decoder.60fps && echo 60 || echo 30` fps)"
 fi
+# CarPlay mode (2026-11-23, docs/CARPLAY.md): with nbt_carplay installed, an iPhone gets CarPlay through the same
+# decoder and window (decoder mode only). touch $P/carplay.off = Apple devices left alone, as before.
+rm -f $R/nbt_carplay
+if test -f $P/nbt_carplay -a ! -e $P/carplay.off -a -e $R/decoder.mode; then
+  cp $P/nbt_carplay $R/nbt_carplay && chmod 700 $R/nbt_carplay && echo "CarPlay: nbt_carplay"
+fi
 DPI=140
 if test -f $P/vid.dpi; then DPI=`sed 1q $P/vid.dpi`; fi
 # picture mode (car-tested 2026-11-08), one flag file in $P, none = classic 800x300 stretched to the whole display:

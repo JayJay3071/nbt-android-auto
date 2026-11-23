@@ -96,6 +96,10 @@ def main():
     if args.decoder and args.decoder.is_file():
         files = list(files) + [(args.decoder, 'rt/nbt_decoder', RT + '/nbt_decoder', '700')]
         print('including', args.decoder, '(decoder mode, used unless decoder.off is on the car)')
+    carplay = args.built.resolve() / 'programs' / 'nbt_carplay' if args.built else None
+    if carplay and carplay.is_file():
+        files = list(files) + [(carplay, 'rt/nbt_carplay', RT + '/nbt_carplay', '700')]
+        print('including', carplay, '(CarPlay mode, used unless carplay.off is on the car)')
     if OUT.exists():
         shutil.rmtree(OUT)
     entries = []

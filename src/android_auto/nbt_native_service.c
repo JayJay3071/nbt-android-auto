@@ -188,6 +188,11 @@ static void keep_reported(unsigned session)
 #define PHONE_NONE 0
 #define PHONE_NORMAL 1    /* a candidate phone in its normal USB mode: has to be switched to accessory mode */
 #define PHONE_ACCESSORY 2 /* already in Android Open Accessory mode: ready for the session */
+#define PHONE_CARPLAY 3   /* an iPhone, CarPlay mode on: nbt_carplay takes it */
+
+/* CarPlay mode (2026-11-23, docs/CARPLAY.md): with nbt_carplay in the runtime directory, decoder mode and no
+ * carplay.off, an Apple device is a candidate too; otherwise Apple devices are left alone as before */
+static int g_carplay;
 
 typedef struct {
     int bus, addr;
@@ -277,12 +282,15 @@ static int find_phone(int* bus, int* device)
         UsbDev* u = &dev[i];
         int type = PHONE_NONE;
         unsigned c = cls[i];
-        if (!u->v || !u->p || u->v == USB_VENDOR_PEIKER || u->v == USB_VENDOR_APPLE)
+        if (!u->v || !u->p || u->v == USB_VENDOR_PEIKER || (u->v == USB_VENDOR_APPLE && !g_carplay))
             continue;
         /* audio, communication, HID, mass storage, hub, video */
         if (c == 0x01 || c == 0x02 || c == 0x03 || c == 0x08 || c == 0x09 || c == 0x0e)
             continue;
-        if (u->v == USB_VENDOR_GOOGLE && (u->p == AOA_PRODUCT_ACCESSORY || u->p == AOA_PRODUCT_ACCESSORY_ADB))
+        if (u->v == USB_VENDOR_APPLE) {
+            if (!ignored(u))
+                type = PHONE_CARPLAY;
+        } else if (u->v == USB_VENDOR_GOOGLE && (u->p == AOA_PRODUCT_ACCESSORY || u->p == AOA_PRODUCT_ACCESSORY_ADB))
             type = PHONE_ACCESSORY;
         else if (!ignored(u))
             type = PHONE_NORMAL;
@@ -293,7 +301,7 @@ static int find_phone(int* bus, int* device)
         *bus = u->bus;
         *device = u->addr;
         result = type;
-        if (type == PHONE_NORMAL) {
+        if (type == PHONE_NORMAL || type == PHONE_CARPLAY) {
             found_v = u->v;
             found_p = u->p;
         } else
@@ -380,6 +388,35 @@ static void hmi_visible(void)
     (void)r;
 }
 
+/* decoder mode: nbt_decoder (started once, kept across sessions; again only if it ended), then up to 10 s until it
+ * waits for a writer (http.ready). 1 = ready. */
+static int decoder_ready(Child* ndec, char** ndargv, unsigned session)
+{
+    if (!alive(ndec)) {
+        char ndecname[40];
+        unlink("http.ready");
+        if (access("decoder.hwfail", F_OK) == 0) {   /* nbt_decoder gave up on the hardware decoder */
+            int k = 0, j = 0;
+            for (; ndargv[k]; ++k)
+                if (strcmp(ndargv[k], "--hw") != 0)
+                    ndargv[j++] = ndargv[k];
+            if (j != k)
+                printf("[native] decoder.hwfail: nbt_decoder again without --hw\n");
+            ndargv[j] = 0;
+        }
+        snprintf(ndecname, sizeof(ndecname), "nbt_decoder-%u.log", session);
+        setenv("LD_LIBRARY_PATH", DECODER_LIBRARY_PATH, 1);
+        *ndec = spawn(ndargv, 0, ndecname);
+        setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
+    }
+    {
+        long long limit = ms() + 10000;
+        while (!stopping && access("http.ready", F_OK) && alive(ndec) && ms() < limit)
+            usleep(100000);
+    }
+    return !access("http.ready", F_OK) && alive(ndec);
+}
+
 /* ---- main ------------------------------------------------------------------------------------------------------------ */
 
 int main(int argc, char** argv)
@@ -392,6 +429,8 @@ int main(int argc, char** argv)
     Child knob = {0, 0};    /* nbt_knob: iDrive controller -> input.fifo */
     Child hwv = {0, 0};     /* nbt_hwvideo: shows the video window in front of iDrive */
     Child ndec = {0, 0};    /* decoder mode: nbt_decoder, started once and kept across sessions */
+    Child carplay = {0, 0}; /* CarPlay mode: nbt_carplay, one per iPhone session */
+    int carplay_failures = 0;
     (void)argv;
     int guard = -1, lock = -1, bus, device, type, attempts = 0, resets = 0;
     long long absent_since = 0;
@@ -625,6 +664,10 @@ int main(int argc, char** argv)
         }
     }
 
+    g_carplay = dmode && access("nbt_carplay", X_OK) == 0 && access("carplay.off", F_OK) != 0;
+    if (g_carplay)
+        printf("[native] CarPlay mode: an iPhone starts nbt_carplay\n");
+
     /* ---- processes that run for the whole service life ---- */
     if (live) {
         char* args[] = {"./nbt_live_file", "--path", shadow, "--fifo", "annexb.fifo", "--ready", "http.ready",
@@ -711,6 +754,45 @@ int main(int argc, char** argv)
             continue;
         }
         absent_since = 0;
+        /* An iPhone (CarPlay mode): nbt_carplay does everything itself (USB configuration, pairing, iAP2, AirPlay)
+         * and writes the picture into annexb.fifo for nbt_decoder, as oneplus_native does; it ends when the iPhone is
+         * unplugged or the session fails. Three short runs in a row: the iPhone is left alone until it is unplugged. */
+        if (type == PHONE_CARPLAY) {
+            char* args[] = {"./nbt_carplay", 0};
+            char cpname[40];
+            long long began;
+            ++session;
+            report("starting_decoder", session);
+            if (!decoder_ready(&ndec, ndargv, session)) {
+                report("connecting", session);
+                sleep(2);
+                continue;
+            }
+            snprintf(cpname, sizeof(cpname), "carplay-%u.log", session);
+            unlink("/fs/ram3/nbt-aa-media");
+            setenv("LD_LIBRARY_PATH", SYSTEM_LIBRARY_PATH, 1);
+            carplay = spawn(args, 0, cpname);
+            setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
+            report("running", session);
+            began = ms();
+            while (!stopping && alive(&carplay) && alive(&ndec)) {
+                usleep(200000);
+                keep_reported(session);
+            }
+            report("draining", session);
+            end(&carplay);
+            if (ms() - began >= 60000)
+                carplay_failures = 0;
+            else if (++carplay_failures >= 3) {
+                printf("[native] nbt_carplay ended early 3 times: the iPhone is left alone until it is unplugged\n");
+                if (find_phone(&bus, &device) == PHONE_CARPLAY)   /* its address after the CarPlay re-connect */
+                    ignore_dev(bus, device, found_v, found_p);
+                carplay_failures = 0;
+            }
+            if (!stopping)
+                sleep(2);
+            continue;
+        }
         /* The last attempt failed (user 2026-11-12: after "Restart Android Auto" the phone often did not come back until
          * it was replugged): reset its USB port, the software version of pulling the cable, and try again. "Reconnect the
          * phone" only after 3 resets in a row; a real unplug (> 10 s) or a good session starts the count again. */
@@ -782,28 +864,7 @@ int main(int argc, char** argv)
              * and kept for the following sessions (a closed FIFO only ends that session's stream): car
              * 2026-11-18/19, starting and killing it for every session froze the whole iDrive display when the phone
              * was plugged in again (once "NO SIGNAL" and an iDrive restart). Started again only if it ended. */
-            if (!alive(&ndec)) {
-                char ndecname[40];
-                unlink("http.ready");
-                if (access("decoder.hwfail", F_OK) == 0) {   /* nbt_decoder gave up on the hardware decoder */
-                    int k = 0, j = 0;
-                    for (; ndargv[k]; ++k)
-                        if (strcmp(ndargv[k], "--hw") != 0)
-                            ndargv[j++] = ndargv[k];
-                    if (j != k)
-                        printf("[native] decoder.hwfail: nbt_decoder again without --hw\n");
-                    ndargv[j] = 0;
-                }
-                snprintf(ndecname, sizeof(ndecname), "nbt_decoder-%u.log", session);
-                setenv("LD_LIBRARY_PATH", DECODER_LIBRARY_PATH, 1);
-                ndec = spawn(ndargv, 0, ndecname);
-                setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
-            }
-            {
-                long long limit = ms() + 10000;
-                while (!stopping && access("http.ready", F_OK) && alive(&ndec) && ms() < limit)
-                    usleep(100000);
-            }
+            decoder_ready(&ndec, ndargv, session);
         } else if (!live) {
             unlink("http.ready");
             {
@@ -911,6 +972,7 @@ int main(int argc, char** argv)
     }
 
 done:
+    end(&carplay);
     end(&ndec);
     end(&hwv);
     if (center)
