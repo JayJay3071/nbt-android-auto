@@ -710,7 +710,10 @@ typedef void (*spr_assign_fn)(void*, unsigned long, unsigned long);
 typedef void (*spr_pos_fn)(void*, unsigned long, long, long);
 typedef void (*spr_size_fn)(void*, unsigned long, unsigned long, unsigned long);
 typedef void (*spr_visible_fn)(void*, unsigned long, int);
-enum { SPRITE_ID = 0x7a40, PANEL_ALPHA = 180 };
+enum { SPRITE_ID = 0x7a40 };
+/* background colour and opacity: decoder.panelbg, hex RRGGBBAA (user 2026-11-23: to match Android Auto's dark grey
+ * buttons; default 000000B4, translucent black). Read when the box's process starts (iDrive restart). */
+static unsigned g_bg_r = 0, g_bg_g = 0, g_bg_b = 0, g_bg_a = 0xB4;
 
 static struct {
     void* app;
@@ -773,6 +776,19 @@ static int spr_open(void)
     g_spr.x = read_number(RT_DIR "/decoder.panelx", PANEL_X);
     g_spr.y = read_number(RT_DIR "/decoder.panely", PANEL_Y);
     g_spr_flip = (int)read_number(RT_DIR "/decoder.panelflip", 1);
+    {
+        FILE* f = fopen(RT_DIR "/decoder.panelbg", "r");
+        unsigned v;
+        if (f) {
+            if (fscanf(f, "%x", &v) == 1) {
+                g_bg_r = v >> 24 & 255;
+                g_bg_g = v >> 16 & 255;
+                g_bg_b = v >> 8 & 255;
+                g_bg_a = v & 255;
+            }
+            fclose(f);
+        }
+    }
     corner_mask();
     pthread_t t;
     if (pthread_create(&t, 0, spr_watchdog, 0) != 0) {
@@ -780,7 +796,8 @@ static int spr_open(void)
         return -1;
     }
     g_panel.ok = 1;
-    say("panel: sprite 0x%x, %dx%d, window %lu at %ld,%ld", SPRITE_ID, PANEL_W, PANEL_H, g_spr.window, g_spr.x, g_spr.y);
+    say("panel: sprite 0x%x, %dx%d, window %lu at %ld,%ld, background %02x%02x%02x%02x", SPRITE_ID, PANEL_W, PANEL_H,
+        g_spr.window, g_spr.x, g_spr.y, g_bg_r, g_bg_g, g_bg_b, g_bg_a);
     return 0;
 }
 
@@ -816,11 +833,13 @@ static void spr_rgba(uint8_t* out)
         const int src = ((g_spr_flip & 1) ? PANEL_H - 1 - row : row) * PANEL_W + ((g_spr_flip & 2) ? PANEL_W - 1 - col : col);
         const int d = g_panel.draw[src] - PANEL_BG;
         const unsigned t = d <= 0 ? 0 : d >= PANEL_FG - PANEL_BG ? 255 : (unsigned)d * 255 / (PANEL_FG - PANEL_BG);
-        unsigned a = t + PANEL_ALPHA * (255 - t) / 255;   /* text over the background, both "over" */
-        a = a * g_corner[src] / 255;                      /* rounded corners */
-        const uint8_t c = a ? (uint8_t)(255 * t / a) : 0;
-        out[4 * i] = out[4 * i + 1] = out[4 * i + 2] = c;
-        out[4 * i + 3] = (uint8_t)a;
+        /* white text over the background colour, both "over" (straight alpha), then the rounded corners */
+        const unsigned a = t + g_bg_a * (255 - t) / 255;
+        const unsigned bg = g_bg_a * (255 - t) / 255;   /* the background's share, alpha-weighted */
+        out[4 * i] = a ? (uint8_t)((255 * t + g_bg_r * bg) / a) : 0;
+        out[4 * i + 1] = a ? (uint8_t)((255 * t + g_bg_g * bg) / a) : 0;
+        out[4 * i + 2] = a ? (uint8_t)((255 * t + g_bg_b * bg) / a) : 0;
+        out[4 * i + 3] = (uint8_t)(a * g_corner[src] / 255);
     }
 }
 
