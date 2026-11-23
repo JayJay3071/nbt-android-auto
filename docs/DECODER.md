@@ -23,7 +23,7 @@ Used whenever `nbt_decoder` is installed, at 60 fps; no file is needed. Optional
 | `decoder.720` | Full screen sharp (test): the phone draws 1280x720 with its interface in the top 480 rows, shown 1:1 (`--rows 480`) instead of 800x480 stretched; 2.4x the pixels to decode on the CPU |
 | `decoder.hw` | Hardware decoding (test): the car's own H.264 decoder instead of FFmpeg's (`--hw`, see below); with `decoder.720` the sharp picture without the CPU cost |
 | `decoder.panel` | Trip computer box (test) at x 1000, y 120, 280x100 over the full-width picture, see below |
-| `decoder.panelwin`, `decoder.panelx`, `decoder.panely` | The WAL window the box is drawn in (default 1024, Android Auto's; 80 = the cursor's) and its position in it (default 874, 100) |
+| `decoder.panelwin`, `decoder.panelx`, `decoder.panely` | The WAL window the box is drawn in (default 1024, Android Auto's; 80 = the cursor's) and its position in it (default 830, 100) |
 | `decoder.fuelscale` | Microlitres of fuel per count of CDS `engine.consumption`, x1000 (default 1000), for the box's instantaneous consumption |
 | `decoder.panelflip` | The box's texture: 1 rows reversed (default; the WalServer reads sprites bottom-up), 2 columns reversed, 3 both |
 | `decoder.args` | One line of extra arguments for `nbt_decoder` |
@@ -179,7 +179,7 @@ stats 5.0 s: 150 decoded (30.0/s), 149 shown (0 repeats), 1 replaced, 0 while hi
 
 ## Trip computer box (`decoder.panel`, test)
 
-A box at x 874, y 100, 356x112 (50 px from the right edge) (rounded corners, 16 / 8 px inner padding, DejaVu Sans 20 px) over the full-width picture, instead of iDrive's split screen:
+A box at x 830, y 100, 400x112 (50 px from the right edge, our own icons before the values) (rounded corners, 16 / 8 px inner padding, DejaVu Sans 20 px) over the full-width picture, instead of iDrive's split screen:
 
 ```
 12:04        44 min        30 km      trip start, duration, distance

@@ -405,7 +405,7 @@ static void car_present(const struct picture* p)
 
 
 /* ---- trip computer box (decoder.panel, test 2026-11-23) ----
- * User: instead of iDrive's split screen, a box over Android Auto at x 874, y 100, 356 x 112 with the trip computer (50 px from the right edge).
+ * User: instead of iDrive's split screen, a box over Android Auto at x 830, y 100, 400 x 112 with the trip computer (50 px from the right edge, icons before the values).
  * The picture cannot be drawn on with hardware decoding (the car decodes into its own surfaces).
  * Car 2026-11-23, a stream of its own for the box: (1) in this process it took over Android Auto's window (only its
  * top-left 280 x 100 was left, as the reference decoder's 64x64 stream created first was taken over by the real one);
@@ -416,7 +416,7 @@ static void car_present(const struct picture* p)
  * (wal::WalApplicationInterface createSprite / assignSpriteToWindow / setSpritePosition / setSpriteSize /
  * setSpriteVisible, as in experiments/wal-overlay). Caution: the earlier sprite path for the whole picture (800x480,
  * ~1.5 MB per upload, 10-15 uploads/s) deadlocked the WalServer and restarted the head unit (docs/DEVELOPMENT.md).
- * Here: one sprite of 356 x 112 (160 KB), uploaded only when its text changed and at most once a second; a watchdog
+ * Here: one sprite of 400 x 112 (175 KB), uploaded only when its text changed and at most once a second; a watchdog
  * ends the box's process if a WAL call blocks for over 4 s. createSprite with an existing id only replaces the content
  * (assignment, position, size and visibility stay; car 2026-11-06).
  * Window: decoder.panelwin (default 1024 = EARLYVIDEO, Android Auto's own window; the sprite is drawn over its stream,
@@ -437,11 +437,11 @@ static void car_present(const struct picture* p)
 #define PANEL_OFF_FILE "/fs/ram3/nbt-aa-panel-off"
 #define TRIP_KOMBI_FILE "/fs/ram3/nbt-aa-tripkombi"
 #define TRIP_CDS_FILE "/fs/ram3/nbt-aa-trip"
-/* user 2026-11-23: at y 100, 50 px from the right edge, corners rounded like Android Auto's (radius 12), 20 px font
+/* user 2026-11-23: icons before the values (400 wide, x 830); at y 100, 50 px from the right edge, corners rounded like Android Auto's (radius 12), 20 px font
  * at full precision ("-12.5°C  E 105°  O 120°  B 100%" and "1036 km  57 L  112.5 L/100km" fit), inner padding 16 px
  * left / right and 8 px top / bottom: 356 x 112 */
 enum { PANEL_PAD_X = 16, PANEL_PAD_Y = 8 };
-enum { PANEL_X = 874, PANEL_Y = 100, PANEL_W = 356, PANEL_H = 112, PANEL_BG = 24, PANEL_FG = 235, PANEL_RADIUS = 12 };
+enum { PANEL_X = 830, PANEL_Y = 100, PANEL_W = 400, PANEL_H = 112, PANEL_BG = 24, PANEL_FG = 235, PANEL_RADIUS = 12 };
 
 static struct {
     int ok, have;
@@ -450,7 +450,23 @@ static struct {
     long long text_at;
 } g_panel;
 
-static int panel_glyph(unsigned char c) { return c >= 32 && c <= 126 ? c - 32 : c == 0xb0 ? 95 : '?' - 32; }
+/* our own icons (scripts/gen_panel_font.py), characters 1..12 in the strings */
+#define I_CLOCK "\x01"
+#define I_STOPWATCH "\x02"
+#define I_ROAD "\x03"
+#define I_PUMP "\x04"
+#define I_GAUGE "\x05"
+#define I_RANGE "\x06"
+#define I_CAN "\x07"
+#define I_DROP "\x08"
+#define I_THERMO "\x09"
+#define I_COOLANT "\x0a"
+#define I_OIL "\x0b"
+#define I_BATTERY "\x0c"
+static int panel_glyph(unsigned char c)
+{
+    return c >= 32 && c <= 126 ? c - 32 : c == 0xb0 ? 95 : c >= 1 && c <= 12 ? 95 + c : '?' - 32;
+}
 
 static int panel_width(const char* t)
 {
@@ -535,7 +551,7 @@ static void panel_compose(void)
     const int have_cds = panel_read(TRIP_CDS_FILE, cds, sizeof(cds));
     if (!have_kombi && !have_cds)
         return;
-    char a[32], b[32], c[32];
+    char a[40], b[40], c[40];
     int v, w;
     double x;
     memset(g_panel.draw, PANEL_BG, sizeof(g_panel.draw));
@@ -543,37 +559,37 @@ static void panel_compose(void)
     const int top[4] = {PANEL_PAD_Y, PANEL_PAD_Y + 24, PANEL_PAD_Y + 48, PANEL_PAD_Y + 72};   /* 24 px lines */   /* 20 px font, 24 px lines */
     /* 1: trip start, duration, distance (cluster) */
     if (strstr(kombi, "start=") && sscanf(strstr(kombi, "start=") + 6, "%d:%d", &v, &w) == 2 && v >= 0)
-        snprintf(a, sizeof(a), "%d:%02d", v, w);
+        snprintf(a, sizeof(a), I_CLOCK "%d:%02d", v, w);
     else
-        strcpy(a, "--:--");
+        strcpy(a, I_CLOCK "--:--");
     int hours = 0, minutes;
     kombi_value(kombi, "hours", &hours);
     if (kombi_value(kombi, "minutes", &minutes) && hours > 0)
-        snprintf(b, sizeof(b), "%d:%02d h", hours, minutes);
+        snprintf(b, sizeof(b), I_STOPWATCH "%d:%02d h", hours, minutes);
     else if (kombi_value(kombi, "minutes", &minutes))
-        snprintf(b, sizeof(b), "%d min", minutes);
+        snprintf(b, sizeof(b), I_STOPWATCH "%d min", minutes);
     else
-        strcpy(b, "-- min");
+        strcpy(b, I_STOPWATCH "-- min");
     if (kombi_value(kombi, "km", &v))
-        snprintf(c, sizeof(c), "%d km", v);
+        snprintf(c, sizeof(c), I_ROAD "%d km", v);
     else
-        strcpy(c, "-- km");
+        strcpy(c, I_ROAD "-- km");
     panel_text_at(a, R, top[0], 0);
     panel_text_at(b, M, top[0], 1);
     panel_text_at(c, L, top[0], 2);
     /* 2: average consumption and speed (cluster, x0.1; CDS averageConsumption2 / averageSpeed2 otherwise) */
     if (kombi_value(kombi, "cons", &v) && v < 4095)
-        snprintf(a, sizeof(a), "%d.%d L/100km", v / 10, v % 10);
+        snprintf(a, sizeof(a), I_PUMP "%d.%d L/100km", v / 10, v % 10);
     else if (cds_value(cds, "driving.averageConsumption", "averageConsumption2", &x))
-        snprintf(a, sizeof(a), "%.1f L/100km", x);
+        snprintf(a, sizeof(a), I_PUMP "%.1f L/100km", x);
     else
-        strcpy(a, "-- L/100km");
+        strcpy(a, I_PUMP "-- L/100km");
     if (kombi_value(kombi, "speed", &v) && v < 4095)
-        snprintf(b, sizeof(b), "%d.%d km/h", v / 10, v % 10);
+        snprintf(b, sizeof(b), I_GAUGE "%d.%d km/h", v / 10, v % 10);
     else if (cds_value(cds, "driving.averageSpeed", "averageSpeed2", &x))
-        snprintf(b, sizeof(b), "%.1f km/h", x);
+        snprintf(b, sizeof(b), I_GAUGE "%.1f km/h", x);
     else
-        strcpy(b, "-- km/h");
+        strcpy(b, I_GAUGE "-- km/h");
     panel_text_at(a, R, top[1], 0);
     panel_text_at(b, L, top[1], 2);
     /* 3: range, tank, instantaneous consumption. CDS engine.consumption is a counter, not a rate (car 2026-11-23: it
@@ -582,13 +598,13 @@ static void panel_compose(void)
      * taken over the last 5 s (one sample a second, each step unwrapped on its own); from 5 km/h on
      * (driving.speedActual) it is shown as L/100km. */
     if (cds_value(cds, "sensors.fuel", "range", &x))
-        snprintf(a, sizeof(a), "%.0f km", x);
+        snprintf(a, sizeof(a), I_RANGE "%.0f km", x);
     else
-        strcpy(a, "-- km");
+        strcpy(a, I_RANGE "-- km");
     if (cds_value(cds, "sensors.fuel", "tanklevel", &x))
-        snprintf(b, sizeof(b), "%.0f L", x);
+        snprintf(b, sizeof(b), I_CAN "%.0f L", x);
     else
-        strcpy(b, "-- L");
+        strcpy(b, I_CAN "-- L");
     {
         enum { SAMPLES = 6 };
         static long long when[SAMPLES];
@@ -597,7 +613,7 @@ static void panel_compose(void)
         static long scale = -1;
         if (scale < 0)
             scale = read_number(RT_DIR "/decoder.fuelscale", 1000);
-        strcpy(c, "-- L/h");
+        strcpy(c, I_DROP "-- L/h");
         if (cds_value(cds, "engine.consumption", "consumption", &x)) {
             if (n == SAMPLES) {
                 memmove(when, when + 1, sizeof(when[0]) * (SAMPLES - 1));
@@ -615,34 +631,35 @@ static void panel_compose(void)
                 const double lph = counts / secs * 0.0036 * scale / 1000.0;
                 double speed = 0;
                 if (cds_value(cds, "driving.speedActual", "speedActual", &speed) && speed >= 5)
-                    snprintf(c, sizeof(c), "%.1f L/100km", lph / speed * 100.0);
+                    snprintf(c, sizeof(c), lph / speed >= 0.9995 ? I_DROP "%.0f L/100km" : I_DROP "%.1f L/100km",
+                             lph / speed * 100.0);   /* 100 and more (pulling away) without the decimal: fits */
                 else
-                    snprintf(c, sizeof(c), "%.1f L/h", lph);
+                    snprintf(c, sizeof(c), I_DROP "%.1f L/h", lph);
             }
         }
     }
     panel_text_at(a, R, top[2], 0);
-    panel_text_at(b, R + panel_width(a) + 12, top[2], 0);   /* tank right after range */
+    panel_text_at(b, R + panel_width(a) + 16, top[2], 0);   /* tank right after range */
     panel_text_at(c, L, top[2], 2);
     /* 4: outside, coolant, oil temperature, starter battery charge (CDS sensors.battery {"battery":N}, percent as
      * BimmerGestalt's apps read it, "ACC battery"; 255 = not known). Four items spread evenly over the line. */
-    char d[32];
+    char d[40];
     if (cds_value(cds, "sensors.temperatureExterior", "temperatureExterior", &x))
-        snprintf(a, sizeof(a), "%.1f\xb0" "C", x);
+        snprintf(a, sizeof(a), I_THERMO "%.1f\xb0" "C", x);
     else
-        strcpy(a, "--\xb0" "C");
+        strcpy(a, I_THERMO "--\xb0" "C");
     if (cds_value(cds, "engine.temperature", "engine", &x))
-        snprintf(b, sizeof(b), "E %.0f\xb0", x);
+        snprintf(b, sizeof(b), I_COOLANT "%.0f\xb0", x);
     else
-        strcpy(b, "E --\xb0");
+        strcpy(b, I_COOLANT "--\xb0");
     if (cds_value(cds, "engine.temperature", "oil", &x))
-        snprintf(c, sizeof(c), "O %.0f\xb0", x);
+        snprintf(c, sizeof(c), I_OIL "%.0f\xb0", x);
     else
-        strcpy(c, "O --\xb0");
+        strcpy(c, I_OIL "--\xb0");
     if (cds_value(cds, "sensors.battery", "battery", &x) && x >= 0 && x < 255)
-        snprintf(d, sizeof(d), "B %.0f%%", x);
+        snprintf(d, sizeof(d), I_BATTERY "%.0f%%", x);
     else
-        strcpy(d, "B --%");
+        strcpy(d, I_BATTERY "--%");
     const char* items[4] = {a, b, c, d};
     int total = 0;
     for (int i = 0; i < 4; ++i)
