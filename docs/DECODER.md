@@ -24,6 +24,7 @@ Used whenever `nbt_decoder` is installed, at 60 fps; no file is needed. Optional
 | `decoder.hw` | Hardware decoding (test): the car's own H.264 decoder instead of FFmpeg's (`--hw`, see below); with `decoder.720` the sharp picture without the CPU cost |
 | `decoder.panel` | Trip computer box (test) at x 1000, y 120, 280x100 over the full-width picture, see below |
 | `decoder.panelwin`, `decoder.panelx`, `decoder.panely` | The WAL window the box is drawn in (default 1024, Android Auto's; 80 = the cursor's) and its position in it (default 1000, 120) |
+| `decoder.panelflip` | The box's texture: 1 rows reversed (default; the WalServer reads sprites bottom-up), 2 columns reversed, 3 both |
 | `decoder.args` | One line of extra arguments for `nbt_decoder` |
 | `decoder.delay` | Seconds after iDrive's `MARKER HMIReady` before the first session at boot (default 2) |
 | `decoder.showdelay` | Seconds of uptime before Android Auto is brought to the front (start at boot, NAV, AUX; default 40) |

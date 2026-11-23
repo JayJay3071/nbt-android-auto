@@ -630,6 +630,7 @@ static struct {
     volatile long long busy_since;   /* a WAL call in progress since (ms), 0 = none */
     long long upload_at;
 } g_spr;
+static int g_spr_flip = 1;   /* decoder.panelflip, see spr_rgba */
 
 static void* spr_watchdog(void* arg)
 {
@@ -673,6 +674,7 @@ static int spr_open(void)
     g_spr.window = (unsigned long)read_number(RT_DIR "/decoder.panelwin", 1024);
     g_spr.x = read_number(RT_DIR "/decoder.panelx", PANEL_X);
     g_spr.y = read_number(RT_DIR "/decoder.panely", PANEL_Y);
+    g_spr_flip = (int)read_number(RT_DIR "/decoder.panelflip", 1);
     pthread_t t;
     if (pthread_create(&t, 0, spr_watchdog, 0) != 0) {
         say("panel: watchdog could not start");
@@ -683,11 +685,16 @@ static int spr_open(void)
     return 0;
 }
 
-/* the drawn box (coverage over PANEL_BG) as RGBA: white text over translucent black */
+/* the drawn box (coverage over PANEL_BG) as RGBA: white text over translucent black.
+ * The WalServer reads sprite textures bottom-up (car 2026-11-06, nbt_wal_present; car 2026-11-23: the box came out
+ * upside down): rows are written in reverse order. decoder.panelflip: bit 0 rows reversed (default 1), bit 1 columns
+ * reversed (2, or 3 for both, if the box is still mirrored left-right). */
 static void spr_rgba(uint8_t* out)
 {
     for (int i = 0; i < PANEL_W * PANEL_H; ++i) {
-        const int d = g_panel.draw[i] - PANEL_BG;
+        const int row = i / PANEL_W, col = i % PANEL_W;
+        const int src = ((g_spr_flip & 1) ? PANEL_H - 1 - row : row) * PANEL_W + ((g_spr_flip & 2) ? PANEL_W - 1 - col : col);
+        const int d = g_panel.draw[src] - PANEL_BG;
         const unsigned t = d <= 0 ? 0 : d >= PANEL_FG - PANEL_BG ? 255 : (unsigned)d * 255 / (PANEL_FG - PANEL_BG);
         const unsigned a = t + PANEL_ALPHA * (255 - t) / 255;   /* text over the background, both "over" */
         const uint8_t c = a ? (uint8_t)(255 * t / a) : 0;
