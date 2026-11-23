@@ -52,6 +52,9 @@ GERMAN = {
     35: 'Trip computer: on',
     36: 'Trip computer: off',
     37: 'Trip computer',
+    38: 'Decoder: Software',
+    39: 'Decoder: Hardware',
+    40: 'Decoder',
 }
 ENGLISH = {
     1: 'Android Auto',
@@ -91,6 +94,9 @@ ENGLISH = {
     35: 'Trip computer: on',
     36: 'Trip computer: off',
     37: 'Trip computer',
+    38: 'Decoder: Software',
+    39: 'Decoder: Hardware',
+    40: 'Decoder',
 }
 languages = ['de', 'en-UK', 'en-US', 'es-US', 'es-ES', 'fr-FR', 'fr-CA', 'it', 'pt', 'ru']
 with zipfile.ZipFile(output / 'NbtAndroidAuto_ALL_Texts.zip', 'w', zipfile.ZIP_DEFLATED) as archive:

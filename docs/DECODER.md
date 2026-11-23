@@ -21,7 +21,7 @@ Used whenever `nbt_decoder` is installed, at 60 fps; no file is needed. Optional
 | `split800` | The 800x480 picture 1:1 at the left edge (`--size 800x480`), iDrive's split screen stays visible; otherwise stretched to 1280x480 |
 | `decoder.stale` | Milliseconds without a new picture before the window is hidden (default 5000, `0` = never) |
 | `decoder.720` | Full screen sharp (test): the phone draws 1280x720 with its interface in the top 480 rows, shown 1:1 (`--rows 480`) instead of 800x480 stretched; 2.4x the pixels to decode on the CPU |
-| `decoder.hw` | Hardware decoding (test): the car's own H.264 decoder instead of FFmpeg's (`--hw`, see below); with `decoder.720` the sharp picture without the CPU cost |
+| `decoder.hw` | Hardware decoding: the car's own H.264 decoder instead of FFmpeg's (`--hw`, see below); with `decoder.720` the sharp picture without the CPU cost. Also "Decoder: Software / Hardware" on iDrive's Android Auto page (default Software), which restarts the Android Auto service |
 | `decoder.panelwin`, `decoder.panelx`, `decoder.panely` | The WAL window the box is drawn in (default 1024, Android Auto's; 80 = the cursor's) and its position in it (default 875, 96) |
 | `decoder.fuelscale` | Microlitres of fuel per count of CDS `engine.consumption`, x1000 (default 1000), for the box's instantaneous consumption |
 | `decoder.panelbg` | The box's background as hex RRGGBBAA (default 000000B4, translucent black; FF = opaque). Text and icons are white on a dark background and black on a light one; the 1 px outline is derived from it (lighter on dark, darker on light) |
