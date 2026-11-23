@@ -38,7 +38,8 @@
  *   CConfDecoder*), 4 VideoConfigure(h, const CConfVideo&), 5 VideoFrame(h, EVideoFormat, const uint8_t** planes,
  *   uint32_t* pitches, int64_t pts, EPictureFormat, void*), 12/13 SetVideoSource/SetVideoDestination(h, const CRect&),
  *   14 VideoBufferCreate(void** b, w, h, float, bool), 16 VideoRenderFrame(buffer, h, CVideoRenderFrameParams*),
- *   17 VideoStreamCreate(h, void** buffers, n). All calls are queued to the library's worker thread and wait for it
+ *   17 VideoStreamCreate(h, void** buffers, n); 3 VideoClose(h), 15 VideoBufferDestroy(b), 20 VideoStreamDestroy(h).
+ *   All calls are queued to the library's worker thread and wait for it
  *   (NV_NMSDK_TASK_TIMEOUT_MS).
  *   - CConfVideo (OnVideoConfigure): width, height, two floats (the second the frame rate: below 32 each picture is
  *     held for two display refreshes, so 30 caps the stream at 30 pictures/s), decoder type in word 5 (0 none:
@@ -105,6 +106,7 @@ typedef int (*nv_rect_fn)(void*, void*, const struct rect*);
 typedef int (*nv_buffer_fn)(void*, void**, uint32_t, uint32_t, float, int);
 typedef int (*nv_render_fn)(void*, void*, void*, uint8_t*);
 typedef int (*nv_stream_fn)(void*, void*, void**, uint32_t);
+typedef int (*nv_handle_fn)(void*, void*);   /* VideoClose(h), VideoBufferDestroy(b), VideoStreamDestroy(h) */
 /* VideoDecode(h, CBitStreamList* ({data, size} pairs), count, pts, bool, nvh264bspPictureDecode*, reference table
  * (8 bytes per row, the surface first), rows, surface in/out: -1 = take a free one and keep it, else decode into it) */
 typedef int (*nv_decode_fn)(void*, void*, const void*, uint32_t, int64_t, int, void*, void**, uint32_t, void**);
@@ -113,8 +115,8 @@ typedef void (*wal_place_fn)(void*, unsigned long, unsigned long, unsigned long,
 typedef void (*wal_order_fn)(void*, const void*, unsigned long);
 typedef void (*wal_visible_fn)(void*, unsigned long, int);
 
-enum { NV_INIT = 0, NV_OPEN = 2, NV_CONFIGURE = 4, NV_FRAME = 5, NV_DECODE = 6, NV_SOURCE = 12, NV_DEST = 13,
-       NV_BUFFER = 14, NV_RENDER = 16, NV_STREAM = 17 };
+enum { NV_INIT = 0, NV_OPEN = 2, NV_CLOSE = 3, NV_CONFIGURE = 4, NV_FRAME = 5, NV_DECODE = 6, NV_SOURCE = 12,
+       NV_DEST = 13, NV_BUFFER = 14, NV_BUFFER_DESTROY = 15, NV_RENDER = 16, NV_STREAM = 17, NV_STREAM_DESTROY = 20 };
 enum { FORMAT_NV12 = 1, PICTURE_FRAME = 3, BUFFERS = 3, SURFACES = 4 };
 /* hardware decoding: CConfVideo decoder type 3 = H.264 (NVVADecoderCreate with 16 reference frames), the library's
  * most surfaces (1-20); our handles 1..HW_HANDLES stand for them in FFmpeg's VDPAU frames */
@@ -286,6 +288,8 @@ static void panel_open(void);
 /* the stream, sized like the first picture: decoder 0 = pictures from VideoFrame, DECODER_H264 = from VideoDecode;
  * source = the part of the picture shown, destination = where it goes in the stream's buffers (both 0 = the whole
  * picture); out_h = the height of those buffers (the window shows a whole buffer), h for the whole picture */
+static void car_release(int streamed);
+
 static int car_stream_with(int w, int h, uint32_t decoder, uint32_t surfaces, const struct rect* source,
                            const struct rect* destination, int out_h)
 {
@@ -303,18 +307,21 @@ static int car_stream_with(int w, int h, uint32_t decoder, uint32_t surfaces, co
     r = ((nv_configure_fn)nv_method(nv, NV_CONFIGURE))(nv, g_car.stream, &conf);
     if (r < 0) {
         say("video: VideoConfigure failed 0x%08x", r);
+        car_release(0);
         return -1;
     }
     for (int i = 0; i < BUFFERS; ++i) {
         r = ((nv_buffer_fn)nv_method(nv, NV_BUFFER))(nv, &g_car.buffers[i], (uint32_t)w, (uint32_t)out_h, 0.0f, 0);
         if (r < 0) {
             say("video: VideoBufferCreate failed 0x%08x", r);
+            car_release(0);
             return -1;
         }
     }
     r = ((nv_stream_fn)nv_method(nv, NV_STREAM))(nv, g_car.stream, g_car.buffers, BUFFERS);
     if (r < 0) {
         say("video: VideoStreamCreate failed 0x%08x", r);
+        car_release(0);
         return -1;
     }
     const struct rect all = {0, 0, (uint32_t)w, (uint32_t)h};
@@ -346,6 +353,50 @@ static void window_set(int show)
         g_car.order(g_car.wal, &order, 1);
     }
     g_car.visible(g_car.wal, g_car.window, show);
+}
+
+/* the stream, its buffers and the decoder handed back (2026-11-24). The stream lives in the window server
+ * (kdCreateStreamNV, buffers in our memory) and, as it looks, does not end with the process: car, unplug the iPhone,
+ * restart the service, plug it in: the next nbt_decoder's stream (same id) showed garbage and the head unit went
+ * down. streamed: VideoStreamCreate worked. */
+static void car_release(int streamed)
+{
+    void* nv = g_car.nv;
+    int r1 = 0, r2 = 0, r3 = 0;
+    if (streamed)
+        r1 = ((nv_handle_fn)nv_method(nv, NV_STREAM_DESTROY))(nv, g_car.stream);
+    for (int i = 0; i < BUFFERS; ++i)
+        if (g_car.buffers[i]) {
+            const int r = ((nv_handle_fn)nv_method(nv, NV_BUFFER_DESTROY))(nv, g_car.buffers[i]);
+            if (r < 0)
+                r2 = r;
+            g_car.buffers[i] = 0;
+        }
+    if (g_car.stream)
+        r3 = ((nv_handle_fn)nv_method(nv, NV_CLOSE))(nv, g_car.stream);
+    g_car.stream = 0;
+    g_car.ready = 0;
+    say("video: stream closed (stream 0x%08x, buffers 0x%08x, close 0x%08x)", r1, r2, r3);
+}
+
+static pthread_t g_display;
+static int g_display_started;
+
+/* before the program ends: the display thread stopped, the window hidden, the stream closed */
+static void car_close(void)
+{
+    g_quit = 1;
+    if (g_display_started) {
+        pthread_mutex_lock(&g_box.lock);
+        pthread_cond_broadcast(&g_box.posted);
+        pthread_mutex_unlock(&g_box.lock);
+        pthread_join(g_display, 0);
+        g_display_started = 0;
+    }
+    if (!g_car.ready)
+        return;
+    window_set(0);
+    car_release(1);
 }
 
 static unsigned long g_turn;
@@ -1231,12 +1282,12 @@ static void post_picture(void)
     pthread_cond_signal(&g_box.posted);
     pthread_mutex_unlock(&g_box.lock);
     if (!started) {
-        pthread_t t;
         started = 1;
-        if (pthread_create(&t, 0, display_thread, 0) != 0) {
+        if (pthread_create(&g_display, 0, display_thread, 0) != 0) {
             say("display thread could not start");
             g_quit = 1;
-        }
+        } else
+            g_display_started = 1;
     }
 }
 
@@ -1345,8 +1396,7 @@ static void hw_give_up(const char* why)
         }
         close(fd);
     }
-    if (g_car.ready)
-        window_set(0);
+    car_close();
     _exit(3);
 }
 
@@ -1825,9 +1875,8 @@ static int run(void)
         if (g_dec)
             avcodec_flush_buffers(g_dec);
     }
-    say("stopping: window hidden");
-    if (g_car.ready)
-        window_set(0);
+    say("stopping: window hidden, stream closed");
+    car_close();
     usleep(200000);
     return 0;
 }

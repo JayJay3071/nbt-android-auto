@@ -58,8 +58,10 @@ Inside `nbt_decoder`:
   (`/fs/ram3/nbt-aa-state` says `state=running` and is at most 5 s old; a stop counts after 1.5 s), the session has
   sent its first picture and pictures keep coming (`decoder.stale`). Hiding waits 400 ms so short page changes do not
   blink; position, size, z-order and visibility are set again every 2 s.
-- `SIGTERM` hides the window and ends the program with `_exit()`; returning through `NvKdLaunch` crashed in the
-  libraries' cleanup.
+- `SIGTERM` hides the window, closes the car stream (`VideoStreamDestroy`, `VideoBufferDestroy`, `VideoClose`; also
+  when hardware decoding is given up) and ends the program with `_exit()`; returning through `NvKdLaunch` crashed in
+  the libraries' cleanup. Without the close the stream stayed in the window server after the process ended, as it
+  looks: the next `nbt_decoder` (service restart) showed garbage and the head unit went down (car 2026-11-24).
 
 `nbt_decoder --bench FILE` decodes a recorded stream as fast as possible and prints the rate, without the display.
 
@@ -78,6 +80,7 @@ From `/lib/libnmsdk.so`, `/lib/libKD.so` and `/opt/sys/lib/libwal_nvidia.so` (20
 | 14 | `VideoBufferCreate(void** buffer, width, height, float, bool)` |
 | 16 | `VideoRenderFrame(buffer, handle, CVideoRenderFrameParams*)` |
 | 17 | `VideoStreamCreate(handle, void** buffers, count)` |
+| 3, 15, 20 | `VideoClose(handle)`, `VideoBufferDestroy(buffer)`, `VideoStreamDestroy(handle)` |
 
 Every call is queued to the library's worker thread and waits for it, at most `NV_NMSDK_TASK_TIMEOUT_MS`.
 
