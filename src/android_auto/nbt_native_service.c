@@ -68,6 +68,7 @@ static long long ms(void)
 typedef struct {
     pid_t pid; /* 0 = not running */
     int status;
+    int adopted; /* not our child: nbt_decoder kept from the previous service run (keep_decoder) */
 } Child;
 
 /* 1 while the child runs; reaps it (pid = 0) once it has ended */
@@ -77,6 +78,13 @@ static int alive(Child* c)
     pid_t r;
     if (!c->pid)
         return 0;
+    if (c->adopted) {
+        if (kill(c->pid, 0) == 0)
+            return 1;
+        c->pid = 0;
+        c->adopted = 0;
+        return 0;
+    }
     r = waitpid(c->pid, &s, WNOHANG);
     if (r == c->pid) {
         c->pid = 0;
@@ -98,16 +106,17 @@ static void end(Child* c)
         usleep(20000);
     if (alive(c)) {
         kill(-c->pid, SIGKILL);
-        while (waitpid(c->pid, &c->status, 0) < 0 && errno == EINTR) {
+        while (!c->adopted && waitpid(c->pid, &c->status, 0) < 0 && errno == EINTR) {
         }
         c->pid = 0;
+        c->adopted = 0;
     }
 }
 
 /* start args[0] in its own process group, stdin from input (or /dev/null), stdout+stderr to log (or /dev/null) */
 static Child spawn(char* const args[], const char* input, const char* log)
 {
-    Child c = {0, 0};
+    Child c = {0, 0, 0};
     c.pid = fork();
     if (!c.pid) {
         int fd;
@@ -145,6 +154,7 @@ static Child spawn(char* const args[], const char* input, const char* log)
  * States: waiting_for_phone, several_devices, waiting_for_hmi, connecting, unsupported_device, replug_required,
  *         starting_decoder, running, draining, stopped. */
 static int g_phone_present;
+static int g_reboot; /* reboot.required: the picture comes back only after a reboot (decoder_ready) */
 static long long g_last_report;
 static char g_last_state[32];
 
@@ -152,13 +162,14 @@ static void report(const char* state, unsigned session)
 {
     FILE* f = fopen("status.tmp", "w");
     if (f) {
-        fprintf(f, "pid=%d\nstate=%s\nsession=%u\nphone=%d\n", (int)getpid(), state, session, g_phone_present);
+        fprintf(f, "pid=%d\nstate=%s\nsession=%u\nphone=%d\nreboot=%d\n", (int)getpid(), state, session,
+                g_phone_present, g_reboot);
         fclose(f);
         rename("status.tmp", "status.txt");
     }
     f = fopen(HMI_STATE_FILE ".tmp", "w");
     if (f) {
-        fprintf(f, "state=%s\nphone=%d\nsession=%u\n", state, g_phone_present, session);
+        fprintf(f, "state=%s\nphone=%d\nsession=%u\nreboot=%d\n", state, g_phone_present, session, g_reboot);
         fclose(f);
         chmod(HMI_STATE_FILE ".tmp", 0644);
         rename(HMI_STATE_FILE ".tmp", HMI_STATE_FILE);
@@ -388,6 +399,84 @@ static void hmi_visible(void)
     (void)r;
 }
 
+/* nbt_decoder outlives the service (2026-11-24): its car stream can be set up once per boot only. A second
+ * nbt_decoder after a service restart got no picture: the window server kept the first stream's window (slog
+ * "window 1024 ... already allocated", "buffer increment mismatch"), the car's decoder ran out of surfaces after 41
+ * pictures (VideoDecode 0x80110053); without closing the stream first the head unit went down (car, unplug iPhone,
+ * restart service, plug in). So the service leaves it running when it stops and the next one takes it over when its
+ * arguments are the same: decoder.pid and decoder.argv in the runtime directory. */
+static void argv_text(char* const* argv, const char* skip, char* out, size_t size)
+{
+    size_t n = 0;
+    out[0] = 0;
+    for (; *argv; ++argv) {
+        int w;
+        if (skip && !strcmp(*argv, skip))
+            continue;
+        w = snprintf(out + n, size - n, "%s%s", n ? " " : "", *argv);
+        if (w < 0 || (size_t)w >= size - n)
+            break;
+        n += (size_t)w;
+    }
+}
+
+/* pid is a running nbt_decoder: its command line from "pidin -p <pid> arg" (/proc/<pid>/exefile is not there on the car) */
+static int is_decoder(pid_t pid)
+{
+    char cmd[48], line[256];
+    int found = 0;
+    FILE* p;
+    if (pid <= 0 || kill(pid, 0) != 0)
+        return 0;
+    snprintf(cmd, sizeof(cmd), "pidin -p %d arg 2>/dev/null", (int)pid);
+    p = popen(cmd, "r");
+    if (!p)
+        return 0;
+    while (fgets(line, sizeof(line), p))
+        if (atoi(line) == (int)pid && strstr(line, "nbt_decoder"))
+            found = 1;
+    pclose(p);
+    return found;
+}
+
+/* at the start: the previous run's nbt_decoder taken over (same arguments) or ended (other arguments, no decoder mode) */
+static void keep_decoder(Child* ndec, char** ndargv, int dmode)
+{
+    char want[400], want_cpu[400], had[400];
+    int pid = 0;
+    FILE* f = fopen("decoder.pid", "r");
+    if (f) {
+        if (fscanf(f, "%d", &pid) != 1)
+            pid = 0;
+        fclose(f);
+    }
+    had[0] = 0;
+    f = fopen("decoder.argv", "r");
+    if (f) {
+        if (!fgets(had, sizeof(had), f))
+            had[0] = 0;
+        fclose(f);
+        had[strcspn(had, "\n")] = 0;
+    }
+    if (is_decoder((pid_t)pid)) {
+        ndec->pid = (pid_t)pid;
+        ndec->adopted = 1;
+        if (dmode) {   /* ndargv is set only in decoder mode */
+            argv_text(ndargv, 0, want, sizeof(want));
+            argv_text(ndargv, "--hw", want_cpu, sizeof(want_cpu));   /* it gave up on --hw (decoder.hwfail) */
+            if (!strcmp(want, had) || !strcmp(want_cpu, had)) {
+                printf("[native] nbt_decoder %d kept from the previous run\n", pid);
+                return;
+            }
+        }
+        printf("[native] nbt_decoder %d ended (%s): the picture may need a reboot\n", pid,
+               dmode ? "other arguments" : "no decoder mode");
+        end(ndec);
+    }
+    unlink("decoder.pid");
+    unlink("decoder.argv");
+}
+
 /* decoder mode: nbt_decoder (started once, kept across sessions; again only if it ended), then up to 10 s until it
  * waits for a writer (http.ready). 1 = ready. */
 static int decoder_ready(Child* ndec, char** ndargv, unsigned session)
@@ -404,10 +493,33 @@ static int decoder_ready(Child* ndec, char** ndargv, unsigned session)
                 printf("[native] decoder.hwfail: nbt_decoder again without --hw\n");
             ndargv[j] = 0;
         }
+        /* decoder.streamed (written by nbt_decoder with its car stream): one already had the stream in this boot, so
+         * this one gets no picture until a reboot (iDrive's page asks for it: reboot=1 in the state file) */
+        if (access("decoder.streamed", F_OK) == 0 && !g_reboot) {
+            int fd = open("reboot.required", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (fd >= 0)
+                close(fd);
+            g_reboot = 1;
+            printf("[native] nbt_decoder started again: the picture needs a reboot\n");
+        }
         snprintf(ndecname, sizeof(ndecname), "nbt_decoder-%u.log", session);
         setenv("LD_LIBRARY_PATH", DECODER_LIBRARY_PATH, 1);
         *ndec = spawn(ndargv, 0, ndecname);
         setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
+        if (ndec->pid) {
+            char text[400];
+            FILE* f = fopen("decoder.pid", "w");
+            if (f) {
+                fprintf(f, "%d\n", (int)ndec->pid);
+                fclose(f);
+            }
+            f = fopen("decoder.argv", "w");
+            if (f) {
+                argv_text(ndargv, 0, text, sizeof(text));
+                fprintf(f, "%s\n", text);
+                fclose(f);
+            }
+        }
     }
     {
         long long limit = ms() + 10000;
@@ -421,16 +533,17 @@ static int decoder_ready(Child* ndec, char** ndargv, unsigned session)
 
 int main(int argc, char** argv)
 {
-    Child lease = {0, 0};   /* accessory_window: keeps the stock USB stack from claiming the phone */
-    Child http = {0, 0};    /* fifo_http (or nbt_live_file in the old shadow mode) */
-    Child decoder = {0, 0}; /* decode_runner -> NmeCmdLine */
-    Child frames = {0, 0};  /* old modes only: native_frames (PNG) or nbt_wal_present */
-    Child capture = {0, 0}; /* oneplus_native --capture-video: the Android Auto session */
-    Child knob = {0, 0};    /* nbt_knob: iDrive controller -> input.fifo */
-    Child hwv = {0, 0};     /* nbt_hwvideo: shows the video window in front of iDrive */
-    Child ndec = {0, 0};    /* decoder mode: nbt_decoder, started once and kept across sessions */
-    Child carplay = {0, 0}; /* CarPlay mode: nbt_carplay, one per iPhone session */
+    Child lease = {0, 0, 0};   /* accessory_window: keeps the stock USB stack from claiming the phone */
+    Child http = {0, 0, 0};    /* fifo_http (or nbt_live_file in the old shadow mode) */
+    Child decoder = {0, 0, 0}; /* decode_runner -> NmeCmdLine */
+    Child frames = {0, 0, 0};  /* old modes only: native_frames (PNG) or nbt_wal_present */
+    Child capture = {0, 0, 0}; /* oneplus_native --capture-video: the Android Auto session */
+    Child knob = {0, 0, 0};    /* nbt_knob: iDrive controller -> input.fifo */
+    Child hwv = {0, 0, 0};     /* nbt_hwvideo: shows the video window in front of iDrive */
+    Child ndec = {0, 0, 0};    /* decoder mode: nbt_decoder, started once and kept across sessions */
+    Child carplay = {0, 0, 0}; /* CarPlay mode: nbt_carplay, one per iPhone session */
     int carplay_failures = 0;
+    int kept = 0; /* nbt_decoder left running for the next service run */
     (void)argv;
     int guard = -1, lock = -1, bus, device, type, attempts = 0, resets = 0;
     long long absent_since = 0;
@@ -448,7 +561,8 @@ int main(int argc, char** argv)
     if (lock < 0)
         return 2;
     close(lock);
-    if (mkfifo("annexb.fifo", 0600) || mkfifo("raw.fifo", 0600))
+    /* annexb.fifo stays while a kept nbt_decoder waits on it */
+    if ((mkfifo("annexb.fifo", 0600) && errno != EEXIST) || (mkfifo("raw.fifo", 0600) && errno != EEXIST))
         goto done;
     /* keep a reader on raw.fifo open so a writer (shared Cinemo service in the old PNG mode) never gets SIGPIPE */
     guard = open("raw.fifo", O_RDONLY | O_NONBLOCK);
@@ -663,6 +777,9 @@ int main(int argc, char** argv)
             }
         }
     }
+
+    keep_decoder(&ndec, ndargv, dmode);
+    g_reboot = access("reboot.required", F_OK) == 0;   /* RAM: until the next boot */
 
     g_carplay = dmode && access("nbt_carplay", X_OK) == 0 && access("carplay.off", F_OK) != 0;
     if (g_carplay)
@@ -973,7 +1090,11 @@ int main(int argc, char** argv)
 
 done:
     end(&carplay);
-    end(&ndec);
+    /* nbt_decoder stays for the next service run (keep_decoder) */
+    if (dmode && alive(&ndec))
+        kept = 1;
+    else
+        end(&ndec);
     end(&hwv);
     if (center)
         hmi_visible();
@@ -988,9 +1109,11 @@ done:
         drain(guard);
         close(guard);
     }
-    unlink("annexb.fifo");
+    if (!kept && access("decoder.pid", F_OK) != 0) {   /* decoder.pid: not taken over yet (an early end) */
+        unlink("annexb.fifo");
+        unlink("http.ready");
+    }
     unlink("raw.fifo");
-    unlink("http.ready");
     unlink("service.lock");
     report("stopped", session);
     unlink(HMI_STATE_FILE);

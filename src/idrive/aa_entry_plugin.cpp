@@ -138,7 +138,8 @@ const unsigned kEvPoolFirst=200, kEvPoolCount=500, kEvPoolUses=10;   // 500 (use
 enum { kTxtConnectUsb=2, kTxtNoPhone=3, kTxtStarting=4, kTxtRunning=5, kTxtReplug=6, kTxtUnsupported=7,
        kTxtServiceDown=8, kTxtSeveral=9, kTxt169=11, kTxtWide=12, kTxt169On=16, kTxtWideOn=17,
        kTxtBootOn=31, kTxtBootOff=32, kTxtPanelOn=35, kTxtPanelOff=36,
-       kTxtDecoderSw=38, kTxtDecoderHw=39, kTxtSizeFull=41 /* 41..44: full width, small, trip only, car only */ };
+       kTxtDecoderSw=38, kTxtDecoderHw=39, kTxtSizeFull=41 /* 41..44: full width, small, trip only, car only */,
+       kTxtReboot=46 };
 void touch(const char* path) { int fd=open(path,O_WRONLY|O_CREAT|O_TRUNC,0644); if(fd>=0)close(fd); }
 // --- automatic start of the Android Auto service (boot.sh of the persistent package), like the NBT-AAD reference:
 // QNX spawn() into a new process group, no zombie, stdin/out/err /dev/null. Rate-limited to one start per 30 s.
@@ -225,13 +226,8 @@ void plog(const char* what,int a=0) {
     if(n>0)write(fd,line,(size_t)n);
     close(fd);
 }
-// reads native_service's public status; returns the text to show, *running = Android Auto session active
-unsigned readStatus(bool* running) {
-    *running=false;
-    struct stat st;
-    if(stat(kState,&st)!=0||time(0)-st.st_mtime>8) return kTxtServiceDown;   // rewritten every 2 s while alive
-    char buf[160]; int fd=open(kState,O_RDONLY); if(fd<0) return kTxtServiceDown;
-    ssize_t n=read(fd,buf,sizeof(buf)-1); close(fd); if(n<=0) return kTxtServiceDown; buf[n]=0;
+// the status text for native_service's state file
+static unsigned statusText(const char* buf, bool* running) {
     const bool phone=strstr(buf,"phone=1")!=0;
     if(strstr(buf,"state=running")){*running=true;return kTxtRunning;}
     if(strstr(buf,"state=connecting")||strstr(buf,"state=starting_decoder")||strstr(buf,"state=draining")) return kTxtStarting;
@@ -241,6 +237,18 @@ unsigned readStatus(bool* running) {
     if(strstr(buf,"state=waiting_for_hmi")) return phone?kTxtStarting:kTxtNoPhone;   // request just written
     if(strstr(buf,"state=waiting_for_phone")) return kTxtNoPhone;
     return kTxtConnectUsb;
+}
+// reads native_service's public status; returns the text to show, *running = Android Auto session active
+unsigned readStatus(bool* running) {
+    *running=false;
+    struct stat st;
+    if(stat(kState,&st)!=0||time(0)-st.st_mtime>8) return kTxtServiceDown;   // rewritten every 2 s while alive
+    char buf[160]; int fd=open(kState,O_RDONLY); if(fd<0) return kTxtServiceDown;
+    ssize_t n=read(fd,buf,sizeof(buf)-1); close(fd); if(n<=0) return kTxtServiceDown; buf[n]=0;
+    const unsigned text=statusText(buf,running);
+    // 2026-11-24: a setting change started nbt_decoder again, its picture comes back only after a reboot ("Restart
+    // system" below on the same page)
+    return strstr(buf,"reboot=1")?kTxtReboot:text;
 }
 class Entry;
 // --- hold states (car 2026-11-07, second design) ---------------------------------------------------------------------

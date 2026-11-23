@@ -60,6 +60,7 @@ GERMAN = {
     43: 'Widget size: Trip only',
     44: 'Widget size: Car only',
     45: 'Widget size',
+    46: 'Bitte System neu starten',
 }
 ENGLISH = {
     1: 'Android Auto',
@@ -107,6 +108,7 @@ ENGLISH = {
     43: 'Widget size: Trip only',
     44: 'Widget size: Car only',
     45: 'Widget size',
+    46: 'Please restart the system',
 }
 languages = ['de', 'en-UK', 'en-US', 'es-US', 'es-ES', 'fr-FR', 'fr-CA', 'it', 'pt', 'ru']
 with zipfile.ZipFile(output / 'NbtAndroidAuto_ALL_Texts.zip', 'w', zipfile.ZIP_DEFLATED) as archive:

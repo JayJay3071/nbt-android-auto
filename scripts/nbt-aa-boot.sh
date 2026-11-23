@@ -36,10 +36,14 @@ if test -e $P/gate-on; then touch $R/gate.mode; echo 'gate on'; fi
 # it is installed, at 60 fps. touch $P/decoder.off = old picture path (Cinemo), touch $P/decoder.30fps = ask the phone for
 # 30 fps, $P/decoder.args = extra arguments, $P/decoder.stale = ms without a picture before its window hides (default
 # 5000). In $R, decoder.mode and decoder.60fps tell native_service and nbt_knob.
-rm -f $R/decoder.mode $R/decoder.60fps $R/nbt_decoder $R/decoder.args $R/decoder.stale $R/decoder.delay $R/decoder.720
+# A running nbt_decoder (decoder.pid, native_service) outlives service restarts (2026-11-24: its car stream works once per
+# boot): its program file stays, a new one in the package runs after a reboot.
+rm -f $R/decoder.mode $R/decoder.60fps $R/decoder.args $R/decoder.stale $R/decoder.delay $R/decoder.720
+test -e $R/decoder.pid || rm -f $R/nbt_decoder
 rm -f $R/decoder.hw $R/decoder.hwfail
 if test -f $P/nbt_decoder -a ! -e $P/decoder.off; then
-  cp $P/nbt_decoder $R/nbt_decoder && chmod 700 $R/nbt_decoder && touch $R/decoder.mode
+  test -e $R/decoder.pid || { cp $P/nbt_decoder $R/nbt_decoder && chmod 700 $R/nbt_decoder; }
+  test -x $R/nbt_decoder && touch $R/decoder.mode
   test -e $P/decoder.30fps || touch $R/decoder.60fps
   test -f $P/decoder.args && cp $P/decoder.args $R/decoder.args
   test -f $P/decoder.stale && cp $P/decoder.stale $R/decoder.stale

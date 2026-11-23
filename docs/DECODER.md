@@ -42,6 +42,17 @@ keeps it for all following sessions: each session opens the FIFO as writer and c
 killing the program per session froze the whole iDrive display when the phone was plugged in again (car
 2026-11-18/19, once "NO SIGNAL" and an iDrive restart).
 
+It also outlives service restarts (2026-11-24): a second `nbt_decoder` in the same boot gets no picture (the window
+server keeps the first stream's window: "window 1024 ... already allocated", "buffer increment mismatch", and the car's
+decoder runs out of surfaces), and before the stream was closed on exit the head unit went down. `native_service`
+leaves it running when it stops and writes `decoder.pid` and `decoder.argv` into the runtime directory; the next run
+takes it over when the arguments are the same (or only `--hw` is missing, after `decoder.hwfail`; checked with
+`pidin -p <pid> arg`), otherwise it ends it and starts a new one (picture mode or Software/Hardware changed on iDrive's
+page). A new one after a car stream already existed in this boot (`decoder.streamed`, written by `nbt_decoder`) gets no
+picture: `native_service` writes `reboot.required` (RAM, until the next boot) and `reboot=1` into the state file, and
+iDrive's Android Auto page shows "Please restart the system" ("Restart system" is on the same page). `annexb.fifo` stays while it waits on it, and `boot.sh` does not replace its program file: a new `nbt_decoder`
+in the package runs after a reboot.
+
 Inside `nbt_decoder`:
 
 - **Main thread** (inside libKD's `NvKdLaunch`, which the video calls need): reads the FIFO, cuts the Annex B stream

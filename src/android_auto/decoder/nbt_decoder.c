@@ -330,6 +330,11 @@ static int car_stream_with(int w, int h, uint32_t decoder, uint32_t surfaces, co
     g_car.w = w;
     g_car.h = h;
     g_car.ready = 1;
+    {   /* for native_service: a car stream was set up in this boot (another nbt_decoder would need a reboot) */
+        const int fd = open("decoder.streamed", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd >= 0)
+            close(fd);
+    }
     say("video: stream %dx%d (buffers %dx%d) at %d fps, id %d, %s (window %lu, %dx%d on the display)", w, h, w, out_h,
         g_opt.fps, STREAM_ID, decoder ? "decoded by the car" : "pictures from the CPU", g_car.window, g_opt.width,
         g_opt.height);
