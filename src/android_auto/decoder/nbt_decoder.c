@@ -437,7 +437,8 @@ static void car_present(const struct picture* p)
 #define PANEL_OFF_FILE "/fs/ram3/nbt-aa-panel-off"
 #define TRIP_KOMBI_FILE "/fs/ram3/nbt-aa-tripkombi"
 #define TRIP_CDS_FILE "/fs/ram3/nbt-aa-trip"
-enum { PANEL_X = 1000, PANEL_Y = 120, PANEL_W = 280, PANEL_H = 100, PANEL_BG = 24, PANEL_FG = 235 };
+/* user 2026-11-23: at y 100, 10 px from the right edge (x 990), corners rounded like Android Auto's (radius 12) */
+enum { PANEL_X = 990, PANEL_Y = 100, PANEL_W = 280, PANEL_H = 100, PANEL_BG = 24, PANEL_FG = 235, PANEL_RADIUS = 12 };
 
 static struct {
     int ok, have;
@@ -533,9 +534,9 @@ static void panel_compose(void)
         return;
     char a[32], b[32], c[32];
     int v, w;
-    double x, y;
+    double x;
     memset(g_panel.draw, PANEL_BG, sizeof(g_panel.draw));
-    const int L = PANEL_W - 8, M = PANEL_W / 2, R = 8, top[4] = {1, 26, 51, 76};
+    const int L = PANEL_W - 8, M = PANEL_W / 2, R = 8, top[4] = {2, 26, 50, 74};   /* 20 px font, 24 px lines */
     /* 1: trip start, duration, distance (cluster) */
     if (strstr(kombi, "start=") && sscanf(strstr(kombi, "start=") + 6, "%d:%d", &v, &w) == 2 && v >= 0)
         snprintf(a, sizeof(a), "%d:%02d", v, w);
@@ -609,45 +610,66 @@ static void panel_compose(void)
             if (secs >= 2.0) {
                 const double lph = counts / secs * 0.0036 * scale / 1000.0;
                 double speed = 0;
-                if (cds_value(cds, "driving.speedActual", "speedActual", &speed) && speed >= 5)
-                    snprintf(c, sizeof(c), lph / speed >= 0.995 ? "%.0f L/100km" : "%.1f L/100km", lph / speed * 100.0);
-                else
-                    snprintf(c, sizeof(c), "%.1f L/h", lph);
+                const int moving = cds_value(cds, "driving.speedActual", "speedActual", &speed) && speed >= 5;
+                const double value = moving ? lph / speed * 100.0 : lph;
+                /* the first form that fits after range and tank (20 px font: "1000 km  57 L  12.5 L/100km" does not) */
+                static const char* const forms[2][4] = {{"%.1f L/100km", "%.0f L/100km", "%.1f L/100", "%.0f L/100"},
+                                                        {"%.1f L/h", "%.0f L/h", "%.0f L/h", "%.0f L/h"}};
+                const int room = L - (R + panel_width(a) + 8 + panel_width(b) + 8);
+                for (int f = 0; f < 4; ++f) {
+                    snprintf(c, sizeof(c), forms[moving ? 0 : 1][f], value);
+                    if (panel_width(c) <= room)
+                        break;
+                }
             }
         }
     }
     panel_text_at(a, R, top[2], 0);
-    panel_text_at(b, R + panel_width(a) + 14, top[2], 0);   /* tank right after range: room for "12.5 L/100km" */
+    panel_text_at(b, R + panel_width(a) + 8, top[2], 0);   /* tank right after range: room for "12.5 L/100km" */
     panel_text_at(c, L, top[2], 2);
     /* 4: outside, coolant, oil temperature, starter battery charge (CDS sensors.battery {"battery":N}, percent as
      * BimmerGestalt's apps read it, "ACC battery"; 255 = not known). Four items spread evenly over the line. */
+    /* forms from wide to compact, the first whose four items leave at least 6 px between them (20 px font, hot engine:
+     * "11.5°C E 105° O 120° B 85%" does not fit) */
     char d[32];
-    if (cds_value(cds, "sensors.temperatureExterior", "temperatureExterior", &x))
-        snprintf(a, sizeof(a), "%.1f\xb0" "C", x);
-    else
-        strcpy(a, "--\xb0" "C");
-    if (cds_value(cds, "engine.temperature", "engine", &x))
-        snprintf(b, sizeof(b), "E %.0f\xb0", x);
-    else
-        strcpy(b, "E --\xb0");
-    if (cds_value(cds, "engine.temperature", "oil", &y))
-        snprintf(c, sizeof(c), "O %.0f\xb0", y);
-    else
-        strcpy(c, "O --\xb0");
-    if (cds_value(cds, "sensors.battery", "battery", &x) && x >= 0 && x < 255)
-        snprintf(d, sizeof(d), "B %.0f%%", x);
-    else
-        strcpy(d, "B --%");
-    {
-        const char* items[4] = {a, b, c, d};
-        int total = 0;
+    double out = 0, eng = 0, oil = 0, bat = 0;
+    const int have_out = cds_value(cds, "sensors.temperatureExterior", "temperatureExterior", &out);
+    const int have_eng = cds_value(cds, "engine.temperature", "engine", &eng);
+    const int have_oil = cds_value(cds, "engine.temperature", "oil", &oil);
+    const int have_bat = cds_value(cds, "sensors.battery", "battery", &bat) && bat >= 0 && bat < 255;
+    const char* items[4] = {a, b, c, d};
+    int total = 0;
+    for (int form = 0; form < 4; ++form) {   /* 0 "11.5°C E 80°", 1 "12°C", 2 "E105°", 3 "E105" */
+        const char* sp = form < 2 ? " " : "";
+        const char* deg = form < 3 ? "\xb0" : "";
+        if (have_out)
+            snprintf(a, sizeof(a), form ? "%.0f\xb0" "C" : "%.1f\xb0" "C", out);
+        else
+            strcpy(a, "--\xb0" "C");
+        if (have_eng)
+            snprintf(b, sizeof(b), "E%s%.0f%s", sp, eng, deg);
+        else
+            snprintf(b, sizeof(b), "E%s--%s", sp, deg);
+        if (have_oil)
+            snprintf(c, sizeof(c), "O%s%.0f%s", sp, oil, deg);
+        else
+            snprintf(c, sizeof(c), "O%s--%s", sp, deg);
+        if (have_bat)
+            snprintf(d, sizeof(d), "B%s%.0f%%", sp, bat);
+        else
+            snprintf(d, sizeof(d), "B%s--%%", sp);
+        total = 0;
         for (int i = 0; i < 4; ++i)
             total += panel_width(items[i]);
+        if (L - R - total >= 3 * 6)
+            break;
+    }
+    {
         const int gap = (L - R - total) / 3;
         int xpos = R;
         for (int i = 0; i < 4; ++i) {
             panel_text_at(items[i], i == 3 ? L : xpos, top[3], i == 3 ? 2 : 0);
-            xpos += panel_width(items[i]) + (gap > 6 ? gap : 6);
+            xpos += panel_width(items[i]) + (gap > 4 ? gap : 4);
         }
     }
     g_panel.have = 1;
@@ -693,6 +715,8 @@ static void* spr_watchdog(void* arg)
     return 0;
 }
 
+static void corner_mask(void);
+
 static int spr_open(void)
 {
     void* lib = dlopen("/opt/sys/lib/libwal_nvidia.so", RTLD_NOW | RTLD_GLOBAL);
@@ -722,6 +746,7 @@ static int spr_open(void)
     g_spr.x = read_number(RT_DIR "/decoder.panelx", PANEL_X);
     g_spr.y = read_number(RT_DIR "/decoder.panely", PANEL_Y);
     g_spr_flip = (int)read_number(RT_DIR "/decoder.panelflip", 1);
+    corner_mask();
     pthread_t t;
     if (pthread_create(&t, 0, spr_watchdog, 0) != 0) {
         say("panel: watchdog could not start");
@@ -730,6 +755,27 @@ static int spr_open(void)
     g_panel.ok = 1;
     say("panel: sprite 0x%x, %dx%d, window %lu at %ld,%ld", SPRITE_ID, PANEL_W, PANEL_H, g_spr.window, g_spr.x, g_spr.y);
     return 0;
+}
+
+/* coverage of the box with rounded corners (PANEL_RADIUS), 4 x 4 samples per pixel at the corners */
+static uint8_t g_corner[PANEL_W * PANEL_H];
+static void corner_mask(void)
+{
+    for (int row = 0; row < PANEL_H; ++row)
+        for (int col = 0; col < PANEL_W; ++col) {
+            const int cx = col < PANEL_RADIUS ? PANEL_RADIUS : col >= PANEL_W - PANEL_RADIUS ? PANEL_W - PANEL_RADIUS : -1;
+            const int cy = row < PANEL_RADIUS ? PANEL_RADIUS : row >= PANEL_H - PANEL_RADIUS ? PANEL_H - PANEL_RADIUS : -1;
+            int in = 16;
+            if (cx >= 0 && cy >= 0) {
+                in = 0;
+                for (int sy = 0; sy < 4; ++sy)
+                    for (int sx = 0; sx < 4; ++sx) {
+                        const double px = col + (sx + 0.5) / 4 - cx, py = row + (sy + 0.5) / 4 - cy;
+                        in += px * px + py * py <= PANEL_RADIUS * PANEL_RADIUS;
+                    }
+            }
+            g_corner[row * PANEL_W + col] = (uint8_t)(in * 255 / 16);
+        }
 }
 
 /* the drawn box (coverage over PANEL_BG) as RGBA: white text over translucent black.
@@ -743,7 +789,8 @@ static void spr_rgba(uint8_t* out)
         const int src = ((g_spr_flip & 1) ? PANEL_H - 1 - row : row) * PANEL_W + ((g_spr_flip & 2) ? PANEL_W - 1 - col : col);
         const int d = g_panel.draw[src] - PANEL_BG;
         const unsigned t = d <= 0 ? 0 : d >= PANEL_FG - PANEL_BG ? 255 : (unsigned)d * 255 / (PANEL_FG - PANEL_BG);
-        const unsigned a = t + PANEL_ALPHA * (255 - t) / 255;   /* text over the background, both "over" */
+        unsigned a = t + PANEL_ALPHA * (255 - t) / 255;   /* text over the background, both "over" */
+        a = a * g_corner[src] / 255;                      /* rounded corners */
         const uint8_t c = a ? (uint8_t)(255 * t / a) : 0;
         out[4 * i] = out[4 * i + 1] = out[4 * i + 2] = c;
         out[4 * i + 3] = (uint8_t)a;
