@@ -9,6 +9,8 @@
  *                                   it offers after that (the iPhone re-connects; unplug it to undo)
  *   nbt_carplay_probe lockdown      CarPlay configuration, the USB multiplexor in it, a connection to the iPhone's
  *                                   lockdown service and a few questions that need no pairing (no "Trust" prompt)
+ *   nbt_carplay_probe carkit        pairing (the iPhone asks "Trust"; record in /fs/ram3/carplay-pair), a TLS
+ *                                   session, the service com.apple.carkit.service, what it sends first
  *
  * The chip: I2C bus 0, dev-i2c node /dev/i2c/i2c_0/acp (/opt/sys/etc/i2c-conf_x86.cfg). A plain read from a fresh
  * open returns the registers from 0 (car 2026-11-23, dd). How this driver addresses other registers is not known, so
@@ -33,6 +35,19 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <time.h>
+#include <sys/stat.h>
+#include "mbedtls/entropy.h"
+#include "mbedtls/ctr_drbg.h"
+#include "mbedtls/ssl.h"
+#include "mbedtls/net_sockets.h"
+#include "mbedtls/error.h"
+#include "mbedtls/x509_crt.h"
+#include "mbedtls/pk.h"
+#include "mbedtls/rsa.h"
+#include "mbedtls/sha1.h"
+#include "mbedtls/base64.h"
+#include "mbedtls/oid.h"
+#include "psa/crypto.h"
 
 #define ACP_NODE "/dev/i2c/i2c_0/acp"
 #define CERT_FILE "/fs/ram3/acp-cert.der"
@@ -497,11 +512,17 @@ static struct {
     unsigned char *bin, *bout;
     unsigned char rx[70000];
     unsigned rxn;
-    unsigned seq, ack;                       /* multiplexor frame counters */
-    unsigned tseq, tack, sport, connected;   /* the TCP connection */
-    unsigned char data[16384];               /* TCP payload received, not yet taken */
-    unsigned datan;
+    unsigned seq, ack;   /* multiplexor frame counters */
+    unsigned next_port;  /* our next TCP source port */
 } g_mux;
+
+/* one TCP connection over the multiplexor (lockdown, a service) */
+struct tcpc {
+    unsigned sport, dport, tseq, tack, connected, closed;
+    unsigned char data[131072];   /* received, not yet taken */
+    unsigned datan;
+};
+static struct tcpc g_tc[3];
 
 static void put16(unsigned char* p, unsigned v) { p[0] = (unsigned char)(v >> 8); p[1] = (unsigned char)v; }
 static void put32(unsigned char* p, unsigned v)
@@ -647,116 +668,646 @@ static int mux_frame(unsigned char* f, unsigned* n, unsigned ms)
     }
 }
 
-static int tcp_send(unsigned flags, const unsigned char* payload, unsigned n)
+static long long ms_now(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000LL + ts.tv_nsec / 1000000;
+}
+
+static int tcp_send(struct tcpc* c, unsigned flags, const unsigned char* payload, unsigned n)
 {
     static unsigned char t[20 + 16000];
     if (n > 16000)
         return -1;
     memset(t, 0, 20);
-    put16(t, g_mux.sport);
-    put16(t + 2, LOCKDOWN_PORT);
-    put32(t + 4, g_mux.tseq);
-    put32(t + 8, g_mux.tack);
+    put16(t, c->sport);
+    put16(t + 2, c->dport);
+    put32(t + 4, c->tseq);
+    put32(t + 8, c->tack);
     t[12] = 0x50;
     t[13] = (unsigned char)flags;
     put16(t + 14, 512);
-    memcpy(t + 20, payload, n);
+    if (n)
+        memcpy(t + 20, payload, n);
     if (mux_send(MUX_TCP, t, 20 + n))
         return -1;
-    g_mux.tseq += n;
+    c->tseq += n;
     return 0;
 }
 
-/* frames until one TCP segment for us has been handled; 1 = handled, 0 = timeout, -1 = error / reset */
+/* one frame, handed to its connection; 1 = a frame, 0 = timeout, -1 = the multiplexor failed */
 static int tcp_poll(unsigned ms)
 {
     static unsigned char f[70000];
-    unsigned n;
-    for (;;) {
-        const int r = mux_frame(f, &n, ms);
-        if (r <= 0)
-            return r;
-        const unsigned proto = get32(f);
-        if (proto != MUX_TCP || n < 16 + 20) {
-            say("mux: frame protocol %u, %u bytes (ignored)", proto, n);
-            continue;
-        }
-        const unsigned char* t = f + 16;
-        const unsigned hl = (t[12] >> 4) * 4, flags = t[13];
-        if (get16(t + 2) != g_mux.sport || hl < 20 || 16 + hl > n)
-            continue;
-        if (flags & TCP_RST) {
-            say("tcp: reset by the iPhone");
-            return -1;
-        }
-        if ((flags & (TCP_SYN | TCP_ACK)) == (TCP_SYN | TCP_ACK)) {
-            g_mux.tseq += 1;
-            g_mux.tack = get32(t + 4) + 1;
-            g_mux.connected = 1;
-            tcp_send(TCP_ACK, 0, 0);
-            return 1;
-        }
-        const unsigned len = n - 16 - hl;
-        if (len) {
-            if (len > sizeof(g_mux.data) - g_mux.datan)
-                return -1;
-            memcpy(g_mux.data + g_mux.datan, t + hl, len);
-            g_mux.datan += len;
-            g_mux.tack += len;
-            tcp_send(TCP_ACK, 0, 0);
-        }
-        if (flags & TCP_FIN) {
-            g_mux.tack += 1;
-            tcp_send(TCP_ACK, 0, 0);
-            say("tcp: closed by the iPhone");
-            return -1;
-        }
+    unsigned n, k;
+    const int r = mux_frame(f, &n, ms);
+    if (r <= 0)
+        return r;
+    if (get32(f) != MUX_TCP || n < 16 + 20) {
+        say("mux: frame protocol %u, %u bytes (ignored)", get32(f), n);
         return 1;
     }
+    const unsigned char* t = f + 16;
+    const unsigned hl = (t[12] >> 4) * 4u, flags = t[13], port = get16(t + 2);
+    struct tcpc* c = 0;
+    for (k = 0; k < sizeof(g_tc) / sizeof(g_tc[0]); ++k)
+        if (g_tc[k].sport == port && !g_tc[k].closed)
+            c = &g_tc[k];
+    if (!c || hl < 20 || 16 + hl > n)
+        return 1;   /* an old connection's leftovers (car 2026-11-23: one before the version answer) */
+    if (flags & TCP_RST) {
+        say("tcp %u: reset by the iPhone", c->dport);
+        c->closed = 2;
+        return 1;
+    }
+    if ((flags & (TCP_SYN | TCP_ACK)) == (TCP_SYN | TCP_ACK)) {
+        c->tseq += 1;
+        c->tack = get32(t + 4) + 1;
+        c->connected = 1;
+        tcp_send(c, TCP_ACK, 0, 0);
+        return 1;
+    }
+    const unsigned len = n - 16 - hl;
+    if (len) {
+        if (len > sizeof(c->data) - c->datan) {
+            say("tcp %u: receive buffer full", c->dport);
+            c->closed = 2;
+            return 1;
+        }
+        memcpy(c->data + c->datan, t + hl, len);
+        c->datan += len;
+        c->tack += len;
+        tcp_send(c, TCP_ACK, 0, 0);
+    }
+    if (flags & TCP_FIN) {
+        c->tack += 1;
+        tcp_send(c, TCP_ACK, 0, 0);
+        c->closed = 1;
+    }
+    return 1;
 }
 
-/* one lockdown request (an XML dictionary body), its answer printed */
-static int lockdown_ask(const char* body)
+static struct tcpc* tcp_open(unsigned slot, unsigned port)
 {
+    struct tcpc* c = &g_tc[slot];
+    memset(c, 0, sizeof(*c));
+    c->sport = g_mux.next_port++;
+    c->dport = port;
+    if (tcp_send(c, TCP_SYN, 0, 0))
+        return 0;
+    const long long until = ms_now() + 5000;
+    while (!c->connected && !c->closed && ms_now() < until)
+        if (tcp_poll(200) < 0)
+            return 0;
+    if (!c->connected) {
+        say("tcp: port %u %s", port, c->closed ? "refused" : "did not answer");
+        c->closed = 2;
+        return 0;
+    }
+    return c;
+}
+
+static void tcp_close(struct tcpc* c)
+{
+    if (c && c->connected && !c->closed)
+        tcp_send(c, TCP_FIN | TCP_ACK, 0, 0);
+    if (c)
+        c->closed = 1;
+}
+
+/* exactly n bytes of the connection's data, waiting up to ms */
+static int tcp_take(struct tcpc* c, unsigned char* out, unsigned n, unsigned ms)
+{
+    const long long until = ms_now() + ms;
+    while (c->datan < n && !c->closed && ms_now() < until)
+        if (tcp_poll(200) < 0)
+            return -1;
+    if (c->datan < n)
+        return -1;
+    memcpy(out, c->data, n);
+    memmove(c->data, c->data + n, c->datan - n);
+    c->datan -= n;
+    return 0;
+}
+
+/* ---- a byte stream: a TCP connection, TLS on it once a session or service asks for it ---- */
+
+static mbedtls_entropy_context g_entropy;
+static mbedtls_ctr_drbg_context g_drbg;
+
+struct stream {
+    struct tcpc* c;
+    int tls;
+    mbedtls_ssl_context ssl;
+    mbedtls_ssl_config conf;
+};
+
+static int bio_send(void* ctx, const unsigned char* buf, size_t len)
+{
+    struct tcpc* c = (struct tcpc*)ctx;
+    const unsigned n = len > 16000 ? 16000 : (unsigned)len;
+    if (c->closed)
+        return MBEDTLS_ERR_NET_CONN_RESET;
+    return tcp_send(c, TCP_ACK, buf, n) ? MBEDTLS_ERR_NET_SEND_FAILED : (int)n;
+}
+
+static int bio_recv(void* ctx, unsigned char* buf, size_t len)
+{
+    struct tcpc* c = (struct tcpc*)ctx;
+    const long long until = ms_now() + 8000;
+    unsigned n;
+    while (!c->datan && !c->closed && ms_now() < until)
+        if (tcp_poll(200) < 0)
+            return MBEDTLS_ERR_NET_RECV_FAILED;
+    if (!c->datan)
+        return c->closed ? MBEDTLS_ERR_NET_CONN_RESET : MBEDTLS_ERR_SSL_TIMEOUT;
+    n = c->datan < len ? c->datan : (unsigned)len;
+    memcpy(buf, c->data, n);
+    memmove(c->data, c->data + n, c->datan - n);
+    c->datan -= n;
+    return (int)n;
+}
+
+static void tls_error(const char* what, int r)
+{
+    char e[160];
+    mbedtls_strerror(r, e, sizeof(e));
+    say("tls: %s: -0x%04x %s", what, (unsigned)-r, e);
+}
+
+/* TLS on the stream as lockdown wants it: the pair record's root certificate and key as our identity, the iPhone's
+ * certificate not checked (as libimobiledevice and xcertplay) */
+static int stream_tls(struct stream* s, mbedtls_x509_crt* cert, mbedtls_pk_context* key)
+{
+    int r;
+    mbedtls_ssl_init(&s->ssl);
+    mbedtls_ssl_config_init(&s->conf);
+    r = mbedtls_ssl_config_defaults(&s->conf, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM,
+                                    MBEDTLS_SSL_PRESET_DEFAULT);
+    if (r) {
+        tls_error("config", r);
+        return -1;
+    }
+    mbedtls_ssl_conf_authmode(&s->conf, MBEDTLS_SSL_VERIFY_NONE);
+    mbedtls_ssl_conf_rng(&s->conf, mbedtls_ctr_drbg_random, &g_drbg);
+    mbedtls_ssl_conf_max_tls_version(&s->conf, MBEDTLS_SSL_VERSION_TLS1_2);
+    r = mbedtls_ssl_conf_own_cert(&s->conf, cert, key);
+    if (!r)
+        r = mbedtls_ssl_setup(&s->ssl, &s->conf);
+    if (r) {
+        tls_error("setup", r);
+        return -1;
+    }
+    mbedtls_ssl_set_bio(&s->ssl, s->c, bio_send, bio_recv, 0);
+    while ((r = mbedtls_ssl_handshake(&s->ssl)) != 0)
+        if (r != MBEDTLS_ERR_SSL_WANT_READ && r != MBEDTLS_ERR_SSL_WANT_WRITE) {
+            tls_error("handshake", r);
+            return -1;
+        }
+    s->tls = 1;
+    say("tls: %s, %s", mbedtls_ssl_get_version(&s->ssl), mbedtls_ssl_get_ciphersuite(&s->ssl));
+    return 0;
+}
+
+static int stream_write(struct stream* s, const unsigned char* b, unsigned n)
+{
+    while (n) {
+        int r;
+        if (!s->tls) {
+            const unsigned k = n > 16000 ? 16000 : n;
+            if (tcp_send(s->c, TCP_ACK, b, k))
+                return -1;
+            b += k;
+            n -= k;
+            continue;
+        }
+        r = mbedtls_ssl_write(&s->ssl, b, n);
+        if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE)
+            continue;
+        if (r <= 0) {
+            tls_error("write", r);
+            return -1;
+        }
+        b += r;
+        n -= (unsigned)r;
+    }
+    return 0;
+}
+
+static int stream_read(struct stream* s, unsigned char* b, unsigned n, unsigned ms)
+{
+    if (!s->tls)
+        return tcp_take(s->c, b, n, ms);
+    while (n) {
+        const int r = mbedtls_ssl_read(&s->ssl, b, n);
+        if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE)
+            continue;
+        if (r <= 0) {
+            if (r != MBEDTLS_ERR_SSL_TIMEOUT)
+                tls_error("read", r);
+            return -1;
+        }
+        b += r;
+        n -= (unsigned)r;
+    }
+    return 0;
+}
+
+/* ---- lockdown: plist requests ---- */
+
+static char g_answer[65536];
+
+/* the value after <key>key</key>: a string, integer or data element's text, or "true" / "false" */
+static int plist_value(const char* xml, const char* key, char* out, unsigned size)
+{
+    char k[96];
+    const char *p, *e;
+    snprintf(k, sizeof(k), "<key>%s</key>", key);
+    p = strstr(xml, k);
+    if (!p)
+        return 0;
+    p += strlen(k);
+    while (*p == ' ' || *p == '\n' || *p == '\t' || *p == '\r')
+        ++p;
+    if (!strncmp(p, "<true/>", 7) || !strncmp(p, "<false/>", 8)) {
+        snprintf(out, size, "%s", p[1] == 't' ? "true" : "false");
+        return 1;
+    }
+    p = strchr(p, '>');
+    if (!p)
+        return 0;
+    ++p;
+    e = strchr(p, '<');
+    if (!e || (unsigned)(e - p) >= size)
+        return 0;
+    memcpy(out, p, (size_t)(e - p));
+    out[e - p] = 0;
+    return 1;
+}
+
+/* one request (the dictionary's entries after Label), its answer in g_answer, printed shortened */
+static int lockdown_request(struct stream* s, const char* body)
+{
+    static char msg[16384];
     static const char head[] = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD "
                                "PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist "
                                "version=\"1.0\">\n<dict>\n<key>Label</key>\n<string>nbt</string>\n";
-    static const char tail[] = "</dict>\n</plist>\n";
-    char msg[2048];
-    const int len = snprintf(msg + 4, sizeof(msg) - 4, "%s%s%s", head, body, tail);
-    unsigned i, want, t;
-    if (len <= 0 || len >= (int)sizeof(msg) - 4)
+    unsigned char len[4];
+    unsigned n, i, j;
+    const int m = snprintf(msg + 4, sizeof(msg) - 4, "%s%s</dict>\n</plist>\n", head, body);
+    if (m <= 0 || m >= (int)sizeof(msg) - 4)
         return -1;
-    put32((unsigned char*)msg, (unsigned)len);
-    if (tcp_send(TCP_ACK, (const unsigned char*)msg, 4 + (unsigned)len))
-        return -1;
-    for (t = 0; t < 50; ++t) {
-        if (g_mux.datan >= 4) {
-            want = get32(g_mux.data);
-            if (want > sizeof(g_mux.data) - 4) {
-                say("lockdown: answer of %u bytes is too long", want);
-                return -1;
-            }
-            if (g_mux.datan >= 4 + want)
-                break;
-        }
-        if (tcp_poll(200) < 0)
-            return -1;
-    }
-    if (g_mux.datan < 4 || g_mux.datan < 4 + get32(g_mux.data)) {
+    put32((unsigned char*)msg, (unsigned)m);
+    if (stream_write(s, (const unsigned char*)msg, 4 + (unsigned)m) || stream_read(s, len, 4, 10000)) {
         say("lockdown: no answer");
         return -1;
     }
-    want = get32(g_mux.data);
-    printf("      answer: ");
-    for (i = 4; i < 4 + want; ++i) {   /* the XML on one line */
-        const char c = (char)g_mux.data[i];
-        if (c != '\n' && c != '\t' && c != '\r')
-            putchar(c);
+    n = get32(len);
+    if (n >= sizeof(g_answer) || stream_read(s, (unsigned char*)g_answer, n, 10000)) {
+        say("lockdown: answer of %u bytes not read", n);
+        return -1;
     }
-    putchar('\n');
-    memmove(g_mux.data, g_mux.data + 4 + want, g_mux.datan - 4 - want);
-    g_mux.datan -= 4 + want;
+    g_answer[n] = 0;
+    {   /* printed: from <dict> on, on one line, long values cut */
+        const char* p = strstr(g_answer, "<dict>");
+        char line[700];
+        for (i = 0, j = 0; p && p[i] && j < sizeof(line) - 1; ++i)
+            if (p[i] != '\n' && p[i] != '\t' && p[i] != '\r')
+                line[j++] = p[i];
+        line[j] = 0;
+        printf("      answer: %s%s\n", line, p && p[i] ? " ..." : "");
+    }
+    return 0;
+}
+
+static int lockdown_error(void)
+{
+    char e[128];
+    if (!plist_value(g_answer, "Error", e, sizeof(e)))
+        return 0;
+    say("lockdown: error %s", e);
+    return 1;
+}
+
+/* ---- the pair record (RAM, /fs/ram3/carplay-pair: the iPhone asks "Trust" again after each boot of the car) ----
+ * As libimobiledevice / xcertplay make it: a root key and certificate (CA), a host key and certificate and a
+ * certificate for the iPhone's own key (DevicePublicKey), all RSA-2048, empty names, serial 0, SHA-256, signed by the
+ * root; HostID and SystemBUID are UUIDs. TLS with lockdown uses the root certificate and key. */
+#define PAIR_DIR "/fs/ram3/carplay-pair"
+
+static struct {
+    char host_id[40], buid[40];
+    char root_key[4096], root_cert[4096], host_key[4096], host_cert[4096], device_cert[4096];
+    int have;
+} g_pair;
+
+static int file_get(const char* name, char* out, unsigned size)
+{
+    char path[128];
+    FILE* f;
+    size_t n;
+    snprintf(path, sizeof(path), PAIR_DIR "/%s", name);
+    f = fopen(path, "rb");
+    if (!f)
+        return -1;
+    n = fread(out, 1, size - 1, f);
+    fclose(f);
+    out[n] = 0;
+    return n ? 0 : -1;
+}
+
+static int file_put(const char* name, const char* data, unsigned n)
+{
+    char path[128];
+    FILE* f;
+    snprintf(path, sizeof(path), PAIR_DIR "/%s", name);
+    f = fopen(path, "wb");
+    if (!f || fwrite(data, 1, n, f) != n) {
+        if (f)
+            fclose(f);
+        return -1;
+    }
+    return fclose(f);
+}
+
+static int pair_load(void)
+{
+    g_pair.have = !file_get("host_id", g_pair.host_id, sizeof(g_pair.host_id)) &&
+                  !file_get("buid", g_pair.buid, sizeof(g_pair.buid)) &&
+                  !file_get("root_key.pem", g_pair.root_key, sizeof(g_pair.root_key)) &&
+                  !file_get("root_cert.pem", g_pair.root_cert, sizeof(g_pair.root_cert)) &&
+                  !file_get("paired", g_answer, 16);
+    return g_pair.have ? 0 : -1;
+}
+
+static void uuid(char* out)
+{
+    unsigned char r[16];
+    mbedtls_ctr_drbg_random(&g_drbg, r, sizeof(r));
+    r[6] = (unsigned char)((r[6] & 0x0f) | 0x40);
+    r[8] = (unsigned char)((r[8] & 0x3f) | 0x80);
+    sprintf(out, "%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X", r[0], r[1], r[2], r[3], r[4],
+            r[5], r[6], r[7], r[8], r[9], r[10], r[11], r[12], r[13], r[14], r[15]);
+}
+
+/* one certificate: subject's key, signed by the root key; ca = the root's own, ski = with a subject key identifier */
+static int make_cert(mbedtls_pk_context* subject, mbedtls_pk_context* root, int ca, int ski, char* pem, unsigned size)
+{
+    mbedtls_x509write_cert crt;
+    static const unsigned char serial[1] = {0};
+    static const unsigned char bc_ca[] = {0x30, 0x03, 0x01, 0x01, 0xff}, bc_leaf[] = {0x30, 0x00};
+    static const unsigned char ku[] = {0x03, 0x02, 0x05, 0xa0};   /* digitalSignature, keyEncipherment */
+    int r;
+    mbedtls_x509write_crt_init(&crt);
+    mbedtls_x509write_crt_set_version(&crt, MBEDTLS_X509_CRT_VERSION_3);
+    mbedtls_x509write_crt_set_md_alg(&crt, MBEDTLS_MD_SHA256);
+    mbedtls_x509write_crt_set_subject_key(&crt, subject);
+    mbedtls_x509write_crt_set_issuer_key(&crt, root);
+    r = mbedtls_x509write_crt_set_serial_raw(&crt, (unsigned char*)serial, 1);
+    if (!r)
+        r = mbedtls_x509write_crt_set_validity(&crt, "20260101000000", "20360101000000");
+    if (!r)
+        r = mbedtls_x509write_crt_set_extension(&crt, MBEDTLS_OID_BASIC_CONSTRAINTS,
+                                                MBEDTLS_OID_SIZE(MBEDTLS_OID_BASIC_CONSTRAINTS), 1,
+                                                ca ? bc_ca : bc_leaf, ca ? sizeof(bc_ca) : sizeof(bc_leaf));
+    if (!r && ski) {
+        unsigned char der[600], v[22];
+        unsigned char* end = der + sizeof(der);
+        const int n = mbedtls_pk_write_pubkey(&end, der, subject);   /* PKCS#1, written backwards from the end */
+        if (n <= 0)
+            r = -1;
+        else {
+            v[0] = 0x04;
+            v[1] = 20;
+            r = mbedtls_sha1(der + sizeof(der) - n, (size_t)n, v + 2);
+            if (!r)
+                r = mbedtls_x509write_crt_set_extension(&crt, MBEDTLS_OID_SUBJECT_KEY_IDENTIFIER,
+                                                        MBEDTLS_OID_SIZE(MBEDTLS_OID_SUBJECT_KEY_IDENTIFIER), 0, v,
+                                                        sizeof(v));
+        }
+    }
+    if (!r && !ca)
+        r = mbedtls_x509write_crt_set_extension(&crt, MBEDTLS_OID_KEY_USAGE, MBEDTLS_OID_SIZE(MBEDTLS_OID_KEY_USAGE),
+                                                1, ku, sizeof(ku));
+    if (!r)
+        r = mbedtls_x509write_crt_pem(&crt, (unsigned char*)pem, size, mbedtls_ctr_drbg_random, &g_drbg);
+    mbedtls_x509write_crt_free(&crt);
+    if (r)
+        tls_error("certificate", r);
+    return r ? -1 : 0;
+}
+
+static int gen_key(mbedtls_pk_context* k, char* pem, unsigned size)
+{
+    const long long t0 = ms_now();
+    int r = mbedtls_pk_setup(k, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA));
+    if (!r)
+        r = mbedtls_rsa_gen_key(mbedtls_pk_rsa(*k), mbedtls_ctr_drbg_random, &g_drbg, 2048, 65537);
+    if (!r && pem)
+        r = mbedtls_pk_write_key_pem(k, (unsigned char*)pem, size);
+    if (r)
+        tls_error("RSA key", r);
+    else
+        say("pair: RSA-2048 key made in %lld ms", ms_now() - t0);
+    return r ? -1 : 0;
+}
+
+/* the record for the iPhone's key (PEM, PKCS#1) */
+static int pair_make(const char* device_pem)
+{
+    mbedtls_pk_context root, host, device;
+    int r = -1;
+    mbedtls_pk_init(&root);
+    mbedtls_pk_init(&host);
+    mbedtls_pk_init(&device);
+    if (mbedtls_pk_parse_public_key(&device, (const unsigned char*)device_pem, strlen(device_pem) + 1)) {
+        say("pair: the iPhone's key could not be read");
+        goto out;
+    }
+    if (gen_key(&root, g_pair.root_key, sizeof(g_pair.root_key)) ||
+        gen_key(&host, g_pair.host_key, sizeof(g_pair.host_key)) ||
+        make_cert(&root, &root, 1, 0, g_pair.root_cert, sizeof(g_pair.root_cert)) ||
+        make_cert(&host, &root, 0, 0, g_pair.host_cert, sizeof(g_pair.host_cert)) ||
+        make_cert(&device, &root, 0, 1, g_pair.device_cert, sizeof(g_pair.device_cert)))
+        goto out;
+    uuid(g_pair.host_id);
+    r = 0;
+out:
+    mbedtls_pk_free(&root);
+    mbedtls_pk_free(&host);
+    mbedtls_pk_free(&device);
+    return r;
+}
+
+static void pem_base64(const char* pem, char* out, unsigned size)
+{
+    size_t n = 0;
+    if (mbedtls_base64_encode((unsigned char*)out, size, &n, (const unsigned char*)pem, strlen(pem)))
+        n = 0;
+    out[n] = 0;
+}
+
+/* lockdown on a new connection (slot 0) */
+static int lockdown_connect(struct stream* s)
+{
+    memset(s, 0, sizeof(*s));
+    s->c = tcp_open(0, LOCKDOWN_PORT);
+    return s->c ? 0 : -1;
+}
+
+/* pairing: the iPhone asks "Trust this computer?"; until it is answered, Pair says PairingDialogResponsePending and
+ * is asked again (a new connection each time, as xcertplay), for up to 2 minutes */
+static int pair(void)
+{
+    struct stream s;
+    char value[4096], device_pem[2048], body[16384], dev64[3000], host64[3000], root64[3000];
+    size_t n = 0;
+    long long until;
+    if (!g_pair.buid[0])
+        uuid(g_pair.buid);
+    if (lockdown_connect(&s))
+        return -1;
+    snprintf(body, sizeof(body),
+             "<key>Request</key>\n<string>SetValue</string>\n<key>Key</key>\n<string>UntrustedHostBUID</string>\n"
+             "<key>Value</key>\n<string>%s</string>\n",
+             g_pair.buid);
+    if (lockdown_request(&s, body))
+        return -1;
+    if (lockdown_request(&s, "<key>Request</key>\n<string>GetValue</string>\n<key>Key</key>\n"
+                             "<string>DevicePublicKey</string>\n") ||
+        !plist_value(g_answer, "Value", value, sizeof(value)) ||
+        mbedtls_base64_decode((unsigned char*)device_pem, sizeof(device_pem) - 1, &n, (const unsigned char*)value,
+                              strlen(value))) {
+        say("pair: no DevicePublicKey");
+        return -1;
+    }
+    device_pem[n] = 0;
+    tcp_close(s.c);
+    say("pair: making the pair record (two RSA-2048 keys)");
+    if (pair_make(device_pem))
+        return -1;
+    pem_base64(g_pair.device_cert, dev64, sizeof(dev64));
+    pem_base64(g_pair.host_cert, host64, sizeof(host64));
+    pem_base64(g_pair.root_cert, root64, sizeof(root64));
+    snprintf(body, sizeof(body),
+             "<key>PairRecord</key>\n<dict>\n<key>DeviceCertificate</key>\n<data>%s</data>\n"
+             "<key>HostCertificate</key>\n<data>%s</data>\n<key>HostID</key>\n<string>%s</string>\n"
+             "<key>RootCertificate</key>\n<data>%s</data>\n<key>SystemBUID</key>\n<string>%s</string>\n</dict>\n"
+             "<key>Request</key>\n<string>Pair</string>\n<key>ProtocolVersion</key>\n<string>2</string>\n"
+             "<key>PairingOptions</key>\n<dict>\n<key>ExtendedPairingErrors</key>\n<true/>\n</dict>\n",
+             dev64, host64, g_pair.host_id, root64, g_pair.buid);
+    say("pair: asking the iPhone (answer \"Trust\" on it, with the passcode if it asks)");
+    until = ms_now() + 120000;
+    while (ms_now() < until) {
+        if (lockdown_connect(&s))
+            return -1;
+        if (lockdown_request(&s, body))
+            return -1;
+        tcp_close(s.c);
+        if (!plist_value(g_answer, "Error", value, sizeof(value))) {
+            say("pair: paired");
+            mkdir(PAIR_DIR, 0700);
+            if (file_put("host_id", g_pair.host_id, strlen(g_pair.host_id)) ||
+                file_put("buid", g_pair.buid, strlen(g_pair.buid)) ||
+                file_put("root_key.pem", g_pair.root_key, strlen(g_pair.root_key)) ||
+                file_put("root_cert.pem", g_pair.root_cert, strlen(g_pair.root_cert)) ||
+                file_put("host_key.pem", g_pair.host_key, strlen(g_pair.host_key)) ||
+                file_put("host_cert.pem", g_pair.host_cert, strlen(g_pair.host_cert)) ||
+                file_put("device_cert.pem", g_pair.device_cert, strlen(g_pair.device_cert)) ||
+                (plist_value(g_answer, "EscrowBag", value, sizeof(value)) &&
+                 file_put("escrow_bag.b64", value, strlen(value))) ||
+                file_put("paired", "1\n", 2))
+                say("pair: the record could not be written to %s (pairing again next time)", PAIR_DIR);
+            g_pair.have = 1;
+            return 0;
+        }
+        if (strcmp(value, "PairingDialogResponsePending")) {
+            say("pair: refused: %s", value);
+            return -1;
+        }
+        sleep(1);
+    }
+    say("pair: no answer on the iPhone within 2 minutes");
+    return -1;
+}
+
+static int pair_identity(mbedtls_x509_crt* cert, mbedtls_pk_context* key)
+{
+    int r = mbedtls_x509_crt_parse(cert, (const unsigned char*)g_pair.root_cert, strlen(g_pair.root_cert) + 1);
+    if (!r)
+        r = mbedtls_pk_parse_key(key, (const unsigned char*)g_pair.root_key, strlen(g_pair.root_key) + 1, 0, 0,
+                                 mbedtls_ctr_drbg_random, &g_drbg);
+    if (r)
+        tls_error("pair record", r);
+    return r ? -1 : 0;
+}
+
+/* pairing if needed, a TLS session, the carkit service on its own connection (slot 1); first bytes printed */
+static int run_carkit(void)
+{
+    struct stream s, svc;
+    mbedtls_x509_crt cert;
+    mbedtls_pk_context key;
+    char body[512], value[256];
+    unsigned port, i;
+    int r;
+    mbedtls_x509_crt_init(&cert);
+    mbedtls_pk_init(&key);
+    if (pair_load() == 0)
+        say("pair: record from %s (HostID %s)", PAIR_DIR, g_pair.host_id);
+    else if (pair())
+        return -1;
+    if (pair_identity(&cert, &key) || lockdown_connect(&s))
+        return -1;
+    snprintf(body, sizeof(body),
+             "<key>Request</key>\n<string>StartSession</string>\n<key>HostID</key>\n<string>%s</string>\n"
+             "<key>SystemBUID</key>\n<string>%s</string>\n",
+             g_pair.host_id, g_pair.buid);
+    if (lockdown_request(&s, body) || lockdown_error())
+        return -1;
+    if (plist_value(g_answer, "EnableSessionSSL", value, sizeof(value)) && !strcmp(value, "true")) {
+        if (stream_tls(&s, &cert, &key))
+            return -1;
+    } else
+        say("lockdown: session without TLS");
+    if (lockdown_request(&s, "<key>Request</key>\n<string>StartService</string>\n<key>Service</key>\n"
+                             "<string>com.apple.carkit.service</string>\n") ||
+        lockdown_error() || !plist_value(g_answer, "Port", value, sizeof(value)))
+        return -1;
+    port = (unsigned)atoi(value);
+    const int ssl = plist_value(g_answer, "EnableServiceSSL", value, sizeof(value)) && !strcmp(value, "true");
+    say("carkit: port %u%s", port, ssl ? ", TLS" : "");
+    memset(&svc, 0, sizeof(svc));
+    svc.c = tcp_open(1, port);
+    if (!svc.c || (ssl && stream_tls(&svc, &cert, &key)))
+        return -1;
+    say("carkit: connected; what the iPhone sends in the first 5 s:");
+    {
+        unsigned char b[256];
+        unsigned got = 0;
+        const long long until = ms_now() + 5000;
+        while (got < sizeof(b) && ms_now() < until) {
+            if (ssl) {
+                r = mbedtls_ssl_read(&svc.ssl, b + got, sizeof(b) - got);
+                if (r > 0)
+                    got += (unsigned)r;
+                else if (r != MBEDTLS_ERR_SSL_WANT_READ && r != MBEDTLS_ERR_SSL_TIMEOUT)
+                    break;
+            } else {
+                if (svc.c->datan) {
+                    const unsigned k = svc.c->datan < sizeof(b) - got ? svc.c->datan : sizeof(b) - got;
+                    tcp_take(svc.c, b + got, k, 0);
+                    got += k;
+                } else if (tcp_poll(200) < 0 || svc.c->closed)
+                    break;
+            }
+        }
+        hex("carkit data", b, got);
+    }
+    for (i = 0; i < 3; ++i)
+        tcp_close(&g_tc[i]);
+    say("carkit: done");
     return 0;
 }
 
@@ -812,7 +1363,7 @@ static int open_mux_pipes(struct usbd_device* dev, unsigned cfg, unsigned ifc)
     return rc == EOK ? 0 : -1;
 }
 
-static int run_lockdown(void)
+static int run_lockdown(int carkit)
 {
     usbd_connect_parm_t parm;
     usbd_funcs_t funcs;
@@ -930,33 +1481,31 @@ static int run_lockdown(void)
         if (mux_send(2, &setup, 1))
             goto fail;
     }
-    g_mux.sport = 1 + (unsigned)(time(0) % 1000);
-    g_mux.tseq = g_mux.tack = 0;
-    if (tcp_send(TCP_SYN, 0, 0))
-        goto fail;
-    for (i = 0; i < 25 && !g_mux.connected; ++i)
-        if (tcp_poll(200) < 0)
-            goto fail;
-    if (!g_mux.connected) {
-        say("tcp: no answer from lockdown (port %u)", LOCKDOWN_PORT);
-        goto fail;
+    g_mux.next_port = 1 + (unsigned)(time(0) % 1000) * 16;
+    if (carkit) {
+        rc = run_carkit();
+    } else {
+        struct stream s;
+        rc = lockdown_connect(&s);
+        if (!rc) {
+            say("lockdown: connected");
+            say("lockdown: QueryType");
+            lockdown_request(&s, "<key>Request</key>\n<string>QueryType</string>\n");
+            say("lockdown: GetValue DeviceName");
+            lockdown_request(&s, "<key>Request</key>\n<string>GetValue</string>\n<key>Key</key>\n<string>DeviceName</string>\n");
+            say("lockdown: GetValue ProductVersion");
+            lockdown_request(&s, "<key>Request</key>\n<string>GetValue</string>\n<key>Key</key>\n<string>ProductVersion</string>\n");
+            say("lockdown: GetValue ProductType");
+            lockdown_request(&s, "<key>Request</key>\n<string>GetValue</string>\n<key>Key</key>\n<string>ProductType</string>\n");
+            tcp_close(s.c);
+        }
     }
-    say("lockdown: connected");
-    say("lockdown: QueryType");
-    lockdown_ask("<key>Request</key>\n<string>QueryType</string>\n");
-    say("lockdown: GetValue DeviceName");
-    lockdown_ask("<key>Request</key>\n<string>GetValue</string>\n<key>Key</key>\n<string>DeviceName</string>\n");
-    say("lockdown: GetValue ProductVersion");
-    lockdown_ask("<key>Request</key>\n<string>GetValue</string>\n<key>Key</key>\n<string>ProductVersion</string>\n");
-    say("lockdown: GetValue ProductType");
-    lockdown_ask("<key>Request</key>\n<string>GetValue</string>\n<key>Key</key>\n<string>ProductType</string>\n");
-    tcp_send(TCP_FIN | TCP_ACK, 0, 0);
     usbd_disconnect(conn);
-    say("lockdown: done (unplug the iPhone to bring it back to normal)");
-    return 0;
+    say("%s: %s (unplug the iPhone to bring it back to normal)", carkit ? "carkit" : "lockdown", rc ? "stopped" : "done");
+    return rc ? 1 : 0;
 fail:
     usbd_disconnect(conn);
-    say("lockdown: stopped");
+    say("%s: stopped", carkit ? "carkit" : "lockdown");
     return 1;
 }
 
@@ -971,7 +1520,20 @@ int main(int argc, char** argv)
     if (argc == 3 && !strcmp(argv[1], "usb") && !strcmp(argv[2], "carplay"))
         return run_usb(1);
     if (argc == 2 && !strcmp(argv[1], "lockdown"))
-        return run_lockdown();
-    fprintf(stderr, "usage: nbt_carplay_probe acp | usb | usb carplay | lockdown\n");
+        return run_lockdown(0);
+    if (argc == 2 && !strcmp(argv[1], "carkit")) {
+        int r;
+        alarm(300);   /* the "Trust" answer may take a while */
+        mbedtls_entropy_init(&g_entropy);
+        mbedtls_ctr_drbg_init(&g_drbg);
+        psa_crypto_init();
+        r = mbedtls_ctr_drbg_seed(&g_drbg, mbedtls_entropy_func, &g_entropy, (const unsigned char*)"nbt-carplay", 11);
+        if (r) {
+            tls_error("random", r);
+            return 1;
+        }
+        return run_lockdown(1);
+    }
+    fprintf(stderr, "usage: nbt_carplay_probe acp | usb | usb carplay | lockdown | carkit\n");
     return 2;
 }

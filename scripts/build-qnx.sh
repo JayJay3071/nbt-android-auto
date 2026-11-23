@@ -92,7 +92,7 @@ $CC -O2 -Wall -Wextra nbt_reset.c -lsocket -o $OUT/nbt_reset
 
 echo "== nbt_carplay_probe (test: CarPlay first steps, docs/CARPLAY.md)"
 cd $W/src/carplay
-if ! $CC -O2 -Wall -Wextra -Wc,-std=gnu99 nbt_carplay_probe.c -lusbdi -o $OUT/nbt_carplay_probe; then
+if ! $CC -O2 -Wall -Wextra -Wc,-std=gnu99 $TLSINC nbt_carplay_probe.c $TLSLIBS -lusbdi -o $OUT/nbt_carplay_probe; then
   echo "SKIPPED: nbt_carplay_probe did not compile (see above)"
 fi
 

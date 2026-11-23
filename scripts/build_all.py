@@ -33,6 +33,7 @@ from pathlib import Path
 from aa_session_overlay import harden_session
 from ffmpeg_qnx import add_ffmpeg
 from mbedtls_legacy_time import patch_x509
+from mbedtls_empty_name import patch_x509_empty_name
 
 ROOT = Path(__file__).resolve().parents[1]
 NBT_AAD_REVISION = "41975f269b065dbdbc77af9f568387cd22b9ed27"
@@ -90,7 +91,7 @@ def add_mbedtls(archive):
                 continue
             data = source.extractfile(item).read()
             if item.name == top + "/library/x509.c":
-                data = patch_x509(data.decode()).encode()
+                data = patch_x509_empty_name(patch_x509(data.decode())).encode()
             if item.name.endswith("/include/mbedtls/mbedtls_config.h"):
                 config = data.decode()
                 for option in MBEDTLS_DISABLED:

@@ -60,6 +60,7 @@ Over SSH the library path lacks `/lib` (`libusbdi.so.2`): run it with `LD_LIBRAR
   offers after re-connecting. Unplugging the iPhone brings it back to normal.
 - `nbt_carplay_probe lockdown`: the CarPlay configuration (asked for if needed), the USB multiplexor in it, a TCP
   connection to lockdown and QueryType / GetValue (DeviceName, ProductVersion, ProductType). No pairing, no prompt.
+- `nbt_carplay_probe carkit`: pairing (the iPhone asks "Trust"), a TLS session, the carkit service, its first bytes.
 
 ## Car results (2026-11-23)
 
@@ -81,6 +82,17 @@ Over SSH the library path lacks `/lib` (`libusbdi.so.2`): run it with `LD_LIBRAR
   only queues a bulk transfer (result 0, 0 bytes, status 0); transfers now wait for their completion callback.
 - Next: `nbt_carplay_probe lockdown`: select the CarPlay configuration, open the multiplexor (bulk 04 / 85), version 2
   handshake, a TCP connection to lockdown (62078) and a few questions that need no pairing.
+
+- `lockdown`, third try (car 2026-11-23): works. Multiplexor version 2, lockdown on 62078: QueryType
+  `com.apple.mobile.lockdown`, DeviceName, ProductVersion 17.7.2, ProductType iPhone16,2, without pairing. The second
+  run got one TCP frame left over from the first connection before the version answer (ignored).
+- Next: `nbt_carplay_probe carkit`: pairing as libimobiledevice / xcertplay (SetValue UntrustedHostBUID, GetValue
+  DevicePublicKey, a pair record of RSA-2048 root / host / device certificates with empty names, Pair repeated while
+  the answer is PairingDialogResponsePending), StartSession and TLS 1.2 with the root certificate and key (Mbed TLS,
+  the iPhone's certificate not checked), StartService `com.apple.carkit.service` on a second TCP connection (TLS too if
+  EnableServiceSSL), then what the iPhone sends first. The record is kept in RAM (`/fs/ram3/carplay-pair`): after a
+  boot of the car the iPhone asks "Trust" again. Mbed TLS rejects empty X.509 names when parsing; the build patches it
+  to read them as no name (`scripts/mbedtls_empty_name.py`).
 
 ## Plan
 
