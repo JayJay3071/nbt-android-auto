@@ -138,6 +138,7 @@ static struct {
     int hw;     /* --hw */
     int panel;  /* --panel: this process is the trip computer box (started by the main one) */
     const char* self;
+    int hwscale; /* --hw-scale: hardware decoding with --rows into stream buffers of the whole coded height (scaled twice) */
 } g_opt = {0, 0, 1280, 480, 30, 0, 5000, 50, 0, 0, 0, 0};
 
 /* rows of a decoded picture that are shown */
@@ -283,9 +284,10 @@ static int car_open(void)
 static void panel_open(void);
 
 /* the stream, sized like the first picture: decoder 0 = pictures from VideoFrame, DECODER_H264 = from VideoDecode;
- * source = the part of the picture shown, destination = where it goes in the stream (both 0 = the whole picture) */
+ * source = the part of the picture shown, destination = where it goes in the stream's buffers (both 0 = the whole
+ * picture); out_h = the height of those buffers (the window shows a whole buffer), h for the whole picture */
 static int car_stream_with(int w, int h, uint32_t decoder, uint32_t surfaces, const struct rect* source,
-                           const struct rect* destination)
+                           const struct rect* destination, int out_h)
 {
     for (int i = 0; i < 32; ++i)
         g_callback_methods[i] = (void*)callback_nothing;
@@ -304,7 +306,7 @@ static int car_stream_with(int w, int h, uint32_t decoder, uint32_t surfaces, co
         return -1;
     }
     for (int i = 0; i < BUFFERS; ++i) {
-        r = ((nv_buffer_fn)nv_method(nv, NV_BUFFER))(nv, &g_car.buffers[i], (uint32_t)w, (uint32_t)h, 0.0f, 0);
+        r = ((nv_buffer_fn)nv_method(nv, NV_BUFFER))(nv, &g_car.buffers[i], (uint32_t)w, (uint32_t)out_h, 0.0f, 0);
         if (r < 0) {
             say("video: VideoBufferCreate failed 0x%08x", r);
             return -1;
@@ -321,13 +323,14 @@ static int car_stream_with(int w, int h, uint32_t decoder, uint32_t surfaces, co
     g_car.w = w;
     g_car.h = h;
     g_car.ready = 1;
-    say("video: stream %dx%d at %d fps, id %d, %s (window %lu, %dx%d on the display)", w, h, g_opt.fps, STREAM_ID,
-        decoder ? "decoded by the car" : "pictures from the CPU", g_car.window, g_opt.width, g_opt.height);
+    say("video: stream %dx%d (buffers %dx%d) at %d fps, id %d, %s (window %lu, %dx%d on the display)", w, h, w, out_h,
+        g_opt.fps, STREAM_ID, decoder ? "decoded by the car" : "pictures from the CPU", g_car.window, g_opt.width,
+        g_opt.height);
     panel_open();
     return 0;
 }
 
-static int car_stream(int w, int h) { return car_stream_with(w, h, 0, SURFACES, 0, 0); }
+static int car_stream(int w, int h) { return car_stream_with(w, h, 0, SURFACES, 0, 0, h); }
 
 static void panel_hide(void);
 
@@ -1349,10 +1352,20 @@ static enum AVPixelFormat hw_get_format(AVCodecContext* avctx, const enum AVPixe
         if (!g_car.ready) {
             const int rows = shown_rows(avctx->height);
             const struct rect source = {0, 0, (uint32_t)avctx->width, (uint32_t)rows};
-            const struct rect destination = {0, 0, (uint32_t)w, (uint32_t)h};
+            /* only some rows shown (--rows): buffers of just those rows, so they are copied 1:1 and the window shows
+             * them 1:1; with buffers of the whole coded height they are scaled up into them and down again by the
+             * window (--hw-scale, and the fallback if the car refuses the smaller buffers) */
+            const int direct = rows < h && !g_opt.hwscale;
+            const struct rect destination = {0, 0, (uint32_t)w, (uint32_t)(direct ? rows : h)};
+            const struct rect whole = {0, 0, (uint32_t)w, (uint32_t)h};
             say("hw: stream %dx%d (picture %dx%d, %d rows shown), profile %d level %d: asking the car to decode it", w, h,
                 avctx->width, avctx->height, rows, avctx->profile, avctx->level);
-            if (car_stream_with(w, h, DECODER_H264, HW_HANDLES, &source, &destination) != 0) {
+            int r = car_stream_with(w, h, DECODER_H264, HW_HANDLES, &source, &destination, direct ? rows : h);
+            if (r != 0 && direct) {
+                say("hw: the car refused %dx%d buffers, trying %dx%d (the rows scaled twice)", w, rows, w, h);
+                r = car_stream_with(w, h, DECODER_H264, HW_HANDLES, &source, &whole, h);
+            }
+            if (r != 0) {
                 say("hw: the car did not take the decoder, decoding on the CPU");
                 g_hw.failed = 1;
                 g_car.ready = 0;
@@ -1720,7 +1733,7 @@ static int kd_main(int argc, const char* const* argv)
 
 static int usage(void)
 {
-    fprintf(stderr, "usage: nbt_decoder --input FIFO [--ready FILE] [--size WxH] [--fps 30|60] [--rows N] [--hw]\n"
+    fprintf(stderr, "usage: nbt_decoder --input FIFO [--ready FILE] [--size WxH] [--fps 30|60] [--rows N] [--hw] [--hw-scale]\n"
                     "       nbt_decoder --bench FILE\n");
     return 2;
 }
@@ -1742,6 +1755,8 @@ int main(int argc, char** argv)
                 return usage();
         } else if (!strcmp(a, "--hw")) {
             g_opt.hw = 1;
+        } else if (!strcmp(a, "--hw-scale")) {
+            g_opt.hwscale = 1;
         } else if (!strcmp(a, "--panel")) {
             g_opt.panel = 1;
         } else if (!strcmp(a, "--rows") && value) {

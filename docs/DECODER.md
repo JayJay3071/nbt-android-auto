@@ -113,8 +113,10 @@ its parameters (offset 0x0c) without any copy on the CPU. With `--hw`:
   library (surface `-1`: taken and kept), later ones reuse it. References are rows of a table (8 bytes per row, the
   surface first) indexed by handle. The three pictures between decoder and display hold their frames, so FFmpeg does
   not decode into a surface that may still be shown.
-- `--rows 480` (the sharp full-screen default): the source rectangle is the top 480 rows, the destination the whole 1280x720
-  stream, which the window shows at 1280x480.
+- `--rows 480` (the sharp full-screen default): the source rectangle is the top 480 rows, copied 1:1 into stream
+  buffers of 1280x480, which the window shows 1:1. If the car refuses buffers smaller than the coded 1280x720, the
+  destination is the whole 1280x720 buffer instead (the rows scaled up 1.5x, then down again by the window); `--hw-scale`
+  (in `decoder.args`) asks for that from the start, to compare.
 - If the car refuses the decoder at the start, the CPU path takes over in the same run. If decoding never works
   (10 pictures) or keeps failing (100 in a row), `nbt_decoder` writes `decoder.hwfail` (in `/fs/ram3/nbt-aa-native`)
   and ends; the session ends with it, and `native_service` starts it again without `--hw`: the CPU decodes until
