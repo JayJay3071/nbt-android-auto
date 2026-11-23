@@ -560,11 +560,44 @@ static void panel_compose(void)
     /* title line (user 2026-11-23): "Trip computer" and a rule from after it to the right padding, 2 px, at the height
      * of the lower-case letters' middle, a little dimmer than the text; the four value lines below it */
     {
+        /* short-term average speed (user 2026-11-23): a long roller push (nbt_knob) creates /fs/ram3/nbt-aa-avgspeed
+         * with its start time and removes it on the next one. From a new start on, driving.speedActual (CDS, km/h) is
+         * integrated over time once a second (standing time counts, as in the trip computer's average) and shown at
+         * the end of the title line, the rule ending before it. */
+        char avg[40] = "";
+        {
+            static char started[32];
+            static double km, secs;
+            static long long last;
+            char mark[32];
+            if (panel_read("/fs/ram3/nbt-aa-avgspeed", mark, sizeof(mark))) {
+                const long long now = now_ms();
+                double speed;
+                if (strcmp(mark, started)) {   /* a new start */
+                    snprintf(started, sizeof(started), "%s", mark);
+                    km = secs = 0;
+                } else if (now - last > 0 && now - last < 5000) {
+                    const double dt = (now - last) / 1000.0;
+                    secs += dt;
+                    if (cds_value(cds, "driving.speedActual", "speedActual", &speed) && speed > 0)
+                        km += speed * dt / 3600.0;
+                }
+                last = now;
+                if (secs >= 1)
+                    snprintf(avg, sizeof(avg), I_GAUGE "%.1f km/h", km / secs * 3600.0);
+                else
+                    strcpy(avg, I_GAUGE "-- km/h");
+            } else
+                started[0] = 0;
+        }
         static const char title[] = "Trip computer";
         panel_text_at(title, R, PANEL_PAD_Y, 0);
+        if (avg[0])
+            panel_text_at(avg, L, PANEL_PAD_Y, 2);
         const int x0 = R + panel_width(title) + 10, y = PANEL_PAD_Y + PANEL_FONT_ASCENT - 7;
+        const int x1 = avg[0] ? L - panel_width(avg) - 10 : L;
         for (int row = y; row < y + 2; ++row)
-            for (int col = x0; col < L; ++col)
+            for (int col = x0; col < x1; ++col)
                 g_panel.draw[row * PANEL_W + col] = (uint8_t)(PANEL_BG + (PANEL_FG - PANEL_BG) * 6 / 10);
     }
     const int top[4] = {PANEL_PAD_Y + PANEL_LINE, PANEL_PAD_Y + 2 * PANEL_LINE, PANEL_PAD_Y + 3 * PANEL_LINE,

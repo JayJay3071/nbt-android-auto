@@ -255,7 +255,10 @@ unsigned wheelKey(const char* name, unsigned dflt) {
     return v && *v ? (unsigned)strtoul(v, 0, 10) : dflt;
 }
 unsigned g_wheelUp = 87, g_wheelDown = 88, g_wheelPush = 85;
-bool g_wheelPushDown = false;
+bool g_wheelPushDown = false;     // under g_backMx (callback thread and main loop)
+bool g_wheelPushLong = false;     // this press was long (handled), its release does nothing
+long long g_wheelPushDownMs = 0;
+int g_pushLongMs = 700;
 uint16_t g_wheelLastFkt = 0;
 uint8_t g_wheelLastVal = 0;
 long long g_wheelLastMs = 0;
@@ -313,10 +316,46 @@ void onWheel(const nbt::most::View& m, void*) {
         if (!key || !wheelAllowed(v > 0x7f ? "WHEEL_UP" : "WHEEL_DOWN")) return;
         wheelKeyLine(key, 1, v > 0x7f ? "WHEEL_UP" : "WHEEL_DOWN");
         wheelKeyLine(key, 0, v > 0x7f ? "WHEEL_UP" : "WHEEL_DOWN");
-    } else if (g_wheelPush) {
-        if (v == 1 && !g_wheelPushDown) { if (!wheelAllowed("WHEEL_PUSH")) return; g_wheelPushDown = true; wheelKeyLine(g_wheelPush, 1, "WHEEL_PUSH"); }
-        else if (v == 0 && g_wheelPushDown) { g_wheelPushDown = false; wheelKeyLine(g_wheelPush, 0, "WHEEL_PUSH"); }
+    } else {
+        // roller push (car 2026-11-23: 01 pressed, 00 released, 3.4 s apart when held; the roller reports 7f once a
+        // second meanwhile). Short: play / pause on the release. Held NBT_PUSH_LONG_MS (700): the short-term average
+        // speed on / off (wheelLongIfNeeded, main thread); its release does nothing then.
+        pthread_mutex_lock(&g_backMx);
+        if (v == 1 && !g_wheelPushDown) {
+            g_wheelPushDown = true;
+            g_wheelPushDownMs = t;
+            g_wheelPushLong = false;
+            pthread_mutex_unlock(&g_backMx);
+            return;
+        }
+        if (v != 0 || !g_wheelPushDown) { pthread_mutex_unlock(&g_backMx); return; }
+        g_wheelPushDown = false;
+        const bool wasLong = g_wheelPushLong;
+        pthread_mutex_unlock(&g_backMx);
+        if (wasLong || !g_wheelPush || !wheelAllowed("WHEEL_PUSH")) return;
+        wheelKeyLine(g_wheelPush, 1, "WHEEL_PUSH");
+        wheelKeyLine(g_wheelPush, 0, "WHEEL_PUSH");
     }
+}
+
+// --- long roller push: short-term average speed (user 2026-11-23) ---
+// Toggles /fs/ram3/nbt-aa-avgspeed (RAM). On: the file holds the start time (ms, monotonic) and nbt_decoder's trip
+// computer box averages driving.speedActual from then on, shown on its title line; off: the file is removed.
+void wheelLongIfNeeded() {
+    pthread_mutex_lock(&g_backMx);
+    const bool go = g_wheelPushDown && !g_wheelPushLong && nowMs() - g_wheelPushDownMs >= g_pushLongMs;
+    if (go) g_wheelPushLong = true;
+    pthread_mutex_unlock(&g_backMx);
+    if (!go) return;
+    const char* const file = "/fs/ram3/nbt-aa-avgspeed";
+    if (unlink(file) == 0) { printf("[Wheel] long push: average speed off\n"); return; }
+    const int fd = open(file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return;
+    char buf[32];
+    const int n = snprintf(buf, sizeof(buf), "%lld\n", nowMs());
+    if (write(fd, buf, (size_t)n) != n) printf("[Wheel] average speed file not written\n");
+    close(fd);
+    printf("[Wheel] long push: average speed on\n");
 }
 
 // --- pause / resume Android Auto when the audio source leaves / returns to AUX (see the header) ---
@@ -1146,6 +1185,7 @@ int main(int argc, char** argv) {
     g_navOpensAa = wheelKey("NBT_NAV_OPENS_AA", 1) != 0 && !trace;
     g_navAudio = wheelKey("NBT_NAV_AUDIO", 1) != 0 && !trace;
     g_navLongMs = wheelKey("NBT_NAV_LONG_MS", 700);
+    g_pushLongMs = wheelKey("NBT_PUSH_LONG_MS", 700);
     g_trip = wheelKey("NBT_TRIP", 1) != 0 && !trace;
     if (g_trip && !most.addRoute(0xE0, 0x00, nbt::most::kAny, 0xC, &onTripStatus, NULL))
         printf("[Knob] no room for the trip computer route\n");
@@ -1221,7 +1261,7 @@ int main(int argc, char** argv) {
         favouritesIfNeeded(most);
         playSwitchIfNeeded(most);
         navAudioIfNeeded(most);
-        if (!trace) { navLongIfNeeded(); tripIfNeeded(most); }
+        if (!trace) { navLongIfNeeded(); wheelLongIfNeeded(); tripIfNeeded(most); }
         if (!trace) promptRouteIfNeeded(most);
         voiceIfNeeded();
         callIfNeeded();

@@ -201,5 +201,8 @@ A box at x 875, y 96, 384x167 with a "Trip computer" title line (20 px from the 
   `nbt_decoder --panel`, started by the main one, which tells it over a pipe when Android Auto's window is shown; a WAL
   call blocking for over 4 s ends that process. The earlier sprite path for the whole picture (1.5 MB at 10-15 uploads/s)
   deadlocked the WalServer; this is about a hundredth of that per upload, at most once a second.
+- Long roller push (700 ms, `NBT_PUSH_LONG_MS`, `nbt_knob`): short-term average speed on / off. On, it averages the
+  current speed (CDS `driving.speedActual`) from that moment and shows it at the end of the title line; a short push
+  is still play / pause (now on the release).
 - Long NAV (700 ms, `NBT_NAV_LONG_MS`) in Android Auto toggles `/fs/ram3/nbt-aa-panel-off` (box hidden while it
   exists; on again after a boot). NAV's play / pause now comes with the release of a short press.
