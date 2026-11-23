@@ -46,6 +46,12 @@ Copy it into RAM:
 %CAR% "cat > /fs/ram3/nbt_carplay_probe && chmod 755 /fs/ram3/nbt_carplay_probe" < build\qnx-build-<newest>\programs\nbt_carplay_probe
 ```
 
+Over SSH the library path lacks `/lib` (`libusbdi.so.2`): run it with `LD_LIBRARY_PATH=/opt/sys/lib:/lib:/usr/lib`, e.g.
+
+```
+%CAR% "LD_LIBRARY_PATH=/opt/sys/lib:/lib:/usr/lib /fs/ram3/nbt_carplay_probe acp"
+```
+
 - `nbt_carplay_probe acp` (no iPhone plugged in): the chip's version, its certificate (written to
   `/fs/ram3/acp-cert.der`) and one test signature of a fixed 20-byte challenge.
 - `nbt_carplay_probe usb`: waits up to 60 s for an iPhone and prints every USB configuration, interface and endpoint

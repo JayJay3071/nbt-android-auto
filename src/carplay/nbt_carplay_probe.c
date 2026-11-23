@@ -8,9 +8,12 @@
  *   nbt_carplay_probe usb carplay   the same, then ask the iPhone for its CarPlay USB configuration and print what
  *                                   it offers after that (the iPhone re-connects; unplug it to undo)
  *
- * The chip: I2C bus 0, dev-i2c node /dev/i2c/i2c_0/acp (/opt/sys/etc/i2c-conf_x86.cfg). A register is read by
- * writing its number, then reading; written by writing its number followed by the data. The chip sleeps between
- * transfers and does not answer the first one: every transfer is retried. Run "acp" without an iPhone plugged in,
+ * The chip: I2C bus 0, dev-i2c node /dev/i2c/i2c_0/acp (/opt/sys/etc/i2c-conf_x86.cfg). A plain read from a fresh
+ * open returns the registers from 0 (car 2026-11-23, dd). How this driver addresses other registers is not known, so
+ * "acp" first tries two ways on register 4 (device id, 00 00 02 00) and keeps the one that works: (1) write the
+ * register number, wait, read (raw I2C, as LIVI / xcertplay; car 2026-11-23: write and an immediate read gave
+ * Input/output error 20 times); (2) the file offset as the register number (pread / pwrite). The chip sleeps between
+ * transfers and may not answer the first one: transfers are retried. Run "acp" without an iPhone plugged in,
  * so the stock iPod stack does not use the chip at the same time. The certificate goes to /fs/ram3/acp-cert.der.
  *
  * USB, as in LIVI / xcertplay (GPL-3.0, github.com/shilapi/xcertplay): a vendor request 0x52 (IN, value 0, index 4,
@@ -60,6 +63,8 @@ static void hex(const char* what, const unsigned char* b, unsigned n)
 static int g_acp = -1;
 
 /* one transfer, retried while the chip sleeps (it does not acknowledge the first one) */
+static int g_offsets;   /* 1: the file offset is the register number (pread / pwrite) */
+
 static int acp_write(const unsigned char* data, unsigned n)
 {
     int tries;
@@ -72,15 +77,39 @@ static int acp_write(const unsigned char* data, unsigned n)
     return -1;
 }
 
-static int acp_read(unsigned reg, unsigned char* out, unsigned n)
+/* way 1: the register number written, then read after a pause (retried without writing it again) */
+static int acp_read_raw(unsigned reg, unsigned char* out, unsigned n)
 {
     const unsigned char r = (unsigned char)reg;
+    int tries, k;
+    for (tries = 0; tries < 5; ++tries) {
+        if (acp_write(&r, 1) != 0)
+            return -1;
+        for (k = 0; k < 20; ++k) {
+            usleep(1000);
+            if (read(g_acp, out, n) == (ssize_t)n)
+                return 0;
+        }
+    }
+    return -1;
+}
+
+/* way 2: the file offset as the register number */
+static int acp_read_offset(unsigned reg, unsigned char* out, unsigned n)
+{
     int tries;
-    for (tries = 0; tries < 20; ++tries) {
-        if (acp_write(&r, 1) == 0 && read(g_acp, out, n) == (ssize_t)n)
+    for (tries = 0; tries < 50; ++tries) {
+        if (pread(g_acp, out, n, (off_t)reg) == (ssize_t)n)
             return 0;
         usleep(1000);
     }
+    return -1;
+}
+
+static int acp_read(unsigned reg, unsigned char* out, unsigned n)
+{
+    if ((g_offsets ? acp_read_offset : acp_read_raw)(reg, out, n) == 0)
+        return 0;
     say("acp: read of register 0x%02x (%u bytes) failed: %s", reg, n, strerror(errno));
     return -1;
 }
@@ -88,11 +117,52 @@ static int acp_read(unsigned reg, unsigned char* out, unsigned n)
 static int acp_set(unsigned reg, const unsigned char* data, unsigned n)
 {
     unsigned char b[1 + 128];
+    int tries;
     if (n > 128)
         return -1;
+    if (g_offsets) {
+        for (tries = 0; tries < 50; ++tries) {
+            if (pwrite(g_acp, data, n, (off_t)reg) == (ssize_t)n)
+                return 0;
+            usleep(1000);
+        }
+        say("acp: write of register 0x%02x failed: %s", reg, strerror(errno));
+        return -1;
+    }
     b[0] = (unsigned char)reg;
     memcpy(b + 1, data, n);
     return acp_write(b, n + 1);
+}
+
+/* which way addresses registers here: register 4 must read 00 00 02 00 (register 0 reads 03 01 02 00) */
+static int acp_find_way(unsigned char* first4)
+{
+    unsigned char b[4];
+    ssize_t r = read(g_acp, first4, 4);
+    say("acp: plain read from offset 0: %s%02x %02x %02x %02x", r == 4 ? "" : "failed, ", first4[0], first4[1],
+        first4[2], first4[3]);
+    if (r != 4) {
+        say("acp: %s", strerror(errno));
+        return -1;
+    }
+    memset(b, 0xee, 4);
+    if (acp_read_raw(0x04, b, 4) == 0) {
+        say("acp: way 1 (write the register, then read): register 4 = %02x %02x %02x %02x", b[0], b[1], b[2], b[3]);
+        if (b[0] == 0 && b[1] == 0 && b[2] == 2 && b[3] == 0)
+            return 0;
+    } else
+        say("acp: way 1 (write the register, then read): %s", strerror(errno));
+    memset(b, 0xee, 4);
+    if (acp_read_offset(0x04, b, 4) == 0) {
+        say("acp: way 2 (file offset = register): register 4 = %02x %02x %02x %02x", b[0], b[1], b[2], b[3]);
+        if (b[0] == 0 && b[1] == 0 && b[2] == 2 && b[3] == 0) {
+            g_offsets = 1;
+            return 0;
+        }
+    } else
+        say("acp: way 2 (file offset = register): %s", strerror(errno));
+    say("acp: neither way reads register 4 as expected; stopping");
+    return -1;
 }
 
 static int run_acp(void)
@@ -108,16 +178,11 @@ static int run_acp(void)
         say("acp: %s: %s", ACP_NODE, strerror(errno));
         return 1;
     }
-    if (acp_read(0x00, b, 4) || acp_read(0x04, id, 4))
+    if (acp_find_way(b) || acp_read(0x04, id, 4))
         return 1;
     say("acp: device version 0x%02x (%s), firmware 0x%02x, protocol %u.%u, device id %02x %02x %02x %02x", b[0],
         b[0] == 0x03 ? "2.0B" : b[0] == 0x05 ? "2.0C" : b[0] == 0x07 ? "3.0" : "?", b[1], b[2], b[3], id[0], id[1],
         id[2], id[3]);
-    if (!memcmp(id, b, 4)) {
-        say("acp: register 0x04 read back register 0x00: this driver does not take the register number as a write;"
-            " stopping");
-        return 1;
-    }
     if (acp_read(0x30, len, 2))
         return 1;
     n = (unsigned)len[0] << 8 | len[1];
