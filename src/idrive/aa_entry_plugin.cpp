@@ -344,7 +344,8 @@ bool onCallInfo(void*,const bmw::BasicString<unsigned short>& v){
 // Car 2026-11-23: engine.consumption is a counter (rises at idle, wraps at 65536), not a rate: nbt_decoder turns it
 // into L/h, and with driving.speedActual into L/100 km.
 const char* const kTripNames[]={"driving.averageConsumption","driving.averageSpeed","sensors.fuel",
-    "sensors.temperatureExterior","engine.temperature","engine.consumption","driving.speedActual"};
+    "sensors.temperatureExterior","engine.temperature","engine.consumption","driving.speedActual",
+    "sensors.battery"};
 const int kTrips=sizeof(kTripNames)/sizeof(kTripNames[0]);
 char g_trip[kTrips][160];
 bool g_tripLogged[kTrips];
@@ -363,7 +364,7 @@ template<int I> bool onTrip(void*,const bmw::BasicString<unsigned short>& v){
     return true;
 }
 bool (*const kTripFns[kTrips])(void*,const bmw::BasicString<unsigned short>&)={&onTrip<0>,&onTrip<1>,&onTrip<2>,
-    &onTrip<3>,&onTrip<4>,&onTrip<5>,&onTrip<6>};
+    &onTrip<3>,&onTrip<4>,&onTrip<5>,&onTrip<6>,&onTrip<7>};
 class CdsSubscribe : public bmw::Runnable {
 public:
     bmw::PluginApp* app;

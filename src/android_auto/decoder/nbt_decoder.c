@@ -431,7 +431,7 @@ static void car_present(const struct picture* p)
  *   12:04        44 min        30 km
  *   7.4 L/100km           42.1 km/h
  *   833 km        52 L        0.7 L/h (stationary) / 6.3 L/100km (moving)
- *   11.5°C        E 80°       O 73°
+ *   11.5°C    E 80°    O 73°    B 85%
  * White text on a translucent black background. Shown while Android Auto's window is shown full width and
  * /fs/ram3/nbt-aa-panel-off does not exist (long NAV in nbt_knob). */
 #define PANEL_OFF_FILE "/fs/ram3/nbt-aa-panel-off"
@@ -619,7 +619,9 @@ static void panel_compose(void)
     panel_text_at(a, R, top[2], 0);
     panel_text_at(b, R + panel_width(a) + 14, top[2], 0);   /* tank right after range: room for "12.5 L/100km" */
     panel_text_at(c, L, top[2], 2);
-    /* 4: outside, coolant, oil temperature */
+    /* 4: outside, coolant, oil temperature, starter battery charge (CDS sensors.battery {"battery":N}, percent as
+     * BimmerGestalt's apps read it, "ACC battery"; 255 = not known). Four items spread evenly over the line. */
+    char d[32];
     if (cds_value(cds, "sensors.temperatureExterior", "temperatureExterior", &x))
         snprintf(a, sizeof(a), "%.1f\xb0" "C", x);
     else
@@ -632,9 +634,22 @@ static void panel_compose(void)
         snprintf(c, sizeof(c), "O %.0f\xb0", y);
     else
         strcpy(c, "O --\xb0");
-    panel_text_at(a, R, top[3], 0);
-    panel_text_at(b, M, top[3], 1);
-    panel_text_at(c, L, top[3], 2);
+    if (cds_value(cds, "sensors.battery", "battery", &x) && x >= 0 && x < 255)
+        snprintf(d, sizeof(d), "B %.0f%%", x);
+    else
+        strcpy(d, "B --%");
+    {
+        const char* items[4] = {a, b, c, d};
+        int total = 0;
+        for (int i = 0; i < 4; ++i)
+            total += panel_width(items[i]);
+        const int gap = (L - R - total) / 3;
+        int xpos = R;
+        for (int i = 0; i < 4; ++i) {
+            panel_text_at(items[i], i == 3 ? L : xpos, top[3], i == 3 ? 2 : 0);
+            xpos += panel_width(items[i]) + (gap > 6 ? gap : 6);
+        }
+    }
     g_panel.have = 1;
 }
 
