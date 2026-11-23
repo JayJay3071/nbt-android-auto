@@ -179,7 +179,7 @@ stats 5.0 s: 150 decoded (30.0/s), 149 shown (0 repeats), 1 replaced, 0 while hi
 
 ## Trip computer box (`decoder.panel`, test)
 
-A box at x 790, y 100, 440x124 (50 px from the right edge, our own icons before the values) (rounded corners, 16 / 8 px inner padding, DejaVu Sans 22 px) over the full-width picture, instead of iDrive's split screen:
+A box at x 790, y 100, 440x136 (50 px from the right edge, our own icons before the values) (rounded corners, 16 / 8 px inner padding, DejaVu Sans 22 px, 31 px between lines) over the full-width picture, instead of iDrive's split screen:
 
 ```
 12:04        44 min        30 km      trip start, duration, distance
