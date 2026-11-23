@@ -12,9 +12,18 @@
  *    transfer failed with ENOENT); attach to the first NCM function's data interface, select its alternate setting 1
  *    and open its bulk pipes; the MAC address: the NCM function's iMACAddress string
  * Transfers wait for their completion callback (usbd_io returns at once). An unplug is seen by the removal callback.
+ *
+ * The car's own iPod handlers: for every Apple device vdev-medialaunch starts "io-fs-media -dipod,transport=usb:
+ * busno=B:devno=D..." and "io-audio -dipod busno=B,devno=D,..." (umass-enum.cfg, car 2026-11-24). With the iPhone
+ * plugged in at boot they hold all three interfaces of its configuration 2 ("Resource busy"), so not even the CarPlay
+ * request can go out; plugged in later, interface 2 stays free. When nothing can be attached, the two handlers of this
+ * one device are ended (pidin arg, SIGTERM, then SIGKILL) and the attachment is tried again. After the CarPlay request
+ * the iPhone re-connects and the launcher starts new handlers, which leave the multiplexor and NCM interfaces to us
+ * (as on every run so far).
  */
 #include <sys/usbdi.h>
 #include <errno.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +40,7 @@ static unsigned g_count;
 static unsigned g_devno = 0xffff, g_path = 0xffff;
 static volatile int g_gone;
 static volatile int g_armed;   /* the iPhone is set up: from now on its removal is an unplug */
+static int g_quiet;            /* attach failures not logged (while trying again) */
 
 static void inserted(struct usbd_connection* c, usbd_device_instance_t* d)
 {
@@ -134,10 +144,56 @@ static struct usbd_device* attach(struct usb* u, unsigned first, unsigned cfg, u
             g_path = inst.path;
             return dev;
         }
-        say("usb: attach to configuration %u interface %u: %s", (unsigned)inst.config, (unsigned)inst.iface,
+        if (!g_quiet)
+            say("usb: attach to configuration %u interface %u: %s", (unsigned)inst.config, (unsigned)inst.iface,
             strerror(rc));
     }
     return 0;
+}
+
+/* the number after "key" in s (0 if not there) */
+static int number_after(const char* s, const char* key, unsigned* v)
+{
+    const char* p = strstr(s, key);
+    return p && sscanf(p + strlen(key), "%u", v) == 1;
+}
+
+/* end the car's iPod handlers of this bus / device: number of processes ended */
+static int end_ipod_handlers(unsigned bus, unsigned devno)
+{
+    FILE* f = popen("pidin arg", "r");
+    char line[1024];
+    pid_t pids[8];
+    int n = 0, i, t;
+    if (!f) {
+        say("usb: pidin did not run");
+        return 0;
+    }
+    while (fgets(line, sizeof(line), f) && n < 8) {
+        unsigned pid, b, d;
+        if (!strstr(line, "-dipod") || sscanf(line, "%u", &pid) != 1 || !number_after(line, "busno=", &b) ||
+            !number_after(line, "devno=", &d) || b != bus || d != devno || (pid_t)pid == getpid())
+            continue;
+        line[strcspn(line, "\n")] = 0;
+        say("usb: ending the car's iPod handler: %.160s", line);
+        pids[n++] = (pid_t)pid;
+        kill((pid_t)pid, SIGTERM);
+    }
+    pclose(f);
+    for (t = 0; t < 30 && n; ++t) {   /* up to 3 s, then SIGKILL */
+        int alive = 0;
+        for (i = 0; i < n; ++i)
+            alive |= kill(pids[i], 0) == 0;
+        if (!alive)
+            break;
+        usleep(100000);
+    }
+    for (i = 0; i < n; ++i)
+        if (kill(pids[i], 0) == 0) {
+            say("usb: process %d still there: SIGKILL", (int)pids[i]);
+            kill(pids[i], SIGKILL);
+        }
+    return n;
 }
 
 static int carplay_request(struct usbd_device* dev)
@@ -370,9 +426,25 @@ int usb_open(struct usb* u, unsigned wait_s)
     if (connect_stack(u))
         return -1;
     say("usb: waiting up to %u s for an iPhone", wait_s);
-    if (wait_for(0, wait_s) || !(dev = attach(u, 0, ~0u, ~0u, &used))) {
+    if (wait_for(0, wait_s)) {
         say("usb: no iPhone");
         return -1;
+    }
+    if (!(dev = attach(u, 0, ~0u, ~0u, &used))) {   /* held by the car's iPod handlers (plugged in at boot) */
+        usbd_device_instance_t first;
+        pthread_mutex_lock(&g_m);
+        first = g_inst[0];
+        pthread_mutex_unlock(&g_m);
+        g_quiet = 1;
+        if (end_ipod_handlers(first.path, first.devno))
+            for (tries = 0; tries < 50 && !g_stop && !(dev = attach(u, 0, ~0u, ~0u, &used)); ++tries)
+                usleep(100000);
+        g_quiet = 0;
+        if (!dev) {
+            say("usb: every interface of the iPhone is held");
+            return -1;
+        }
+        say("usb: interface %u free now", (unsigned)used.iface);
     }
     if (find_carplay(u, dev)) {   /* not yet: the CarPlay configurations */
         before = count();
