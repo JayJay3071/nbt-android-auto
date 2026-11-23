@@ -22,7 +22,6 @@ Used whenever `nbt_decoder` is installed, at 60 fps; no file is needed. Optional
 | `decoder.stale` | Milliseconds without a new picture before the window is hidden (default 5000, `0` = never) |
 | `decoder.720` | Full screen sharp (test): the phone draws 1280x720 with its interface in the top 480 rows, shown 1:1 (`--rows 480`) instead of 800x480 stretched; 2.4x the pixels to decode on the CPU |
 | `decoder.hw` | Hardware decoding (test): the car's own H.264 decoder instead of FFmpeg's (`--hw`, see below); with `decoder.720` the sharp picture without the CPU cost |
-| `decoder.panel` | Trip computer box (test) at x 1000, y 120, 280x100 over the full-width picture, see below |
 | `decoder.panelwin`, `decoder.panelx`, `decoder.panely` | The WAL window the box is drawn in (default 1024, Android Auto's; 80 = the cursor's) and its position in it (default 875, 96) |
 | `decoder.fuelscale` | Microlitres of fuel per count of CDS `engine.consumption`, x1000 (default 1000), for the box's instantaneous consumption |
 | `decoder.panelbg` | The box's background as hex RRGGBBAA (default 000000B4, translucent black; FF = opaque). Text and icons are white on a dark background and black on a light one; the 1 px outline is derived from it (lighter on dark, darker on light) |
@@ -178,7 +177,7 @@ stats 5.0 s: 150 decoded (30.0/s), 149 shown (0 repeats), 1 replaced, 0 while hi
 %CAR% "grep -e video: -e window: -e input: -e decoder: /fs/ram3/nbt-aa-native/nbt_decoder-*.log"
 ```
 
-## Trip computer box (`decoder.panel`, test)
+## Trip computer box
 
 A box at x 875, y 96, 384x167 with a "Trip computer" title line (20 px from the right edge, our own icons before the values) (rounded corners, radius 16, 12 / 8 px inner padding, DejaVu Sans 22 px, 31 px between lines) over the full-width picture, instead of iDrive's split screen:
 
@@ -206,6 +205,8 @@ A box at x 875, y 96, 384x167 with a "Trip computer" title line (20 px from the 
   is still play / pause (now on the release).
 - At the start of each session the box is hidden unless "Trip computer: on" is set in iDrive's Android Auto page
   (flag file `panel-at-start` in the package; default off; the button only shows in full width). Long NAV still
-  shows / hides it during the session. `decoder.panel` stays the master switch.
+  shows / hides it during the session. There is no other switch: in full width the box's process always runs; while
+  the box is hidden it only draws (the short-term average speed keeps counting) and sends nothing to the window
+  server.
 - Long NAV (700 ms, `NBT_NAV_LONG_MS`) in Android Auto toggles `/fs/ram3/nbt-aa-panel-off` (box hidden while it
   exists; on again after a boot). NAV's play / pause now comes with the release of a short press.

@@ -404,7 +404,7 @@ static void car_present(const struct picture* p)
 }
 
 
-/* ---- trip computer box (decoder.panel, test 2026-11-23) ----
+/* ---- trip computer box (2026-11-23; shown per iDrive's "Trip computer" option and long NAV) ----
  * User: instead of iDrive's split screen, a box over Android Auto at x 880, y 100, 380 x 136 with the trip computer (20 px from the right edge, icons before the values).
  * The picture cannot be drawn on with hardware decoding (the car decodes into its own surfaces).
  * Car 2026-11-23, a stream of its own for the box: (1) in this process it took over Android Auto's window (only its
@@ -947,7 +947,7 @@ static struct {
 
 static void panel_open(void)
 {
-    if (g_opt.panel || g_panelc.tried || access(RT_DIR "/decoder.panel", F_OK) != 0)
+    if (g_opt.panel || g_panelc.tried)   /* no master switch any more (user 2026-11-23): iDrive's page decides */
         return;
     g_panelc.tried = 1;
     if (g_opt.width < PANEL_X + PANEL_W) {
@@ -1035,18 +1035,27 @@ static void panel_policy(int force)
     if (!g_panel.ok)
         return;
     const long long now = now_ms();
+    /* drawn every second (the short-term average speed integrates there), uploaded to the window server only while
+     * the box is to be shown: a hidden box causes no WAL traffic */
+    const int want = g_win.shown == 1 && access(PANEL_OFF_FILE, F_OK) != 0;
     if (now >= g_panel.text_at) {
         g_panel.text_at = now + 1000;
         panel_compose();
-        spr_update();
+        if (want)
+            spr_update();
     }
-    const int want = g_win.shown == 1 && g_spr.created && access(PANEL_OFF_FILE, F_OK) != 0;
     if (!want) {
         panel_hide();
         return;
     }
     if (g_panel.shown)
         return;
+    if (!g_spr.created) {   /* first showing: upload now */
+        g_spr.upload_at = 0;
+        spr_update();
+        if (!g_spr.created)
+            return;
+    }
     spr_visible(1);
     g_panel.shown = 1;
     say("panel: shown");
