@@ -405,7 +405,7 @@ static void car_present(const struct picture* p)
 
 
 /* ---- trip computer box (decoder.panel, test 2026-11-23) ----
- * User: instead of iDrive's split screen, a box over Android Auto at x 1000, y 120, 280 x 100 with the trip computer.
+ * User: instead of iDrive's split screen, a box over Android Auto at x 930, y 100, 340 x 100 with the trip computer.
  * The picture cannot be drawn on with hardware decoding (the car decodes into its own surfaces).
  * Car 2026-11-23, a stream of its own for the box: (1) in this process it took over Android Auto's window (only its
  * top-left 280 x 100 was left, as the reference decoder's 64x64 stream created first was taken over by the real one);
@@ -416,7 +416,7 @@ static void car_present(const struct picture* p)
  * (wal::WalApplicationInterface createSprite / assignSpriteToWindow / setSpritePosition / setSpriteSize /
  * setSpriteVisible, as in experiments/wal-overlay). Caution: the earlier sprite path for the whole picture (800x480,
  * ~1.5 MB per upload, 10-15 uploads/s) deadlocked the WalServer and restarted the head unit (docs/DEVELOPMENT.md).
- * Here: one sprite of 280 x 100 (112 KB), uploaded only when its text changed and at most once a second; a watchdog
+ * Here: one sprite of 340 x 100 (136 KB), uploaded only when its text changed and at most once a second; a watchdog
  * ends the box's process if a WAL call blocks for over 4 s. createSprite with an existing id only replaces the content
  * (assignment, position, size and visibility stay; car 2026-11-06).
  * Window: decoder.panelwin (default 1024 = EARLYVIDEO, Android Auto's own window; the sprite is drawn over its stream,
@@ -437,8 +437,9 @@ static void car_present(const struct picture* p)
 #define PANEL_OFF_FILE "/fs/ram3/nbt-aa-panel-off"
 #define TRIP_KOMBI_FILE "/fs/ram3/nbt-aa-tripkombi"
 #define TRIP_CDS_FILE "/fs/ram3/nbt-aa-trip"
-/* user 2026-11-23: at y 100, 10 px from the right edge (x 990), corners rounded like Android Auto's (radius 12) */
-enum { PANEL_X = 990, PANEL_Y = 100, PANEL_W = 280, PANEL_H = 100, PANEL_BG = 24, PANEL_FG = 235, PANEL_RADIUS = 12 };
+/* user 2026-11-23: at y 100, 10 px from the right edge, corners rounded like Android Auto's (radius 12), 20 px font
+ * at full precision: 340 wide, so "-12.5°C  E 105°  O 120°  B 100%" and "1036 km  57 L  112.5 L/100km" fit */
+enum { PANEL_X = 930, PANEL_Y = 100, PANEL_W = 340, PANEL_H = 100, PANEL_BG = 24, PANEL_FG = 235, PANEL_RADIUS = 12 };
 
 static struct {
     int ok, have;
@@ -536,7 +537,7 @@ static void panel_compose(void)
     int v, w;
     double x;
     memset(g_panel.draw, PANEL_BG, sizeof(g_panel.draw));
-    const int L = PANEL_W - 8, M = PANEL_W / 2, R = 8, top[4] = {2, 26, 50, 74};   /* 20 px font, 24 px lines */
+    const int L = PANEL_W - 10, M = PANEL_W / 2, R = 10, top[4] = {2, 26, 50, 74};   /* 20 px font, 24 px lines */
     /* 1: trip start, duration, distance (cluster) */
     if (strstr(kombi, "start=") && sscanf(strstr(kombi, "start=") + 6, "%d:%d", &v, &w) == 2 && v >= 0)
         snprintf(a, sizeof(a), "%d:%02d", v, w);
@@ -610,60 +611,39 @@ static void panel_compose(void)
             if (secs >= 2.0) {
                 const double lph = counts / secs * 0.0036 * scale / 1000.0;
                 double speed = 0;
-                const int moving = cds_value(cds, "driving.speedActual", "speedActual", &speed) && speed >= 5;
-                const double value = moving ? lph / speed * 100.0 : lph;
-                /* the first form that fits after range and tank (20 px font: "1000 km  57 L  12.5 L/100km" does not) */
-                static const char* const forms[2][4] = {{"%.1f L/100km", "%.0f L/100km", "%.1f L/100", "%.0f L/100"},
-                                                        {"%.1f L/h", "%.0f L/h", "%.0f L/h", "%.0f L/h"}};
-                const int room = L - (R + panel_width(a) + 8 + panel_width(b) + 8);
-                for (int f = 0; f < 4; ++f) {
-                    snprintf(c, sizeof(c), forms[moving ? 0 : 1][f], value);
-                    if (panel_width(c) <= room)
-                        break;
-                }
+                if (cds_value(cds, "driving.speedActual", "speedActual", &speed) && speed >= 5)
+                    snprintf(c, sizeof(c), "%.1f L/100km", lph / speed * 100.0);
+                else
+                    snprintf(c, sizeof(c), "%.1f L/h", lph);
             }
         }
     }
     panel_text_at(a, R, top[2], 0);
-    panel_text_at(b, R + panel_width(a) + 8, top[2], 0);   /* tank right after range: room for "12.5 L/100km" */
+    panel_text_at(b, R + panel_width(a) + 12, top[2], 0);   /* tank right after range */
     panel_text_at(c, L, top[2], 2);
     /* 4: outside, coolant, oil temperature, starter battery charge (CDS sensors.battery {"battery":N}, percent as
      * BimmerGestalt's apps read it, "ACC battery"; 255 = not known). Four items spread evenly over the line. */
-    /* forms from wide to compact, the first whose four items leave at least 6 px between them (20 px font, hot engine:
-     * "11.5°C E 105° O 120° B 85%" does not fit) */
     char d[32];
-    double out = 0, eng = 0, oil = 0, bat = 0;
-    const int have_out = cds_value(cds, "sensors.temperatureExterior", "temperatureExterior", &out);
-    const int have_eng = cds_value(cds, "engine.temperature", "engine", &eng);
-    const int have_oil = cds_value(cds, "engine.temperature", "oil", &oil);
-    const int have_bat = cds_value(cds, "sensors.battery", "battery", &bat) && bat >= 0 && bat < 255;
+    if (cds_value(cds, "sensors.temperatureExterior", "temperatureExterior", &x))
+        snprintf(a, sizeof(a), "%.1f\xb0" "C", x);
+    else
+        strcpy(a, "--\xb0" "C");
+    if (cds_value(cds, "engine.temperature", "engine", &x))
+        snprintf(b, sizeof(b), "E %.0f\xb0", x);
+    else
+        strcpy(b, "E --\xb0");
+    if (cds_value(cds, "engine.temperature", "oil", &x))
+        snprintf(c, sizeof(c), "O %.0f\xb0", x);
+    else
+        strcpy(c, "O --\xb0");
+    if (cds_value(cds, "sensors.battery", "battery", &x) && x >= 0 && x < 255)
+        snprintf(d, sizeof(d), "B %.0f%%", x);
+    else
+        strcpy(d, "B --%");
     const char* items[4] = {a, b, c, d};
     int total = 0;
-    for (int form = 0; form < 4; ++form) {   /* 0 "11.5°C E 80°", 1 "12°C", 2 "E105°", 3 "E105" */
-        const char* sp = form < 2 ? " " : "";
-        const char* deg = form < 3 ? "\xb0" : "";
-        if (have_out)
-            snprintf(a, sizeof(a), form ? "%.0f\xb0" "C" : "%.1f\xb0" "C", out);
-        else
-            strcpy(a, "--\xb0" "C");
-        if (have_eng)
-            snprintf(b, sizeof(b), "E%s%.0f%s", sp, eng, deg);
-        else
-            snprintf(b, sizeof(b), "E%s--%s", sp, deg);
-        if (have_oil)
-            snprintf(c, sizeof(c), "O%s%.0f%s", sp, oil, deg);
-        else
-            snprintf(c, sizeof(c), "O%s--%s", sp, deg);
-        if (have_bat)
-            snprintf(d, sizeof(d), "B%s%.0f%%", sp, bat);
-        else
-            snprintf(d, sizeof(d), "B%s--%%", sp);
-        total = 0;
-        for (int i = 0; i < 4; ++i)
-            total += panel_width(items[i]);
-        if (L - R - total >= 3 * 6)
-            break;
-    }
+    for (int i = 0; i < 4; ++i)
+        total += panel_width(items[i]);
     {
         const int gap = (L - R - total) / 3;
         int xpos = R;
