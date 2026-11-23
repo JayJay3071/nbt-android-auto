@@ -20,6 +20,9 @@
       <!-- "Start at boot" on/off (Android Auto to the front at the first session, see nbt_knob.cpp) -> inert page 35, whose
            focus switches the flag file start-at-boot.off and sends focus event 53 back to 10 -->
       <hmiAction id="90" target="35"/>
+      <!-- "Trip computer: on/off" (box shown at the start of a session, full width only) -> inert page 36, whose focus
+           switches the flag file panel-at-start and sends focus event 53 back to 10 -->
+      <hmiAction id="100" target="36"/>
     </actions>
     <models>
       <textIdModel id="3" textId="1" preinst="false"/>
@@ -44,6 +47,8 @@
       <textIdModel id="91" textId="31" preinst="false"/>
       <textIdModel id="94" textId="33" preinst="false"/>
       <textIdModel id="95" textId="34" preinst="false"/>
+      <textIdModel id="97" textId="36" preinst="false"/>
+      <textIdModel id="99" textId="37" preinst="false"/>
     </models>
     <events>
       <focusEvent id="52" target="13"/>
@@ -563,6 +568,7 @@
           <button id="61" action="26" model="6" text="Split screen"/>
           <button id="62" action="27" model="7" text="Full width"/>
           <button id="92" action="90" model="91" text="Start at boot: on"/>
+          <button id="96" action="100" model="97" text="Trip computer: off"/>
           <button id="68" action="28" model="25" text="Android Auto neu starten"/>
           <button id="86" action="80" model="82" text="System neu starten"/>
         </components>
@@ -581,6 +587,11 @@
       <hmiState id="35" parentId="10" textModel="95" text="Start at boot">
         <components>
           <label id="93" model="94" text="Setting saved"/>
+        </components>
+      </hmiState>
+      <hmiState id="36" parentId="10" textModel="99" text="Trip computer">
+        <components>
+          <label id="98" model="94" text="Setting saved"/>
         </components>
       </hmiState>
       <hmiState id="32" parentId="10" textModel="3" text="Android Auto">

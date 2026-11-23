@@ -1664,6 +1664,17 @@ static int run(void)
                 say("input: %s: %s", g_opt.input, strerror(errno));
             break;
         }
+        /* the trip computer box at the start of a session (user 2026-11-23): shown only with "Trip computer: on" in
+         * iDrive's Android Auto page (panel-at-start in the package, default off); long NAV still toggles it */
+        if (!g_opt.bench) {
+            if (access(RT_DIR "/panel-at-start", F_OK) == 0)
+                unlink(PANEL_OFF_FILE);
+            else {
+                const int off = open(PANEL_OFF_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (off >= 0)
+                    close(off);
+            }
+        }
         const long long t0 = now_ms();
         const int end = read_session(fd);
         close(fd);

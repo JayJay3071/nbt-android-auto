@@ -41,7 +41,9 @@
 extern char** environ;
 namespace bmw {
 class IDispatcher; class Bundle; class IPluginApp;
-class Parcel { public: bool readBool(bool&) const; };
+// Parcel (libCoreFramework): 0x14 bytes {data, size, capacity, allocator, position} (Parcel() @0xbd46). Parcel(bool)
+// is only used for setProperty below; those parcels are created once and kept (no exported destructor).
+class Parcel { public: Parcel(bool); bool readBool(bool&) const; private: uint32_t storage_[5]; };
 template<class R,class A1,class A2,class A3,class A4> struct Delegate {
     void* object;
     R (*stub)(void*,A1);
@@ -67,6 +69,9 @@ public:
     // post()ed runnables is served from then on); the HMI calls it only when the page is first opened.
     bool start();
     void cdsAddPropertyChangedEventHandler(BasicString<char>&,unsigned,const CdsDelegate&);
+    // _ZN3bmw9PluginApp11setPropertyEjjRKNS_6ParcelE: component, RHMI property id (1 enabled, 2 selectable, 3 visible,
+    // as in BimmerGestalt's RHMIProperty), value
+    void setProperty(unsigned,unsigned,const Parcel&);
 private:
     uint32_t opaque_[1024];
 };
@@ -90,6 +95,12 @@ const unsigned kRestartState=32;                     // "Android Auto neu starte
 const unsigned kBootState=35, kBootModel=91;         // "Start at boot" -> inert page 35, back to 10
 const char* const kBootOff="/var/opt/hmi/data/rw/NbtAndroidAutoRT/start-at-boot.off";
 bool bootOn() { return access(kBootOff,F_OK)!=0; }   // default: on (no file)
+// "Trip computer at start" (user 2026-11-23): only in full width (the box is not shown in split screen anyway; the
+// button is made invisible there, RHMI property 3). On: panel-at-start exists in the package, and nbt_decoder shows the
+// box at every session start (off: hidden until long NAV). Default: off (no file).
+const unsigned kPanelState=36, kPanelModel=97, kPanelButton=96, kPropVisible=3;
+const char* const kPanelAtStart="/var/opt/hmi/data/rw/NbtAndroidAutoRT/panel-at-start";
+bool panelOn() { return access(kPanelAtStart,F_OK)==0; }
 const unsigned kEvHoldAlt=54;                        // focus event to hold state 13 (fallback when 52 is ignored)
 // The real reason iDrive "ignored" 52 / 54 (car 2026-11-18, HmiMain3D CFocusEvent::perform @0x88fd70b): every focus
 // event object counts its performs and refuses from the 12th on ("FocusEvent counter > 10"; never reset, only apps with
@@ -99,7 +110,7 @@ const unsigned kEvPoolFirst=200, kEvPoolCount=500, kEvPoolUses=10;   // 500 (use
 // text ids in NbtAndroidAuto_ALL_Texts.zip (make_aa_entry_resources.py)
 enum { kTxtConnectUsb=2, kTxtNoPhone=3, kTxtStarting=4, kTxtRunning=5, kTxtReplug=6, kTxtUnsupported=7,
        kTxtServiceDown=8, kTxtSeveral=9, kTxt169=11, kTxtWide=12, kTxt169On=16, kTxtWideOn=17,
-       kTxtBootOn=31, kTxtBootOff=32 };
+       kTxtBootOn=31, kTxtBootOff=32, kTxtPanelOn=35, kTxtPanelOff=36 };
 void touch(const char* path) { int fd=open(path,O_WRONLY|O_CREAT|O_TRUNC,0644); if(fd>=0)close(fd); }
 // --- automatic start of the Android Auto service (boot.sh of the persistent package), like the NBT-AAD reference:
 // QNX spawn() into a new process group, no zombie, stdin/out/err /dev/null. Rate-limited to one start per 30 s.
@@ -400,14 +411,14 @@ public:
     bmw::PluginApp* app;
     bool stopping, polling, entryFocused, running;
     unsigned focusMask, visibleMask;
-    unsigned shownText; int shownMode, shownBoot; long long lastBootToggleMs; long window; unsigned holds, ignoredHolds; long lastSideHold, lastAutoHold; long long lastSideHoldMs, lastHoldMs, lastFocusMs;
+    unsigned shownText; int shownMode, shownBoot, shownPanel, shownPanelVis; long long lastBootToggleMs, lastPanelToggleMs; long window; unsigned holds, ignoredHolds; long lastSideHold, lastAutoHold; long long lastSideHoldMs, lastHoldMs, lastFocusMs;
     Checker checker;
     Verifier verifier;
     BackToEntry back;
     TargetPoll target;
     HoldSlot slots[kHoldCount];
     Entry():app(0),stopping(false),polling(false),entryFocused(false),running(false),focusMask(0),visibleMask(0),
-            shownText(0),shownMode(0),shownBoot(0),lastBootToggleMs(-100000),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0),showUntilMs(0),showRetryAtMs(0),evIdx(kEvPoolCount-1),evUses(kEvPoolUses),evIgnoredSeen(0) {
+            shownText(0),shownMode(0),shownBoot(0),shownPanel(0),shownPanelVis(-1),lastBootToggleMs(-100000),lastPanelToggleMs(-100000),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0),showUntilMs(0),showRetryAtMs(0),evIdx(kEvPoolCount-1),evUses(kEvPoolUses),evIgnoredSeen(0) {
         checker.e=this; verifier.e=this; target.e=this;
         for(unsigned i=0;i<kHoldCount;++i){slots[i].e=this;slots[i].idx=i;}
     }
@@ -456,6 +467,16 @@ public:
         }
         int boot=bootOn()?1:2;
         if(boot!=shownBoot){bmw::TextID tb(boot==1?kTxtBootOn:kTxtBootOff);app->updateModel(kBootModel,tb);shownBoot=boot;}
+        int panel=panelOn()?1:2;
+        if(panel!=shownPanel){bmw::TextID tp(panel==1?kTxtPanelOn:kTxtPanelOff);app->updateModel(kPanelModel,tp);shownPanel=panel;}
+        const int vis=mode==2?1:0;   // only in full width
+        if(vis!=shownPanelVis){
+            static bmw::Parcel* yes=new bmw::Parcel(true);
+            static bmw::Parcel* no=new bmw::Parcel(false);
+            app->setProperty(kPanelButton,kPropVisible,vis?*yes:*no);
+            shownPanelVis=vis;
+            plog("trip computer button visible",vis);
+        }
         long t=now_s();
         if(running&&entryFocused&&!holdFocused()&&t-lastAutoHold>=10){lastAutoHold=t;hold("hold (entry page, retry)");}
         app->post(this,500);
@@ -483,6 +504,23 @@ public:
         bool focused=false;p.readBool(focused);
         plog(split?"mode page split screen focus":"mode page full width focus",focused);
         if(focused&&!e->stopping){setMode(split);e->shownMode=0;e->app->post(&e->back,400);}
+        return true;
+    }
+    // page 36: switch "Trip computer at start", back to page 10 (as page 35)
+    static bool panelFocus(void* self,const bmw::Parcel& p) {
+        Entry* e=static_cast<Entry*>(self);
+        bool focused=false;p.readBool(focused);
+        plog("trip computer page focus",focused);
+        if(!focused||e->stopping)return true;
+        const long long tm=now_ms();
+        if(!g_entrySeen)plog("trip computer ignored: page 10 not opened in this boot (restored state)",0);
+        else if(tm-e->lastPanelToggleMs<2000)plog("trip computer ignored: switched just before",0);
+        else{
+            e->lastPanelToggleMs=tm;
+            if(panelOn())unlink(kPanelAtStart); else touch(kPanelAtStart);
+            plog("trip computer at start now",panelOn()?1:0);
+        }
+        e->shownPanel=0;e->app->post(&e->back,400);
         return true;
     }
     // page 35: switch "Start at boot", back to page 10 (not for a page the HMI restores at boot, not twice within 2 s)
@@ -793,6 +831,9 @@ bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& 
     app->addHandler(kEntryState,kFocus,onEntry);
     entry.back.app=app;entry.shownMode=0;
     entry.target.app=app;entry.target.e=&entry;entry.target.active=false;entry.target.target=kEntryState;
+    bmw::ActionDelegate onPanel={&entry,&Entry::panelFocus};
+    app->addHandler(kPanelState,kFocus,onPanel);
+    entry.shownPanel=0;entry.shownPanelVis=-1;
     bmw::ActionDelegate on169={&entry,&Entry::mode169Focus};
     bmw::ActionDelegate onWide={&entry,&Entry::modeWideFocus};
     app->addHandler(kMode169State,kFocus,on169);

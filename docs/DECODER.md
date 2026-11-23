@@ -204,5 +204,8 @@ A box at x 875, y 96, 384x167 with a "Trip computer" title line (20 px from the 
 - Long roller push (700 ms, `NBT_PUSH_LONG_MS`, `nbt_knob`): short-term average speed on / off. On, it averages the
   current speed (CDS `driving.speedActual`) from that moment and shows it at the end of the title line; a short push
   is still play / pause (now on the release).
+- At the start of each session the box is hidden unless "Trip computer: on" is set in iDrive's Android Auto page
+  (flag file `panel-at-start` in the package; default off; the button only shows in full width). Long NAV still
+  shows / hides it during the session. `decoder.panel` stays the master switch.
 - Long NAV (700 ms, `NBT_NAV_LONG_MS`) in Android Auto toggles `/fs/ram3/nbt-aa-panel-off` (box hidden while it
   exists; on again after a boot). NAV's play / pause now comes with the release of a short press.
