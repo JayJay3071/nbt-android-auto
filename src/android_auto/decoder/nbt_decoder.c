@@ -430,7 +430,7 @@ static void car_present(const struct picture* p)
  * /fs/ram3/nbt-aa-trip (HMI plugin, CDS: range, tank, temperatures, instantaneous consumption, averages as fallback).
  *   12:04        44 min        30 km
  *   7.4 L/100km           42.1 km/h
- *   833 km        52 L        0.7 L/h (stationary) / 6.3 L/100 (moving)
+ *   833 km        52 L        0.7 L/h (stationary) / 6.3 L/100km (moving)
  *   11.5°C        E 80°       O 73°
  * White text on a translucent black background. Shown while Android Auto's window is shown full width and
  * /fs/ram3/nbt-aa-panel-off does not exist (long NAV in nbt_knob). */
@@ -575,7 +575,7 @@ static void panel_compose(void)
      * rises with the engine idling and wraps at 65536). Its unit is a guess: microlitres of fuel per count
      * (decoder.fuelscale: microlitres per count x 1000, default 1000), so L/h = counts per second x 0.0036. The rate is
      * taken over the last 5 s (one sample a second, each step unwrapped on its own); from 5 km/h on
-     * (driving.speedActual) it is shown as L/100 km. */
+     * (driving.speedActual) it is shown as L/100km. */
     if (cds_value(cds, "sensors.fuel", "range", &x))
         snprintf(a, sizeof(a), "%.0f km", x);
     else
@@ -610,14 +610,14 @@ static void panel_compose(void)
                 const double lph = counts / secs * 0.0036 * scale / 1000.0;
                 double speed = 0;
                 if (cds_value(cds, "driving.speedActual", "speedActual", &speed) && speed >= 5)
-                    snprintf(c, sizeof(c), "%.1f L/100", lph / speed * 100.0);
+                    snprintf(c, sizeof(c), lph / speed >= 0.995 ? "%.0f L/100km" : "%.1f L/100km", lph / speed * 100.0);
                 else
                     snprintf(c, sizeof(c), "%.1f L/h", lph);
             }
         }
     }
     panel_text_at(a, R, top[2], 0);
-    panel_text_at(b, M, top[2], 1);
+    panel_text_at(b, R + panel_width(a) + 14, top[2], 0);   /* tank right after range: room for "12.5 L/100km" */
     panel_text_at(c, L, top[2], 2);
     /* 4: outside, coolant, oil temperature */
     if (cds_value(cds, "sensors.temperatureExterior", "temperatureExterior", &x))

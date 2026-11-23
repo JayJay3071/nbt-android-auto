@@ -184,7 +184,7 @@ A box at x 1000, y 120, 280x100 over the full-width picture, instead of iDrive's
 ```
 12:04        44 min        30 km      trip start, duration, distance
 7.4 L/100km           42.1 km/h      trip averages
-833 km        52 L        0.7 L/h       range, tank, instantaneous consumption: L/h stationary, L/100 from 5 km/h (counter unit a guess, `decoder.fuelscale`)
+833 km        52 L        0.7 L/h       range, tank, instantaneous consumption: L/h stationary, L/100km from 5 km/h (counter unit a guess, `decoder.fuelscale`)
 11.5°C        E 80°       O 73°       outside, coolant, oil
 ```
 
