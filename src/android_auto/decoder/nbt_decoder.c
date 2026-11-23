@@ -56,6 +56,11 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
+#ifdef __QNXNTO__
+#include <spawn.h>   /* spawn(), struct inheritance */
+#else
+#include <spawn.h>   /* posix_spawn (host tests) */
+#endif
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -131,12 +136,15 @@ static struct {
     long stale_ms, repeat_ms;
     int rows;   /* 0 = the whole picture */
     int hw;     /* --hw */
-} g_opt = {0, 0, 1280, 480, 30, 0, 5000, 50, 0, 0};
+    int panel;  /* --panel: this process is the trip computer box (started by the main one) */
+    const char* self;
+} g_opt = {0, 0, 1280, 480, 30, 0, 5000, 50, 0, 0, 0, 0};
 
 /* rows of a decoded picture that are shown */
 static int shown_rows(int height) { return g_opt.rows && height > g_opt.rows ? g_opt.rows : height; }
 
 static volatile sig_atomic_t g_quit;
+extern char** environ;
 
 static struct {
     void* nv;
@@ -398,8 +406,14 @@ static void car_present(const struct picture* p)
 
 /* ---- trip computer box (decoder.panel, test 2026-11-23) ----
  * User: instead of iDrive's split screen, a box over Android Auto at x 1000, y 120, 280 x 100 with the trip computer.
- * The picture cannot be drawn on with hardware decoding (the car decodes into its own surfaces), so the box is a second
- * stream of its own (NV12 from the CPU through VideoFrame, like the CPU path), in its own window above Android Auto's.
+ * The picture cannot be drawn on with hardware decoding (the car decodes into its own surfaces), so the box is a stream
+ * of its own (NV12 from the CPU through VideoFrame, like the CPU path) in its own window above Android Auto's.
+ * Car 2026-11-23: a second stream in THIS process took over Android Auto's window (only its top-left 280 x 100 was left,
+ * the rest iDrive; stream id -27 and 1 alike), as the reference decoder's 64x64 stream created first was taken over by
+ * the real one: libnmsdk seems to keep one window per process, sized by the last stream (a guess). So the box is its
+ * own process, nbt_decoder --panel (own libnmsdk instance), started by this one once its stream is up; this one tells
+ * it over a pipe (its stdin) whether Android Auto's window is shown ('1' / '0', on a change and every second); the end
+ * of the pipe means this one has ended: the box hides and its process ends.
  * Data: /fs/ram3/nbt-aa-tripkombi (nbt_knob, from the cluster: trip start, duration, distance, averages) and
  * /fs/ram3/nbt-aa-trip (HMI plugin, CDS: range, tank, temperatures, instantaneous consumption, averages as fallback).
  *   12:04        44 min        30 km
@@ -408,12 +422,9 @@ static void car_present(const struct picture* p)
  *   11.5°C        E 80°       O 73°
  * Shown while Android Auto's window is shown full width and /fs/ram3/nbt-aa-panel-off does not exist (long NAV in
  * nbt_knob). The car fades a window out when no picture comes for a short while, so the box is handed over again every
- * decoder.repeat ms (min 50); its text is redrawn every second.
- * Open on the car: whether the stream id gives a window above Android Auto's. Stream id -27 (window 1025, no name in
- * libwal_nvidia's LayerId table) by default, file decoder.panelid; z-order value 1 (OrderTypeDef +4, stored per window
- * by setZOrder; Android Auto's window uses 0), file decoder.panelz. A VideoFrame of the box taking over 500 ms or failing
- * 3 times ends the box for this run: the library serves all streams with one worker thread, so a box that never gets
- * composited must not hold up Android Auto's picture. */
+ * decoder.repeat ms (min 50); its text is redrawn every second. Stream id decoder.panelid (default -27), z-order value
+ * decoder.panelz (default 1; OrderTypeDef +4, stored per window by setZOrder; Android Auto's window uses 0). A VideoFrame
+ * of the box taking over 500 ms or failing 3 times ends the box for this run. */
 #define PANEL_OFF_FILE "/fs/ram3/nbt-aa-panel-off"
 #define TRIP_KOMBI_FILE "/fs/ram3/nbt-aa-tripkombi"
 #define TRIP_CDS_FILE "/fs/ram3/nbt-aa-trip"
@@ -648,42 +659,39 @@ static void* panel_thread(void* arg)
     return 0;
 }
 
-static void panel_open(void)
+/* --panel: the box's own stream */
+static int panel_stream_open(void)
 {
-    if (g_panel.ok || g_panel.failed || access(RT_DIR "/decoder.panel", F_OK) != 0)
-        return;
     g_panel.failed = 1;   /* until it is open */
-    if (g_opt.width < PANEL_X + PANEL_W) {
-        say("panel: window only %d wide (split screen), no box", g_opt.width);
-        return;
-    }
     g_panel.id = (int)read_number(RT_DIR "/decoder.panelid", -27);
     g_panel.z = (int)read_number(RT_DIR "/decoder.panelz", 1);
     void* nv = g_car.nv;
     static uint8_t decoder_conf[32];
+    for (int i = 0; i < 32; ++i)
+        g_callback_methods[i] = (void*)callback_nothing;
     int r = ((nv_open_fn)nv_method(nv, NV_OPEN))(nv, &g_panel.stream, &g_callback, 0, decoder_conf);
     if (r < 0 || !g_panel.stream) {
         say("panel: VideoOpen failed 0x%08x", r);
-        return;
+        return -1;
     }
     const struct conf_video conf = {PANEL_W, PANEL_H, 1.0f, (float)g_opt.fps, 0, 0, 0, 0, 0, 50000000u, 0, SURFACES,
                                     g_panel.id};
     r = ((nv_configure_fn)nv_method(nv, NV_CONFIGURE))(nv, g_panel.stream, &conf);
     if (r < 0) {
         say("panel: VideoConfigure failed 0x%08x", r);
-        return;
+        return -1;
     }
     for (int i = 0; i < BUFFERS; ++i) {
         r = ((nv_buffer_fn)nv_method(nv, NV_BUFFER))(nv, &g_panel.buffers[i], PANEL_W, PANEL_H, 0.0f, 0);
         if (r < 0) {
             say("panel: VideoBufferCreate failed 0x%08x", r);
-            return;
+            return -1;
         }
     }
     r = ((nv_stream_fn)nv_method(nv, NV_STREAM))(nv, g_panel.stream, g_panel.buffers, BUFFERS);
     if (r < 0) {
         say("panel: VideoStreamCreate failed 0x%08x", r);
-        return;
+        return -1;
     }
     const struct rect all = {0, 0, PANEL_W, PANEL_H};
     ((nv_rect_fn)nv_method(nv, NV_SOURCE))(nv, g_panel.stream, &all);
@@ -694,16 +702,93 @@ static void panel_open(void)
     pthread_t t;
     if (pthread_create(&t, 0, panel_thread, 0) != 0) {
         say("panel: thread could not start");
-        return;
+        return -1;
     }
     g_panel.failed = 0;
     g_panel.ok = 1;
     say("panel: stream %dx%d, id %d (window %lu, z %d) at %d,%d", PANEL_W, PANEL_H, g_panel.id, g_panel.window, g_panel.z,
         PANEL_X, PANEL_Y);
+    return 0;
+}
+
+/* main process: the box's process and the pipe that tells it whether Android Auto's window is shown */
+static struct {
+    int fd, last, tried;
+    long long sent_at;
+} g_panelc = {-1, -1, 0, 0};
+
+static void panel_open(void)
+{
+    if (g_opt.panel || g_panelc.tried || access(RT_DIR "/decoder.panel", F_OK) != 0)
+        return;
+    g_panelc.tried = 1;
+    if (g_opt.width < PANEL_X + PANEL_W) {
+        say("panel: window only %d wide (split screen), no box", g_opt.width);
+        return;
+    }
+    int p[2];
+    if (pipe(p) != 0) {
+        say("panel: pipe: %s", strerror(errno));
+        return;
+    }
+    fcntl(p[1], F_SETFL, O_NONBLOCK);
+    fcntl(p[1], F_SETFD, FD_CLOEXEC);
+    char fps[8];
+    snprintf(fps, sizeof(fps), "%d", g_opt.fps);
+    char* const args[] = {(char*)g_opt.self, (char*)"--panel", (char*)"--fps", fps, 0};
+    pid_t pid;
+#ifdef __QNXNTO__
+    /* QNX's own spawn(): fd_map = the child's 0, 1, 2 (stdout / stderr stay the log) */
+    const int fds[3] = {p[0], 1, 2};
+    struct inheritance inh;
+    memset(&inh, 0, sizeof(inh));
+    inh.flags = SPAWN_NOZOMBIE | SPAWN_SETSIGMASK;
+    sigemptyset(&inh.sigmask);
+    pid = spawn(g_opt.self, 3, fds, &inh, args, environ);
+    const int r = pid == -1 ? errno : 0;
+#else
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_init(&fa);
+    posix_spawn_file_actions_adddup2(&fa, p[0], 0);
+    posix_spawn_file_actions_addclose(&fa, p[0]);
+    const int r = posix_spawn(&pid, g_opt.self, &fa, 0, args, environ);
+    posix_spawn_file_actions_destroy(&fa);
+#endif
+    close(p[0]);
+    if (r != 0) {
+        say("panel: %s --panel could not start: %s", g_opt.self, strerror(r));
+        close(p[1]);
+        return;
+    }
+    g_panelc.fd = p[1];
+    say("panel: process %d started", (int)pid);
+}
+
+/* main process: tell the box's process whether Android Auto's window is shown (on a change, else every second) */
+static void panel_tell(int show, int force)
+{
+    if (g_panelc.fd < 0)
+        return;
+    const long long now = now_ms();
+    if (!force && show == g_panelc.last && now - g_panelc.sent_at < 1000)
+        return;
+    const char c = show ? '1' : '0';
+    if (write(g_panelc.fd, &c, 1) < 0 && errno != EAGAIN) {
+        say("panel: its process has ended (%s)", strerror(errno));
+        close(g_panelc.fd);
+        g_panelc.fd = -1;
+        return;
+    }
+    g_panelc.last = show;
+    g_panelc.sent_at = now;
 }
 
 static void panel_hide(void)
 {
+    if (!g_opt.panel) {
+        panel_tell(0, 1);
+        return;
+    }
     if (!g_panel.ok || !g_panel.shown)
         return;
     g_panel.shown = 0;
@@ -715,6 +800,10 @@ static void panel_hide(void)
 /* main thread, after the window policy: the box follows Android Auto's window; force = that window was just set */
 static void panel_policy(int force)
 {
+    if (!g_opt.panel) {
+        panel_tell(g_win.shown == 1, force);
+        return;
+    }
     if (!g_panel.ok || !g_car.wal)
         return;
     const long long now = now_ms();
@@ -1296,10 +1385,41 @@ static int read_session(int fd)
     return -1;
 }
 
+/* --panel: the box's process; stdin = the main process's pipe */
+static int run_panel(void)
+{
+    if (car_open() != 0 || panel_stream_open() != 0)
+        return 2;
+    for (;;) {
+        fd_set in;
+        FD_ZERO(&in);
+        FD_SET(0, &in);
+        struct timeval wait = {0, 100000};
+        if (select(1, &in, 0, 0, &wait) > 0) {
+            char buf[64];
+            const ssize_t n = read(0, buf, sizeof(buf));
+            if (n <= 0)
+                break;
+            g_win.shown = buf[n - 1] == '1';
+        }
+        if (g_quit)
+            break;
+        panel_policy(0);
+    }
+    say("panel: main process gone, box hidden");
+    g_win.shown = 0;
+    panel_policy(0);
+    usleep(200000);
+    return 0;
+}
+
 static int run(void)
 {
+    if (g_opt.panel)
+        return run_panel();
     if (!g_opt.bench && car_open() != 0)
         return 2;
+
     for (;;) {
         if (g_opt.ready) {
             const int r = open(g_opt.ready, O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -1374,6 +1494,8 @@ int main(int argc, char** argv)
                 return usage();
         } else if (!strcmp(a, "--hw")) {
             g_opt.hw = 1;
+        } else if (!strcmp(a, "--panel")) {
+            g_opt.panel = 1;
         } else if (!strcmp(a, "--rows") && value) {
             g_opt.rows = atoi(argv[++i]);
             if (g_opt.rows < 2)
@@ -1385,7 +1507,8 @@ int main(int argc, char** argv)
         } else
             return usage();
     }
-    if (!g_opt.input)
+    g_opt.self = argv[0];
+    if (!g_opt.input && !g_opt.panel)
         return usage();
     g_opt.stale_ms = read_number("decoder.stale", 5000);
     g_opt.repeat_ms = read_number(RT_DIR "/decoder.repeat", 50);
@@ -1395,7 +1518,10 @@ int main(int argc, char** argv)
     char timeout[16];
     snprintf(timeout, sizeof(timeout), "%ld", read_number(RT_DIR "/decoder.timeout", 3000));
     setenv("NV_NMSDK_TASK_TIMEOUT_MS", timeout, 0);
-    say("nbt_decoder: %s %s, window %dx%d, %d fps, stale %ld ms, repeat after %ld ms%s%s", g_opt.bench ? "bench" : "input",
+    if (g_opt.panel)
+        say("nbt_decoder --panel: the trip computer box");
+    else
+        say("nbt_decoder: %s %s, window %dx%d, %d fps, stale %ld ms, repeat after %ld ms%s%s", g_opt.bench ? "bench" : "input",
         g_opt.input, g_opt.width, g_opt.height, g_opt.fps, g_opt.stale_ms, g_opt.repeat_ms,
         g_opt.rows ? ", top rows only" : "", g_opt.hw ? ", hardware decoding (test)" : "");
     if (g_opt.bench)
