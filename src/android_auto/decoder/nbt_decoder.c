@@ -449,10 +449,11 @@ enum { PANEL_X = 875, PANEL_Y = 96, PANEL_W = 384, PANEL_H = 2 * 8 + 4 * PANEL_L
 /* paged box (user 2026-11-23, decoder.panelpages in RT_DIR, read when the session starts): a third narrower (256 px,
  * the right edge where the full box's is, so x 1003), two pages of a title and four lines ("Trip": start, duration,
  * distance, average consumption, average speed; "Car": range, tank, instantaneous consumption, temperatures, battery),
- * two dots under the lines, the current page's bigger and brighter. Long NAV (nbt_knob) cycles page 1, page 2, off;
- * /fs/ram3/nbt-aa-panel-page2 = the second page. The short-term average speed is at the end of the title on both. */
+ * as tall as the full box. Long NAV (nbt_knob) cycles page 1, page 2, off; /fs/ram3/nbt-aa-panel-page2 = the second
+ * page. At the end of the title: the short-term average speed while it runs, else two dots for the page (as Android
+ * Auto shows pages: top right, same size, the current one white, the other grey). */
 #define PANEL_PAGE2_FILE "/fs/ram3/nbt-aa-panel-page2"
-enum { PANEL_PAGED_W = 256, PANEL_DOTS = 12, PANEL_PAGED_H = PANEL_H + PANEL_DOTS, PANEL_H_MAX = PANEL_PAGED_H };
+enum { PANEL_PAGED_W = 256, PANEL_PAGED_H = PANEL_H, PANEL_H_MAX = PANEL_H };
 
 static struct {
     int ok, have;
@@ -576,7 +577,7 @@ static void panel_dot(double cx, double cy, double r, int level)
         }
 }
 
-/* paged box: the page's four lines (two values: one left, one right) and the two dots under them.
+/* paged box: the page's four lines (two values: one left, one right).
  * v = start, duration, distance, average consumption, average speed, range, tank, instantaneous consumption, outside,
  * coolant, oil, battery */
 static void panel_pages(char v[12][40], const int top[4], int L, int R)
@@ -591,9 +592,6 @@ static void panel_pages(char v[12][40], const int top[4], int L, int R)
         if (page[p][line][1] >= 0)
             panel_text_at(v[(int)page[p][line][1]], L, top[line], 2);
     }
-    const double y = PANEL_H, mid = g_panel.w / 2.0;
-    panel_dot(mid - 8, y, p ? 2.5 : 4, p ? 60 : 100);
-    panel_dot(mid + 8, y, p ? 4 : 2.5, p ? 100 : 60);
 }
 
 static void panel_compose(void)
@@ -648,7 +646,12 @@ static void panel_compose(void)
         if (avg[0])
             panel_text_at(avg, L, PANEL_PAD_Y, 2);
         const int x0 = R + panel_width(title) + 10, y = PANEL_PAD_Y + PANEL_FONT_ASCENT - 7;
-        const int x1 = avg[0] ? L - panel_width(avg) - 10 : L;
+        int x1 = avg[0] ? L - panel_width(avg) - 10 : L;
+        if (paged && !avg[0]) {   /* the page dots, right-aligned, centred on the rule */
+            panel_dot(L - 4 - 16, y + 1, 4, g_panel.page == 2 ? 50 : 100);
+            panel_dot(L - 4, y + 1, 4, g_panel.page == 2 ? 100 : 50);
+            x1 = L - 24 - 10;
+        }
         for (int row = y; row < y + 2; ++row)
             for (int col = x0; col < x1; ++col)
                 g_panel.draw[row * g_panel.w + col] = (uint8_t)(PANEL_BG + (PANEL_FG - PANEL_BG) * 6 / 10);

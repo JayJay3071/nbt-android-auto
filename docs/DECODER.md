@@ -234,6 +234,6 @@ A box at x 875, y 96, 384x167 with a "Trip computer" title line (20 px from the 
   of text at 22 px), which brings it close to Waze's controls in full width. The paged one is 256 px wide with at most
   two values per line: page "Trip" = start and duration, distance, average consumption, average speed; page "Car" =
   range and tank, instantaneous consumption, outside temperature and battery, coolant and oil. The short-term average
-  speed is at the end of the title on both pages. Two dots under the lines show the page (the current one bigger and
-  brighter). Long NAV: page 1, page 2 (`/fs/ram3/nbt-aa-panel-page2`), off, page 1 again; each session starts on page
+  speed is at the end of the title on both pages while it runs; otherwise two dots there show the page, as Android
+  Auto shows pages (same size, the current one white, the other grey). As tall as the full box. Long NAV: page 1, page 2 (`/fs/ram3/nbt-aa-panel-page2`), off, page 1 again; each session starts on page
   1. A page change is drawn and uploaded at once (not waiting for the once-a-second update).
