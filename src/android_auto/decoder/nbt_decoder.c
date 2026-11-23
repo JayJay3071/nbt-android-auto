@@ -430,7 +430,7 @@ static void car_present(const struct picture* p)
  * /fs/ram3/nbt-aa-trip (HMI plugin, CDS: range, tank, temperatures, instantaneous consumption, averages as fallback).
  *   12:04        44 min        30 km
  *   7.4 L/100km           42.1 km/h
- *   833 km        52 L        now 0
+ *   833 km        52 L        0.7 L/h (stationary) / 6.3 L/100 (moving)
  *   11.5°C        E 80°       O 73°
  * White text on a translucent black background. Shown while Android Auto's window is shown full width and
  * /fs/ram3/nbt-aa-panel-off does not exist (long NAV in nbt_knob). */
@@ -571,7 +571,11 @@ static void panel_compose(void)
         strcpy(b, "-- km/h");
     panel_text_at(a, R, top[1], 0);
     panel_text_at(b, L, top[1], 2);
-    /* 3: range, tank, instantaneous consumption (CDS engine.consumption, unit not known: shown as it comes) */
+    /* 3: range, tank, instantaneous consumption. CDS engine.consumption is a counter, not a rate (car 2026-11-23: it
+     * rises with the engine idling and wraps at 65536). Its unit is a guess: microlitres of fuel per count
+     * (decoder.fuelscale: microlitres per count x 1000, default 1000), so L/h = counts per second x 0.0036. The rate is
+     * taken over the last 5 s (one sample a second, each step unwrapped on its own); from 5 km/h on
+     * (driving.speedActual) it is shown as L/100 km. */
     if (cds_value(cds, "sensors.fuel", "range", &x))
         snprintf(a, sizeof(a), "%.0f km", x);
     else
@@ -580,10 +584,38 @@ static void panel_compose(void)
         snprintf(b, sizeof(b), "%.0f L", x);
     else
         strcpy(b, "-- L");
-    if (cds_value(cds, "engine.consumption", "consumption", &x))
-        snprintf(c, sizeof(c), "now %g", x);
-    else
-        strcpy(c, "now --");
+    {
+        enum { SAMPLES = 6 };
+        static long long when[SAMPLES];
+        static long count[SAMPLES];
+        static int n;
+        static long scale = -1;
+        if (scale < 0)
+            scale = read_number(RT_DIR "/decoder.fuelscale", 1000);
+        strcpy(c, "-- L/h");
+        if (cds_value(cds, "engine.consumption", "consumption", &x)) {
+            if (n == SAMPLES) {
+                memmove(when, when + 1, sizeof(when[0]) * (SAMPLES - 1));
+                memmove(count, count + 1, sizeof(count[0]) * (SAMPLES - 1));
+                --n;
+            }
+            when[n] = now_ms();
+            count[n] = (long)x;
+            ++n;
+            long counts = 0;
+            for (int i = 1; i < n; ++i)
+                counts += (count[i] - count[i - 1]) & 0xffff;
+            const double secs = n > 1 ? (when[n - 1] - when[0]) / 1000.0 : 0;
+            if (secs >= 2.0) {
+                const double lph = counts / secs * 0.0036 * scale / 1000.0;
+                double speed = 0;
+                if (cds_value(cds, "driving.speedActual", "speedActual", &speed) && speed >= 5)
+                    snprintf(c, sizeof(c), "%.1f L/100", lph / speed * 100.0);
+                else
+                    snprintf(c, sizeof(c), "%.1f L/h", lph);
+            }
+        }
+    }
     panel_text_at(a, R, top[2], 0);
     panel_text_at(b, M, top[2], 1);
     panel_text_at(c, L, top[2], 2);

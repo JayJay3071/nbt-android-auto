@@ -24,6 +24,7 @@ Used whenever `nbt_decoder` is installed, at 60 fps; no file is needed. Optional
 | `decoder.hw` | Hardware decoding (test): the car's own H.264 decoder instead of FFmpeg's (`--hw`, see below); with `decoder.720` the sharp picture without the CPU cost |
 | `decoder.panel` | Trip computer box (test) at x 1000, y 120, 280x100 over the full-width picture, see below |
 | `decoder.panelwin`, `decoder.panelx`, `decoder.panely` | The WAL window the box is drawn in (default 1024, Android Auto's; 80 = the cursor's) and its position in it (default 1000, 120) |
+| `decoder.fuelscale` | Microlitres of fuel per count of CDS `engine.consumption`, x1000 (default 1000), for the box's instantaneous consumption |
 | `decoder.panelflip` | The box's texture: 1 rows reversed (default; the WalServer reads sprites bottom-up), 2 columns reversed, 3 both |
 | `decoder.args` | One line of extra arguments for `nbt_decoder` |
 | `decoder.delay` | Seconds after iDrive's `MARKER HMIReady` before the first session at boot (default 2) |
@@ -183,7 +184,7 @@ A box at x 1000, y 120, 280x100 over the full-width picture, instead of iDrive's
 ```
 12:04        44 min        30 km      trip start, duration, distance
 7.4 L/100km           42.1 km/h      trip averages
-833 km        52 L        now 0       range, tank, instantaneous consumption (unit not known yet)
+833 km        52 L        0.7 L/h       range, tank, instantaneous consumption: L/h stationary, L/100 from 5 km/h (counter unit a guess, `decoder.fuelscale`)
 11.5°C        E 80°       O 73°       outside, coolant, oil
 ```
 
