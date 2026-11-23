@@ -30,6 +30,7 @@ static usbd_device_instance_t g_inst[64];
 static unsigned g_count;
 static unsigned g_devno = 0xffff, g_path = 0xffff;
 static volatile int g_gone;
+static volatile int g_armed;   /* the iPhone is set up: from now on its removal is an unplug */
 
 static void inserted(struct usbd_connection* c, usbd_device_instance_t* d)
 {
@@ -45,7 +46,9 @@ static void inserted(struct usbd_connection* c, usbd_device_instance_t* d)
 static void removed(struct usbd_connection* c, usbd_device_instance_t* d)
 {
     (void)c;
-    if (d->devno == g_devno && d->path == g_path && !g_gone) {
+    /* not while setting it up: after the CarPlay request and the configuration change it re-connects (car
+     * 2026-11-23: that removal was taken as an unplug and everything stopped) */
+    if (g_armed && d->devno == g_devno && d->path == g_path && !g_gone) {
         g_gone = 1;
         say("usb: the iPhone was unplugged");
     }
@@ -335,6 +338,7 @@ int usb_open(struct usb* u, unsigned wait_s)
         cp_random(u->mac, 6);
         u->mac[0] = (unsigned char)((u->mac[0] & 0xfe) | 0x02);
     }
+    g_armed = 1;
     return 0;
 }
 
