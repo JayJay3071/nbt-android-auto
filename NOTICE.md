@@ -85,6 +85,7 @@ permission below. They contain no code from NBT-AAD or the rest of this project:
   DejaVu Sans stay under the DejaVu / Bitstream Vera font license, see [DejaVu fonts](#dejavu-fonts)) and their
   generator `scripts/gen_panel_font.py`
 - `src/idrive/reboot/nbt_reset.c`
+- the CarPlay work: `src/carplay/nbt_carplay_probe.c`, `docs/CARPLAY.md`
 - `docs/DECODER.md`, `docs/FORK-CHANGES.md`, `docs/WORKFLOW.md`, `docs/SSH-ACCESS-SERIAL.md`
 
 The other files in `src/android_auto/decoder/ffmpeg/` (`config.h`, `config.asm`, `avconfig.h`, `ffversion.h`) are

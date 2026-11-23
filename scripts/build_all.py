@@ -46,7 +46,7 @@ MBEDTLS_DISABLED = ["MBEDTLS_AESNI_C", "MBEDTLS_HAVE_ASM", "MBEDTLS_PADLOCK_C"]
 PROGRAMS = {"oneplus_native": "rt", "native_service": "rt", "decode_runner": "rt", "fifo_http": "rt",
             "accessory_window": "rt", "nbt_knob": "rt", "nbt_hwvideo": "rt", "nbt_cluster": "rt",
             "libNbtAndroidAuto.so": "plugin", "nbt_reset": "rt", "nbt_key": "test",
-            "nbt_a2i_beep": "test", "nbt_decoder": "rt"}
+            "nbt_a2i_beep": "test", "nbt_decoder": "rt", "nbt_carplay_probe": "test"}
 
 
 def git(*args, cwd=None):
@@ -133,7 +133,7 @@ def add_nbt_aad(archive, checkout):
 
 
 def add_repo_sources(archive):
-    for folder in ("src/android_auto", "src/idrive"):
+    for folder in ("src/android_auto", "src/idrive", "src/carplay"):
         for path in sorted((ROOT / folder).rglob("*")):
             if path.is_file() and path.suffix in (".c", ".cpp", ".h", ".hpp"):
                 archive.add(path.relative_to(ROOT).as_posix(), text(path))
