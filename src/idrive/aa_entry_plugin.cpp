@@ -332,6 +332,36 @@ bool onCallInfo(void*,const bmw::BasicString<unsigned short>& v){
     cdsLog("communication.currentCallInfo","/fs/ram3/nbt-aa-callinfo",v);
     return true;
 }
+// Trip computer box (user 2026-11-23: a box over Android Auto instead of iDrive's split screen; nbt_decoder draws it).
+// CDS properties as BMW's apps read them (names from BimmerGestalt's IDriveConnectKit, all in this HmiMain3D's CDS
+// table). Car 2026-11-23: driving.averageConsumption {"averageConsumption":{"averageConsumption1":6.7,
+// "averageConsumption2":7.4,"unit":1}} (2 = the trip computer's), driving.averageSpeed (the same with averageSpeed1/2),
+// sensors.fuel {"fuel":{"range":833,"reserve":0,"tanklevel":52}}, sensors.temperatureExterior {"temperatureExterior":
+// 11.5}, engine.temperature {"temperature":{"engine":80,"oil":73}}, engine.consumption {"consumption":0}.
+// All latest values go to /fs/ram3/nbt-aa-trip, one line "name json" each, rewritten on every change (RAM); only the
+// first value of each property goes to the plugin log. Trip start, duration and distance are not in CDS: nbt_knob
+// reads them from the cluster (/fs/ram3/nbt-aa-tripkombi).
+const char* const kTripNames[]={"driving.averageConsumption","driving.averageSpeed","sensors.fuel",
+    "sensors.temperatureExterior","engine.temperature","engine.consumption"};
+const int kTrips=sizeof(kTripNames)/sizeof(kTripNames[0]);
+char g_trip[kTrips][160];
+bool g_tripLogged[kTrips];
+template<int I> bool onTrip(void*,const bmw::BasicString<unsigned short>& v){
+    cdsText(v,g_trip[I],sizeof(g_trip[I]));
+    if(!g_tripLogged[I]){
+        g_tripLogged[I]=true;
+        char line[220];snprintf(line,sizeof(line),"CDS %s = '%s' (first value)",kTripNames[I],g_trip[I]);
+        plog(line,0);
+    }
+    char buf[kTrips*200];size_t n=0;
+    for(int i=0;i<kTrips;++i)
+        if(g_trip[i][0])n+=snprintf(buf+n,sizeof(buf)-n,"%s %s\n",kTripNames[i],g_trip[i]);
+    int fd=open("/fs/ram3/nbt-aa-trip.new",O_WRONLY|O_CREAT|O_TRUNC,0644);
+    if(fd>=0){write(fd,buf,n);close(fd);rename("/fs/ram3/nbt-aa-trip.new","/fs/ram3/nbt-aa-trip");}
+    return true;
+}
+bool (*const kTripFns[kTrips])(void*,const bmw::BasicString<unsigned short>&)={&onTrip<0>,&onTrip<1>,&onTrip<2>,
+    &onTrip<3>,&onTrip<4>,&onTrip<5>};
 class CdsSubscribe : public bmw::Runnable {
 public:
     bmw::PluginApp* app;
@@ -344,7 +374,12 @@ public:
         app->cdsAddPropertyChangedEventHandler(p,0,dp);
         app->cdsAddPropertyChangedEventHandler(d,0,dd);
         app->cdsAddPropertyChangedEventHandler(c,0,dc);
-        plog("CDS handlers for driving.gear, sensors.PDCStatus, controls.headlights and communication.currentCallInfo registered",0);
+        for(int i=0;i<kTrips;++i){
+            bmw::BasicString<char> t(kTripNames[i]);
+            bmw::CdsDelegate dt={app,kTripFns[i]};
+            app->cdsAddPropertyChangedEventHandler(t,0,dt);
+        }
+        plog("CDS handlers for driving.gear, sensors.PDCStatus, controls.headlights, communication.currentCallInfo and the trip computer registered",0);
     }
 };
 CdsSubscribe g_cds;

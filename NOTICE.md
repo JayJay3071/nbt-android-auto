@@ -47,6 +47,18 @@ FFmpeg's VDPAU interface is built in (for the car's hardware decoder, `--hw`); i
 `vdpau/vdpau.h`, kept in `src/android_auto/decoder/ffmpeg/vdpau/` under its MIT licence (Copyright (c) 2008-2015
 NVIDIA Corporation, notice in the file). libvdpau itself is not used.
 
+## DejaVu fonts
+
+`src/android_auto/decoder/nbt_panel_font.h` holds glyph bitmaps rendered from DejaVu Sans
+(<https://dejavu-fonts.github.io/>). Fonts are (c) Bitstream (see below); DejaVu changes are in public domain.
+Bitstream Vera Fonts Copyright (c) 2003 by Bitstream, Inc. All Rights Reserved. Bitstream Vera is a trademark of
+Bitstream, Inc. Permission is hereby granted, free of charge, to any person obtaining a copy of the fonts accompanying
+this license ("Fonts") and associated documentation files, to reproduce and distribute the Font Software, including
+without limitation the rights to use, copy, merge, publish, distribute, and/or sell copies of the Font Software, and
+to permit persons to whom the Font Software is furnished to do so, subject to the conditions of the Bitstream Vera
+Fonts license (<https://dejavu-fonts.github.io/License.html>), whose copyright and trademark notices are reproduced
+here.
+
 ## Installer
 
 The installer app bundles Python, Tcl/Tk and paramiko (LGPL-2.1, <https://www.paramiko.org/>) with its dependencies

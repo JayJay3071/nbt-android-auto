@@ -72,6 +72,7 @@
 #include "libavutil/cpu.h"
 #include "libavutil/pixdesc.h"
 #include "nbt_hwdec.h"
+#include "nbt_panel_font.h"
 
 #define RT_DIR "/var/opt/hmi/data/rw/NbtAndroidAutoRT"
 #define HIDDEN_FILE "/fs/ram3/nbt-aa-hidden"
@@ -271,6 +272,8 @@ static int car_open(void)
     return 0;
 }
 
+static void panel_open(void);
+
 /* the stream, sized like the first picture: decoder 0 = pictures from VideoFrame, DECODER_H264 = from VideoDecode;
  * source = the part of the picture shown, destination = where it goes in the stream (both 0 = the whole picture) */
 static int car_stream_with(int w, int h, uint32_t decoder, uint32_t surfaces, const struct rect* source,
@@ -312,13 +315,18 @@ static int car_stream_with(int w, int h, uint32_t decoder, uint32_t surfaces, co
     g_car.ready = 1;
     say("video: stream %dx%d at %d fps, id %d, %s (window %lu, %dx%d on the display)", w, h, g_opt.fps, STREAM_ID,
         decoder ? "decoded by the car" : "pictures from the CPU", g_car.window, g_opt.width, g_opt.height);
+    panel_open();
     return 0;
 }
 
 static int car_stream(int w, int h) { return car_stream_with(w, h, 0, SURFACES, 0, 0); }
 
+static void panel_hide(void);
+
 static void window_set(int show)
 {
+    if (!show)
+        panel_hide();
     if (!g_car.wal)
         return;
     if (show) {
@@ -385,6 +393,350 @@ static void car_present(const struct picture* p)
     if (dt > g_stat.upload_max)
         g_stat.upload_max = dt;
     pthread_mutex_unlock(&g_box.lock);
+}
+
+
+/* ---- trip computer box (decoder.panel, test 2026-11-23) ----
+ * User: instead of iDrive's split screen, a box over Android Auto at x 1000, y 120, 280 x 100 with the trip computer.
+ * The picture cannot be drawn on with hardware decoding (the car decodes into its own surfaces), so the box is a second
+ * stream of its own (NV12 from the CPU through VideoFrame, like the CPU path), in its own window above Android Auto's.
+ * Data: /fs/ram3/nbt-aa-tripkombi (nbt_knob, from the cluster: trip start, duration, distance, averages) and
+ * /fs/ram3/nbt-aa-trip (HMI plugin, CDS: range, tank, temperatures, instantaneous consumption, averages as fallback).
+ *   12:04        44 min        30 km
+ *   7.4 L/100km           42.1 km/h
+ *   833 km        52 L        now 0
+ *   11.5°C        E 80°       O 73°
+ * Shown while Android Auto's window is shown full width and /fs/ram3/nbt-aa-panel-off does not exist (long NAV in
+ * nbt_knob). The car fades a window out when no picture comes for a short while, so the box is handed over again every
+ * decoder.repeat ms (min 50); its text is redrawn every second.
+ * Open on the car: whether the stream id gives a window above Android Auto's. Stream id -27 (window 1025, no name in
+ * libwal_nvidia's LayerId table) by default, file decoder.panelid; z-order value 1 (OrderTypeDef +4, stored per window
+ * by setZOrder; Android Auto's window uses 0), file decoder.panelz. A VideoFrame of the box taking over 500 ms or failing
+ * 3 times ends the box for this run: the library serves all streams with one worker thread, so a box that never gets
+ * composited must not hold up Android Auto's picture. */
+#define PANEL_OFF_FILE "/fs/ram3/nbt-aa-panel-off"
+#define TRIP_KOMBI_FILE "/fs/ram3/nbt-aa-tripkombi"
+#define TRIP_CDS_FILE "/fs/ram3/nbt-aa-trip"
+enum { PANEL_X = 1000, PANEL_Y = 120, PANEL_W = 280, PANEL_H = 100, PANEL_BG = 24, PANEL_FG = 235 };
+
+static struct {
+    int ok, failed, failures;
+    volatile int shown;
+    void* stream;
+    void* buffers[BUFFERS];
+    unsigned long window;
+    int id, z;
+    uint8_t y[PANEL_W * PANEL_H], uv[PANEL_W * PANEL_H / 2];   /* shown (under lock) */
+    uint8_t draw[PANEL_W * PANEL_H];                           /* being drawn (main thread) */
+    pthread_mutex_t lock;
+    int have;
+    long long refresh_at, text_at;
+    unsigned long turn;
+    int64_t presented;
+} g_panel = {.lock = PTHREAD_MUTEX_INITIALIZER};
+
+static int panel_glyph(unsigned char c) { return c >= 32 && c <= 126 ? c - 32 : c == 0xb0 ? 95 : '?' - 32; }
+
+static int panel_width(const char* t)
+{
+    int w = 0;
+    for (; *t; ++t)
+        w += panel_glyphs[panel_glyph((unsigned char)*t)].advance;
+    return w;
+}
+
+/* align: 0 left at x, 1 centred on x, 2 right at x */
+static void panel_text_at(const char* t, int x, int top, int align)
+{
+    x -= align == 1 ? panel_width(t) / 2 : align == 2 ? panel_width(t) : 0;
+    for (; *t; ++t) {
+        const int g = panel_glyph((unsigned char)*t);
+        const unsigned char* bits = panel_bits + panel_glyphs[g].offset;
+        const int gw = panel_glyphs[g].width, gx = x + panel_glyphs[g].left;
+        for (int row = 0; row < PANEL_FONT_HEIGHT; ++row) {
+            const int y = top + row;
+            if (y < 0 || y >= PANEL_H)
+                continue;
+            for (int col = 0; col < gw; ++col) {
+                const int px = gx + col;
+                const unsigned a = bits[row * gw + col];
+                if (px < 0 || px >= PANEL_W || !a)
+                    continue;
+                uint8_t* d = &g_panel.draw[y * PANEL_W + px];
+                const unsigned v = PANEL_BG + (PANEL_FG - PANEL_BG) * a / 255;
+                if (v > *d)
+                    *d = (uint8_t)v;
+            }
+        }
+        x += panel_glyphs[g].advance;
+    }
+}
+
+static int panel_read(const char* path, char* buf, size_t size)
+{
+    buf[0] = 0;
+    const int fd = open(path, O_RDONLY);
+    if (fd < 0)
+        return 0;
+    const ssize_t n = read(fd, buf, size - 1);
+    close(fd);
+    buf[n > 0 ? n : 0] = 0;
+    return n > 0;
+}
+
+/* "key=value" line of nbt_knob's file */
+static int kombi_value(const char* text, const char* key, int* out)
+{
+    char k[24];
+    snprintf(k, sizeof(k), "%s=", key);
+    for (const char* p = text; (p = strstr(p, k)); ++p)
+        if (p == text || p[-1] == '\n')
+            return sscanf(p + strlen(k), "%d", out) == 1 && *out >= 0;
+    return 0;
+}
+
+/* a number after "key": on the CDS line that starts with name */
+static int cds_value(const char* text, const char* name, const char* key, double* out)
+{
+    const size_t n = strlen(name);
+    for (const char* line = text; line && *line; line = strchr(line, '\n') ? strchr(line, '\n') + 1 : 0) {
+        if (strncmp(line, name, n) || line[n] != ' ')
+            continue;
+        const char* end = strchr(line, '\n');
+        char k[40];
+        snprintf(k, sizeof(k), "\"%s\":", key);
+        const char* p = strstr(line, k);
+        if (!p || (end && p > end))
+            return 0;
+        return sscanf(p + strlen(k), "%lf", out) == 1;
+    }
+    return 0;
+}
+
+static void panel_compose(void)
+{
+    char kombi[256], cds[1200];
+    const int have_kombi = panel_read(TRIP_KOMBI_FILE, kombi, sizeof(kombi));
+    const int have_cds = panel_read(TRIP_CDS_FILE, cds, sizeof(cds));
+    if (!have_kombi && !have_cds)
+        return;
+    char a[32], b[32], c[32];
+    int v, w;
+    double x, y;
+    memset(g_panel.draw, PANEL_BG, sizeof(g_panel.draw));
+    const int L = PANEL_W - 8, M = PANEL_W / 2, R = 8, top[4] = {1, 26, 51, 76};
+    /* 1: trip start, duration, distance (cluster) */
+    if (strstr(kombi, "start=") && sscanf(strstr(kombi, "start=") + 6, "%d:%d", &v, &w) == 2 && v >= 0)
+        snprintf(a, sizeof(a), "%d:%02d", v, w);
+    else
+        strcpy(a, "--:--");
+    int hours = 0, minutes;
+    kombi_value(kombi, "hours", &hours);
+    if (kombi_value(kombi, "minutes", &minutes) && hours > 0)
+        snprintf(b, sizeof(b), "%d:%02d h", hours, minutes);
+    else if (kombi_value(kombi, "minutes", &minutes))
+        snprintf(b, sizeof(b), "%d min", minutes);
+    else
+        strcpy(b, "-- min");
+    if (kombi_value(kombi, "km", &v))
+        snprintf(c, sizeof(c), "%d km", v);
+    else
+        strcpy(c, "-- km");
+    panel_text_at(a, R, top[0], 0);
+    panel_text_at(b, M, top[0], 1);
+    panel_text_at(c, L, top[0], 2);
+    /* 2: average consumption and speed (cluster, x0.1; CDS averageConsumption2 / averageSpeed2 otherwise) */
+    if (kombi_value(kombi, "cons", &v) && v < 4095)
+        snprintf(a, sizeof(a), "%d.%d L/100km", v / 10, v % 10);
+    else if (cds_value(cds, "driving.averageConsumption", "averageConsumption2", &x))
+        snprintf(a, sizeof(a), "%.1f L/100km", x);
+    else
+        strcpy(a, "-- L/100km");
+    if (kombi_value(kombi, "speed", &v) && v < 4095)
+        snprintf(b, sizeof(b), "%d.%d km/h", v / 10, v % 10);
+    else if (cds_value(cds, "driving.averageSpeed", "averageSpeed2", &x))
+        snprintf(b, sizeof(b), "%.1f km/h", x);
+    else
+        strcpy(b, "-- km/h");
+    panel_text_at(a, R, top[1], 0);
+    panel_text_at(b, L, top[1], 2);
+    /* 3: range, tank, instantaneous consumption (CDS engine.consumption, unit not known: shown as it comes) */
+    if (cds_value(cds, "sensors.fuel", "range", &x))
+        snprintf(a, sizeof(a), "%.0f km", x);
+    else
+        strcpy(a, "-- km");
+    if (cds_value(cds, "sensors.fuel", "tanklevel", &x))
+        snprintf(b, sizeof(b), "%.0f L", x);
+    else
+        strcpy(b, "-- L");
+    if (cds_value(cds, "engine.consumption", "consumption", &x))
+        snprintf(c, sizeof(c), "now %g", x);
+    else
+        strcpy(c, "now --");
+    panel_text_at(a, R, top[2], 0);
+    panel_text_at(b, M, top[2], 1);
+    panel_text_at(c, L, top[2], 2);
+    /* 4: outside, coolant, oil temperature */
+    if (cds_value(cds, "sensors.temperatureExterior", "temperatureExterior", &x))
+        snprintf(a, sizeof(a), "%.1f\xb0" "C", x);
+    else
+        strcpy(a, "--\xb0" "C");
+    if (cds_value(cds, "engine.temperature", "engine", &x))
+        snprintf(b, sizeof(b), "E %.0f\xb0", x);
+    else
+        strcpy(b, "E --\xb0");
+    if (cds_value(cds, "engine.temperature", "oil", &y))
+        snprintf(c, sizeof(c), "O %.0f\xb0", y);
+    else
+        strcpy(c, "O --\xb0");
+    panel_text_at(a, R, top[3], 0);
+    panel_text_at(b, M, top[3], 1);
+    panel_text_at(c, L, top[3], 2);
+    pthread_mutex_lock(&g_panel.lock);
+    memcpy(g_panel.y, g_panel.draw, sizeof(g_panel.y));
+    g_panel.have = 1;
+    pthread_mutex_unlock(&g_panel.lock);
+}
+
+static void panel_fail(const char* why, int r)
+{
+    if (++g_panel.failures >= 3 || !strcmp(why, "slow")) {
+        g_panel.failed = 1;
+        say("panel: VideoFrame %s (0x%08x): the box is off for this run", why, r);
+    }
+}
+
+/* the box's thread: hands the box over every decoder.repeat ms while it is shown */
+static void* panel_thread(void* arg)
+{
+    (void)arg;
+    const long period = g_opt.repeat_ms > 50 ? g_opt.repeat_ms : 50;
+    while (!g_quit) {
+        if (!g_panel.shown || g_panel.failed) {
+            usleep(50000);
+            continue;
+        }
+        static uint8_t y[PANEL_W * PANEL_H];
+        pthread_mutex_lock(&g_panel.lock);
+        memcpy(y, g_panel.y, sizeof(y));
+        pthread_mutex_unlock(&g_panel.lock);
+        const uint8_t* planes[3] = {y, g_panel.uv, 0};
+        const uint32_t pitches[3] = {PANEL_W, PANEL_W, 0};
+        const int64_t pts = ++g_panel.presented * 1000000 / g_opt.fps;
+        const long long t0 = now_us();
+        int r = ((nv_frame_fn)nv_method(g_car.nv, NV_FRAME))(g_car.nv, g_panel.stream, FORMAT_NV12, planes, pitches, pts,
+                                                             PICTURE_FRAME, 0);
+        const long long dt = now_us() - t0;
+        if (dt > 500000 && g_panel.shown)   /* hidden meanwhile: its surfaces do not come back, not the box's fault */
+            panel_fail("slow", r);
+        else if (dt > 500000)
+            continue;
+        else if (r < 0)
+            panel_fail("failed", r);
+        else {
+            uint8_t params[64];
+            memset(params, 0, sizeof(params));
+            params[0] = PICTURE_FRAME;
+            params[0x14] = 1;
+            r = ((nv_render_fn)nv_method(g_car.nv, NV_RENDER))(g_car.nv, g_panel.buffers[g_panel.turn++ % BUFFERS],
+                                                              g_panel.stream, params);
+            if (r < 0)
+                panel_fail("render failed", r);
+        }
+        usleep(period * 1000);
+    }
+    return 0;
+}
+
+static void panel_open(void)
+{
+    if (g_panel.ok || g_panel.failed || access(RT_DIR "/decoder.panel", F_OK) != 0)
+        return;
+    g_panel.failed = 1;   /* until it is open */
+    if (g_opt.width < PANEL_X + PANEL_W) {
+        say("panel: window only %d wide (split screen), no box", g_opt.width);
+        return;
+    }
+    g_panel.id = (int)read_number(RT_DIR "/decoder.panelid", -27);
+    g_panel.z = (int)read_number(RT_DIR "/decoder.panelz", 1);
+    void* nv = g_car.nv;
+    static uint8_t decoder_conf[32];
+    int r = ((nv_open_fn)nv_method(nv, NV_OPEN))(nv, &g_panel.stream, &g_callback, 0, decoder_conf);
+    if (r < 0 || !g_panel.stream) {
+        say("panel: VideoOpen failed 0x%08x", r);
+        return;
+    }
+    const struct conf_video conf = {PANEL_W, PANEL_H, 1.0f, (float)g_opt.fps, 0, 0, 0, 0, 0, 50000000u, 0, SURFACES,
+                                    g_panel.id};
+    r = ((nv_configure_fn)nv_method(nv, NV_CONFIGURE))(nv, g_panel.stream, &conf);
+    if (r < 0) {
+        say("panel: VideoConfigure failed 0x%08x", r);
+        return;
+    }
+    for (int i = 0; i < BUFFERS; ++i) {
+        r = ((nv_buffer_fn)nv_method(nv, NV_BUFFER))(nv, &g_panel.buffers[i], PANEL_W, PANEL_H, 0.0f, 0);
+        if (r < 0) {
+            say("panel: VideoBufferCreate failed 0x%08x", r);
+            return;
+        }
+    }
+    r = ((nv_stream_fn)nv_method(nv, NV_STREAM))(nv, g_panel.stream, g_panel.buffers, BUFFERS);
+    if (r < 0) {
+        say("panel: VideoStreamCreate failed 0x%08x", r);
+        return;
+    }
+    const struct rect all = {0, 0, PANEL_W, PANEL_H};
+    ((nv_rect_fn)nv_method(nv, NV_SOURCE))(nv, g_panel.stream, &all);
+    ((nv_rect_fn)nv_method(nv, NV_DEST))(nv, g_panel.stream, &all);
+    memset(g_panel.y, PANEL_BG, sizeof(g_panel.y));
+    memset(g_panel.uv, 128, sizeof(g_panel.uv));
+    g_panel.window = (unsigned long)(LAYER_VIDEO + g_panel.id);
+    pthread_t t;
+    if (pthread_create(&t, 0, panel_thread, 0) != 0) {
+        say("panel: thread could not start");
+        return;
+    }
+    g_panel.failed = 0;
+    g_panel.ok = 1;
+    say("panel: stream %dx%d, id %d (window %lu, z %d) at %d,%d", PANEL_W, PANEL_H, g_panel.id, g_panel.window, g_panel.z,
+        PANEL_X, PANEL_Y);
+}
+
+static void panel_hide(void)
+{
+    if (!g_panel.ok || !g_panel.shown)
+        return;
+    g_panel.shown = 0;
+    if (g_car.wal)
+        g_car.visible(g_car.wal, g_panel.window, 0);
+    say("panel: hidden");
+}
+
+/* main thread, after the window policy: the box follows Android Auto's window; force = that window was just set */
+static void panel_policy(int force)
+{
+    if (!g_panel.ok || !g_car.wal)
+        return;
+    const long long now = now_ms();
+    if (now >= g_panel.text_at) {
+        g_panel.text_at = now + 1000;
+        panel_compose();
+    }
+    const int want = g_win.shown == 1 && !g_panel.failed && g_panel.have && access(PANEL_OFF_FILE, F_OK) != 0;
+    if (!want) {
+        panel_hide();
+        return;
+    }
+    if (g_panel.shown && !force && now < g_panel.refresh_at)
+        return;
+    const struct { uint32_t id; uint16_t z, b; } order = {(uint32_t)g_panel.window, (uint16_t)g_panel.z, 0};
+    g_car.place(g_car.wal, g_panel.window, PANEL_X, PANEL_Y, PANEL_W, PANEL_H);
+    g_car.order(g_car.wal, &order, 1);
+    g_car.visible(g_car.wal, g_panel.window, 1);
+    if (!g_panel.shown)
+        say("panel: shown");
+    g_panel.shown = 1;
+    g_panel.refresh_at = now + 2000;
 }
 
 /* ---- display thread ---- */
@@ -510,13 +862,16 @@ static void window_policy(void)
         if (g_win.shown == 1 && now < g_win.hide_from)
             show = 1;   /* not yet */
     }
-    if (!g_car.ready || (show == g_win.shown && now < g_win.refresh_at))
+    if (!g_car.ready || (show == g_win.shown && now < g_win.refresh_at)) {
+        panel_policy(0);
         return;
+    }
     if (show != g_win.shown)
         say("window: %s", show ? "shown" : "hidden");
     window_set(show);
     g_win.shown = show;
     g_win.refresh_at = now + 2000;
+    panel_policy(1);
 }
 
 /* ---- decoding ---- */

@@ -721,6 +721,95 @@ void playSwitchIfNeeded(nbt::most::Client& most) {
     requestSource(most, g_auxSource);
 }
 
+// --- trip computer from the cluster (user 2026-11-23: a box over Android Auto, drawn by nbt_decoder) ---
+// iDrive's own trip computer page gets it from the cluster over MOST: HmiMain3D's CPxyKombiInterface = FBlock E0/00 at
+// 0101 (nbt_key trip, car 2026-11-23, against iDrive's page: start 12:04, 44 min, 30 km, 7.4 l/100 km, 42.1 km/h).
+// Status payloads (big endian; the first u16 was 0 in every E0 status, not traced):
+//   509 BordcomputerAverage      00 00 01bd 01a5 0043 004a 01 01: u16, speed 1 / speed 2 / consumption 1 /
+//                                consumption 2 (x0.1; 2 = the trip computer's), speed unit, consumption unit
+//   510 BordcomputerTravelStart  00 00 07ea 17 0c 04 0b: u16, year, day, hour, minute, month (start 12:04)
+//   511 BordcomputerTravelData   00 00 0000 2c 001e 0000: u16, hours (assumed: 0 here), minutes, km, s16 (not traced)
+// The cluster also sends them to iDrive's notification registrations; the route sees those copies too. A Get from our
+// own device every 30 s keeps them fresh (the cluster answers us and iDrive's registrations alike, as on the car).
+// Latest values go to /fs/ram3/nbt-aa-tripkombi (key=value lines) whenever one changes. NBT_TRIP=0 off.
+const char* const kTripKombi = "/fs/ram3/nbt-aa-tripkombi";
+pthread_mutex_t g_tripMx = PTHREAD_MUTEX_INITIALIZER;
+int g_tripStartH = -1, g_tripStartM = -1, g_tripHours = -1, g_tripMin = -1, g_tripKm = -1, g_tripCons = -1, g_tripSpeed = -1;
+bool g_tripDirty = false;
+bool g_trip = true;
+long long g_tripNextGet = 0;
+unsigned be16(const uint8_t* p) { return (unsigned)p[0] << 8 | p[1]; }
+void setTrip(int& v, int x) { if (v != x) { v = x; g_tripDirty = true; } }
+
+void onTripStatus(const nbt::most::View& m, void*) {
+    if (m.src != 0x0101 || m.op != 0xC) return;
+    pthread_mutex_lock(&g_tripMx);
+    if (m.fkt == 0x509 && m.len >= 10) {
+        setTrip(g_tripSpeed, (int)be16(m.data + 4));
+        setTrip(g_tripCons, (int)be16(m.data + 8));
+    } else if (m.fkt == 0x510 && m.len >= 8) {
+        setTrip(g_tripStartH, m.data[5] < 24 ? m.data[5] : -1);
+        setTrip(g_tripStartM, m.data[6] < 60 ? m.data[6] : -1);
+    } else if (m.fkt == 0x511 && m.len >= 7) {
+        setTrip(g_tripHours, (int)be16(m.data + 2));
+        setTrip(g_tripMin, m.data[4] < 60 ? m.data[4] : -1);
+        setTrip(g_tripKm, (int)be16(m.data + 5));
+    }
+    pthread_mutex_unlock(&g_tripMx);
+}
+
+void tripIfNeeded(nbt::most::Client& most) {
+    if (!g_trip || most.state() != nbt::most::kUp) return;
+    const long long now = nowMs();
+    if (now >= g_tripNextGet) {
+        g_tripNextGet = now + 30000;
+        static const uint16_t fkts[] = { 0x509, 0x510, 0x511 };
+        for (size_t i = 0; i < 3; ++i) {
+            nbt::most::Msg q;
+            q.txType = 0; q.varTag = 1; q.varVal = 0;
+            q.dst = 0x0101; q.src = (uint16_t)most.deviceId(); q.fblock = 0xE0; q.inst = 0x00; q.fkt = fkts[i]; q.opType = 0x1;
+            q.hdrTag = 0xFFFFu;
+            most.send(q);
+        }
+    }
+    pthread_mutex_lock(&g_tripMx);
+    if (!g_tripDirty) { pthread_mutex_unlock(&g_tripMx); return; }
+    g_tripDirty = false;
+    char buf[200];
+    const int n = snprintf(buf, sizeof(buf), "start=%d:%02d\nhours=%d\nminutes=%d\nkm=%d\ncons=%d\nspeed=%d\n", g_tripStartH,
+                           g_tripStartM < 0 ? 0 : g_tripStartM, g_tripHours, g_tripMin, g_tripKm, g_tripCons, g_tripSpeed);
+    pthread_mutex_unlock(&g_tripMx);
+    const int fd = open("/fs/ram3/nbt-aa-tripkombi.new", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return;
+    const bool ok = write(fd, buf, (size_t)n) == n;
+    close(fd);
+    if (ok) rename("/fs/ram3/nbt-aa-tripkombi.new", kTripKombi);
+}
+
+// --- long NAV in Android Auto: the trip computer box on / off (user 2026-11-23) ---
+// NAV's audio action (navAudioIfNeeded) now comes with the release of a short press; held for NBT_NAV_LONG_MS (default
+// 700) it toggles /fs/ram3/nbt-aa-panel-off instead (nbt_decoder hides the box while it exists; RAM: on after a boot).
+// The show request still goes out on the press.
+bool g_navHeld = false;          // NAV down in Android Auto, not yet released / not yet long; under g_backMx
+bool g_navHeldAudio = false;     // its release is the audio action
+long long g_navDownMs = 0;
+int g_navLongMs = 700;
+
+void navLongIfNeeded() {
+    pthread_mutex_lock(&g_backMx);
+    const bool go = g_navHeld && nowMs() - g_navDownMs >= g_navLongMs;
+    if (go) g_navHeld = false;                                  // its release does nothing now
+    pthread_mutex_unlock(&g_backMx);
+    if (!go) return;
+    const char* const off = "/fs/ram3/nbt-aa-panel-off";
+    if (unlink(off) == 0) printf("[Knob] long NAV: trip computer box on\n");
+    else {
+        const int fd = open(off, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd >= 0) close(fd);
+        printf("[Knob] long NAV: trip computer box off\n");
+    }
+}
+
 // main thread: NAV pressed while Android Auto was on screen -> Android Auto audio / play-pause (see the header)
 void navAudioIfNeeded(nbt::most::Client& most) {
     pthread_mutex_lock(&g_backMx);
@@ -900,13 +989,23 @@ void onKnob(const nbt::car::CcsEvent& ev, void*) {
     if (!ev.keycode && ev.kind == 1 && ev.down && !ev.cancel && g_navOpensAa && !strcmp(ev.what, "NAV") && sessionRunning()) {
         const bool own = nowMs() < g_ownNavUntil;
         if (own) printf("[Knob] NAV: our own (HMI plugin), no audio action\n");
-        else if (g_navAudio && aaActive()) {                        // already in Android Auto: its audio (main thread)
+        else if (aaActive()) {               // already in Android Auto: short = its audio (on release), long = the box
             pthread_mutex_lock(&g_backMx);
-            g_navAudioPending = true;
+            g_navHeld = true;
+            g_navHeldAudio = g_navAudio;
+            g_navDownMs = nowMs();
             pthread_mutex_unlock(&g_backMx);
         }
         if (FILE* s = fopen("/fs/ram3/nbt-aa-show", "w")) fclose(s);
         printf("[Knob] NAV: Android Auto to the front (show request)\n");
+        return;
+    }
+    // NAV released after a short press in Android Auto: its audio action (main thread)
+    if (!ev.keycode && ev.kind == 1 && !ev.down && !strcmp(ev.what, "NAV")) {
+        pthread_mutex_lock(&g_backMx);
+        if (g_navHeld && !ev.cancel && g_navHeldAudio) g_navAudioPending = true;
+        g_navHeld = false;
+        pthread_mutex_unlock(&g_backMx);
         return;
     }
     // a hard key that stays with iDrive (MENU, OPTION, COM, MEDIA, NAV, MAP: keycode 0) while Android Auto is on
@@ -1046,6 +1145,10 @@ int main(int argc, char** argv) {
     g_auxOpensAa = wheelKey("NBT_AUX_OPENS_AA", 1) != 0 && !trace;
     g_navOpensAa = wheelKey("NBT_NAV_OPENS_AA", 1) != 0 && !trace;
     g_navAudio = wheelKey("NBT_NAV_AUDIO", 1) != 0 && !trace;
+    g_navLongMs = wheelKey("NBT_NAV_LONG_MS", 700);
+    g_trip = wheelKey("NBT_TRIP", 1) != 0 && !trace;
+    if (g_trip && !most.addRoute(0xE0, 0x00, nbt::most::kAny, 0xC, &onTripStatus, NULL))
+        printf("[Knob] no room for the trip computer route\n");
     g_callPause = wheelKey("NBT_CALL_PAUSE", 1) != 0 && !trace;
     g_backGuard = wheelKey("NBT_BACK_GUARD", 1) != 0 && !trace;
     g_tiltGuard = wheelKey("NBT_TILT_GUARD", 1) != 0 && !trace;
@@ -1118,6 +1221,7 @@ int main(int argc, char** argv) {
         favouritesIfNeeded(most);
         playSwitchIfNeeded(most);
         navAudioIfNeeded(most);
+        if (!trace) { navLongIfNeeded(); tripIfNeeded(most); }
         if (!trace) promptRouteIfNeeded(most);
         voiceIfNeeded();
         callIfNeeded();
