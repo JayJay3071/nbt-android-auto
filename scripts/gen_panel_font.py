@@ -21,32 +21,33 @@ chars = [chr(c) for c in range(32, 127)] + ["°"]
 
 # Icons (own simple drawings, 20 x height, drawn at 4x and scaled down): characters 1..12 in the box's strings.
 S = 4
-W_ICON = 20
+K = size / 20.0            # the icons are drawn for 20 px text and scale with the size
+W_ICON = round(20 * K)
 
 
 def icon(draw_fn):
-    img = Image.new("L", (W_ICON * S, height * S), 0)
+    img = Image.new("L", (W_ICON * S, height * S), 0)   # P() scales the 20 px drawings by K
     d = ImageDraw.Draw(img)
     lw = round(1.7 * S)
 
     def P(x, y):
-        return (x * S, y * S)
+        return (x * S * K, y * S * K)
 
     def line(points, w=lw):
-        d.line([P(x, y) for x, y in points], fill=255, width=w, joint="curve")
+        d.line([P(x, y) for x, y in points], fill=255, width=round(w * K), joint="curve")
 
     def circle(cx, cy, r, fill=False, w=lw):
         box = [P(cx - r, cy - r), P(cx + r, cy + r)]
         if fill:
             d.ellipse(box, fill=255)
         else:
-            d.ellipse(box, outline=255, width=w)
+            d.ellipse(box, outline=255, width=round(w * K))
 
     def rect(x0, y0, x1, y1, fill=False, w=lw):
         if fill:
             d.rectangle([P(x0, y0), P(x1, y1)], fill=255)
         else:
-            d.rectangle([P(x0, y0), P(x1, y1)], outline=255, width=w)
+            d.rectangle([P(x0, y0), P(x1, y1)], outline=255, width=round(w * K))
 
     def poly(points, fill=False, w=lw):
         if fill:
@@ -55,13 +56,13 @@ def icon(draw_fn):
             line(list(points) + [points[0]], w)
 
     def arc(cx, cy, r, a0, a1, w=lw):
-        d.arc([P(cx - r, cy - r), P(cx + r, cy + r)], a0, a1, fill=255, width=w)
+        d.arc([P(cx - r, cy - r), P(cx + r, cy + r)], a0, a1, fill=255, width=round(w * K))
 
     draw_fn(line, circle, rect, poly, arc)
-    return img.resize((W_ICON, height), Image.LANCZOS).tobytes()
+    return img.resize((W_ICON, height), Image.LANCZOS).tobytes()   # canvas: W_ICON x height at S
 
 
-y0 = ascent - 17   # icons span about y0 .. y0 + 18, centred on the digits
+y0 = ascent / K - 17   # icons span about y0 .. y0 + 18 (in 20 px units), centred on the digits
 
 
 def clock(line, circle, rect, poly, arc):          # 1 trip start
@@ -168,7 +169,7 @@ for ch in chars:
     data += bits
 
 for fn in ICONS:
-    glyphs.append((W_ICON + 5, 0, W_ICON, len(data)))
+    glyphs.append((W_ICON + round(5 * K), 0, W_ICON, len(data)))
     data += icon(fn)
 chars += ["icon %d" % (i + 1) for i in range(len(ICONS))]
 
