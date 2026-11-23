@@ -4,7 +4,8 @@ What it does:
   1. checks the NBT-AAD checkout (must be commit 41975f2, unmodified)
   2. downloads Mbed TLS 3.6.7 once (SHA-256 checked, cached in .local/), applies the legacy-UTCTime patch and the
      QNX configuration; clones FFmpeg n2.8.22 once into .local/ for nbt_decoder (files SHA-256 checked, see
-     scripts/ffmpeg_qnx.py) and assembles its assembly with yasm 1.3.0 (downloaded once on Windows)
+     scripts/ffmpeg_qnx.py) and assembles its assembly with yasm 1.3.0 (downloaded once on Windows); clones lwIP
+     2.2.1 and Monocypher 4.0.2 once into .local/ for nbt_carplay (commits checked, see scripts/carplay_deps.py)
   3. prepares the NBT-AAD core: upstream milestone-7 + scripts/aa_session_overlay.py + patches/*.patch + our
      Mbed TLS crypto backend (src/android_auto/aa_cryptor_mbedtls.cpp)
   4. sends everything plus src/ and scripts/build-qnx.sh to the VM and runs the build there
@@ -31,6 +32,7 @@ import urllib.request
 from pathlib import Path
 
 from aa_session_overlay import harden_session
+from carplay_deps import add_carplay_deps
 from ffmpeg_qnx import add_ffmpeg
 from mbedtls_legacy_time import patch_x509
 from mbedtls_empty_name import patch_x509_empty_name
@@ -190,6 +192,10 @@ def main():
         add_ffmpeg(archive)   # FFmpeg for nbt_decoder; without it the other programs are still built
     except (OSError, subprocess.CalledProcessError, SystemExit) as error:
         print("FFmpeg not available, nbt_decoder is skipped:", error)
+    try:
+        add_carplay_deps(archive)   # lwIP and Monocypher for nbt_carplay; without them it is skipped
+    except (OSError, subprocess.CalledProcessError, SystemExit) as error:
+        print("lwIP / Monocypher not available, nbt_carplay is skipped:", error)
     if args.compare:
         add_expected(archive, args.compare.resolve())
     archive.close()

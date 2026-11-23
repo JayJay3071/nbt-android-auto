@@ -47,6 +47,38 @@ FFmpeg's VDPAU interface is built in (for the car's hardware decoder, `--hw`); i
 `vdpau/vdpau.h`, kept in `src/android_auto/decoder/ffmpeg/vdpau/` under its MIT licence (Copyright (c) 2008-2015
 NVIDIA Corporation, notice in the file). libvdpau itself is not used.
 
+## lwIP and Monocypher
+
+`nbt_carplay` (wired CarPlay) is statically linked against lwIP 2.2.1 (<https://savannah.nongnu.org/projects/lwip>,
+tag `STABLE-2_2_1_RELEASE`) and Monocypher 4.0.2 (<https://monocypher.org>, tag `4.0.2`). Neither is included in this
+repository; the build scripts fetch those tags (`scripts/carplay_deps.py`).
+
+lwIP: Copyright (c) 2001, 2002 Swedish Institute of Computer Science. All rights reserved. Redistribution and use in
+source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following
+disclaimer. 2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and
+the following disclaimer in the documentation and/or other materials provided with the distribution. 3. The name of
+the author may not be used to endorse or promote products derived from this software without specific prior written
+permission. THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT
+SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.
+
+Monocypher: dual-licensed, used here under CC0-1.0 (public domain) or, as a fallback, the 2-clause BSD license:
+Copyright (c) 2017-2023, Loup Vaillant; Copyright (c) 2017-2019, Michael Savage; Copyright (c) 2017-2023, Fabio
+Scotoni. All rights reserved. Redistribution and use in source and binary forms, with or without modification, are
+permitted provided that the source code and binary redistributions retain this notice and its disclaimer (THE SOFTWARE
+IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND).
+
+## xcertplay
+
+The CarPlay protocol knowledge in `src/carplay/` (USB, iAP2, AirPlay messages, keys, HID descriptors, audio format
+bits) follows xcertplay (<https://github.com/shilapi/xcertplay>, GPL-3.0), which was read as the reference; no Kotlin
+code is included.
+
 ## DejaVu fonts
 
 `src/android_auto/decoder/nbt_panel_font.h` holds glyph bitmaps rendered from DejaVu Sans
@@ -85,7 +117,8 @@ permission below. They contain no code from NBT-AAD or the rest of this project:
   DejaVu Sans stay under the DejaVu / Bitstream Vera font license, see [DejaVu fonts](#dejavu-fonts)) and their
   generator `scripts/gen_panel_font.py`
 - `src/idrive/reboot/nbt_reset.c`
-- the CarPlay work: `src/carplay/nbt_carplay_probe.c`, `docs/CARPLAY.md`, `scripts/mbedtls_empty_name.py`
+- the CarPlay work: `src/carplay/nbt_carplay_probe.c`, `docs/CARPLAY.md`, `scripts/mbedtls_empty_name.py`,
+  `scripts/carplay_deps.py`
 - `docs/DECODER.md`, `docs/FORK-CHANGES.md`, `docs/WORKFLOW.md`, `docs/SSH-ACCESS-SERIAL.md`
 
 The other files in `src/android_auto/decoder/ffmpeg/` (`config.h`, `config.asm`, `avconfig.h`, `ffversion.h`) are
