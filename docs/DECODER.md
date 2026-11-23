@@ -26,7 +26,7 @@ Used whenever `nbt_decoder` is installed, at 60 fps; no file is needed. Optional
 | `decoder.fuelscale` | Microlitres of fuel per count of CDS `engine.consumption`, x1000 (default 1000), for the box's instantaneous consumption |
 | `decoder.panelbg` | The box's background as hex RRGGBBAA (default 000000B4, translucent black; FF = opaque). Text and icons are white on a dark background and black on a light one; the 1 px outline is derived from it (lighter on dark, darker on light) |
 | `decoder.panelflip` | The box's texture: 1 rows reversed (default; the WalServer reads sprites bottom-up), 2 columns reversed, 3 both |
-| `decoder.panelpages` | The paged box (test): 256 px wide instead of 384 (same right edge, x 1003), two pages of a title and four lines, long NAV cycles page 1, page 2, off. Read when the session starts |
+| `decoder.panelsize` | The box's size, set by "Widget size" in iDrive's Android Auto page: `full` = full width (384 px); none (the default) or `small` = 256 px (same right edge, x 1003) with two pages, long NAV cycles page 1, page 2, off; `trip` / `car` = 256 px with only that page, long NAV on / off. Read when the session starts |
 | `decoder.args` | One line of extra arguments for `nbt_decoder` |
 | `decoder.delay` | Seconds after iDrive's `MARKER HMIReady` before the first session at boot (default 2) |
 | `decoder.showdelay` | Seconds of uptime before Android Auto is brought to the front (start at boot, NAV, AUX; default 40) |
@@ -223,17 +223,20 @@ A box at x 875, y 96, 384x167 with a "Trip computer" title line (20 px from the 
 - Long roller push (700 ms, `NBT_PUSH_LONG_MS`, `nbt_knob`): short-term average speed on / off. On, it averages the
   current speed (CDS `driving.speedActual`) from that moment and shows it at the end of the title line; a short push
   is still play / pause (now on the release).
-- At the start of each session the box is hidden unless "Trip computer: on" is set in iDrive's Android Auto page
+- At the start of each session the box is hidden unless "Show widget at startup: on" is set in iDrive's Android Auto page
   (flag file `panel-at-start` in the package; default off; the button only shows in full width). Long NAV still
   shows / hides it during the session. There is no other switch: in full width the box's process always runs; while
   the box is hidden it only draws (the short-term average speed keeps counting) and sends nothing to the window
   server.
 - Long NAV (700 ms, `NBT_NAV_LONG_MS`) in Android Auto toggles `/fs/ram3/nbt-aa-panel-off` (box hidden while it
   exists; on again after a boot). NAV's play / pause now comes with the release of a short press.
-- Paged box (`decoder.panelpages`, user 2026-11-23): the full box is 384 px wide and its lines need it (up to 365 px
+- Small box ("Widget size" in iDrive's Android Auto page, full width only, `decoder.panelsize`; user 2026-11-23):
+  Full width / Small / Trip only / Car only, each press takes the next; Small is the default. The full box is 384 px wide and its lines need it (up to 365 px
   of text at 22 px), which brings it close to Waze's controls in full width. The paged one is 256 px wide with at most
   two values per line: page "Trip" = start and duration, distance, average consumption, average speed; page "Car" =
   range and tank, instantaneous consumption, outside temperature and battery, coolant and oil. The short-term average
   speed is at the end of the title on both pages while it runs; otherwise two dots there show the page, as Android
-  Auto shows pages (same size, the current one white, the other grey). As tall as the full box. Long NAV: page 1, page 2 (`/fs/ram3/nbt-aa-panel-page2`), off, page 1 again; each session starts on page
-  1. A page change is drawn and uploaded at once (not waiting for the once-a-second update).
+  Auto shows pages (same size, the current one white, the other grey). As tall as the full box. Small: long NAV goes
+  page 1, page 2 (`/fs/ram3/nbt-aa-panel-page2`), off, page 1 again; each session starts on page 1; a page change is
+  drawn and uploaded at once (not waiting for the once-a-second update). Trip only / Car only: one page, no dots, long
+  NAV shows / hides it.

@@ -20,12 +20,15 @@
       <!-- "Start at boot" on/off (Android Auto to the front at the first session, see nbt_knob.cpp) -> inert page 35, whose
            focus switches the flag file start-at-boot.off and sends focus event 53 back to 10 -->
       <hmiAction id="90" target="35"/>
-      <!-- "Trip computer: on/off" (box shown at the start of a session, full width only) -> inert page 36, whose focus
+      <!-- "Show widget at startup: on/off" (box shown at the start of a session, full width only) -> inert page 36, whose focus
            switches the flag file panel-at-start and sends focus event 53 back to 10 -->
       <hmiAction id="100" target="36"/>
       <!-- "Decoder: Software / Hardware" -> inert page 37, whose focus switches decoder.hw, restarts the Android Auto
            service and sends focus event 53 back to 10 -->
       <hmiAction id="101" target="37"/>
+      <!-- "Widget size: Full width / Small / Trip only / Car only" (full width only) -> inert page 38, whose focus takes
+           the next size (decoder.panelsize) and sends focus event 53 back to 10 -->
+      <hmiAction id="106" target="38"/>
     </actions>
     <models>
       <textIdModel id="3" textId="1" preinst="false"/>
@@ -54,6 +57,8 @@
       <textIdModel id="99" textId="37" preinst="false"/>
       <textIdModel id="103" textId="38" preinst="false"/>
       <textIdModel id="105" textId="40" preinst="false"/>
+      <textIdModel id="108" textId="42" preinst="false"/>
+      <textIdModel id="109" textId="45" preinst="false"/>
     </models>
     <events>
       <focusEvent id="52" target="13"/>
@@ -573,7 +578,8 @@
           <button id="61" action="26" model="6" text="Split screen"/>
           <button id="62" action="27" model="7" text="Full width"/>
           <button id="92" action="90" model="91" text="Start at boot: on"/>
-          <button id="96" action="100" model="97" text="Trip computer: off"/>
+          <button id="96" action="100" model="97" text="Show widget at startup: off"/>
+          <button id="107" action="106" model="108" text="Widget size: Small"/>
           <button id="102" action="101" model="103" text="Decoder: Software"/>
           <button id="68" action="28" model="25" text="Android Auto neu starten"/>
           <button id="86" action="80" model="82" text="System neu starten"/>
@@ -595,9 +601,14 @@
           <label id="93" model="94" text="Setting saved"/>
         </components>
       </hmiState>
-      <hmiState id="36" parentId="10" textModel="99" text="Trip computer">
+      <hmiState id="36" parentId="10" textModel="99" text="Show widget at startup">
         <components>
           <label id="98" model="94" text="Setting saved"/>
+        </components>
+      </hmiState>
+      <hmiState id="38" parentId="10" textModel="109" text="Widget size">
+        <components>
+          <label id="110" model="94" text="Setting saved"/>
         </components>
       </hmiState>
       <hmiState id="37" parentId="10" textModel="105" text="Decoder">

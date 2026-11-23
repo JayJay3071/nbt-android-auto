@@ -446,19 +446,21 @@ static void car_present(const struct picture* p)
 enum { PANEL_PAD_X = 12, PANEL_PAD_Y = 8 };
 enum { PANEL_LINE = PANEL_FONT_HEIGHT + 4 };   /* line pitch: 31 px at 22 px */
 enum { PANEL_X = 875, PANEL_Y = 96, PANEL_W = 384, PANEL_H = 2 * 8 + 4 * PANEL_LINE + PANEL_FONT_HEIGHT, PANEL_BG = 24, PANEL_FG = 235, PANEL_RADIUS = 16 };
-/* paged box (user 2026-11-23, decoder.panelpages in RT_DIR, read when the session starts): a third narrower (256 px,
- * the right edge where the full box's is, so x 1003), two pages of a title and four lines ("Trip": start, duration,
- * distance, average consumption, average speed; "Car": range, tank, instantaneous consumption, temperatures, battery),
- * as tall as the full box. Long NAV (nbt_knob) cycles page 1, page 2, off; /fs/ram3/nbt-aa-panel-page2 = the second
- * page. At the end of the title: the short-term average speed while it runs, else two dots for the page (as Android
- * Auto shows pages: top right, same size, the current one white, the other grey). */
+/* small box (user 2026-11-23): "Widget size" in iDrive's Android Auto page, decoder.panelsize in RT_DIR (read when
+ * the session starts): "full" = the full box; none (the default) or "small" = a third narrower (256 px, the right edge where the full box's
+ * is, so x 1003), two pages of a title and four lines ("Trip": start, duration, distance, average consumption, average
+ * speed; "Car": range, tank, instantaneous consumption, temperatures, battery), as tall as the full box, long NAV
+ * (nbt_knob) cycles page 1, page 2, off (/fs/ram3/nbt-aa-panel-page2 = the second page); "trip" / "car" = the same
+ * box with only that page, long NAV on / off. At the end of the title: the short-term average speed while it runs,
+ * else (two pages only) two dots for the page (as Android Auto shows pages: top right, same size, the current one
+ * white, the other grey). */
 #define PANEL_PAGE2_FILE "/fs/ram3/nbt-aa-panel-page2"
 enum { PANEL_PAGED_W = 256, PANEL_PAGED_H = PANEL_H, PANEL_H_MAX = PANEL_H };
 
 static struct {
     int ok, have;
     volatile int shown;
-    int w, h, paged, page;                 /* size (PANEL_W x PANEL_H, or paged), page 1 or 2 */
+    int w, h, paged, pages, page;          /* size (PANEL_W x PANEL_H, or small), pages 1 or 2, page 1 or 2 */
     uint8_t draw[PANEL_W * PANEL_H_MAX];   /* coverage over PANEL_BG, rows of w */
     long long text_at;
 } g_panel;
@@ -647,7 +649,7 @@ static void panel_compose(void)
             panel_text_at(avg, L, PANEL_PAD_Y, 2);
         const int x0 = R + panel_width(title) + 10, y = PANEL_PAD_Y + PANEL_FONT_ASCENT - 7;
         int x1 = avg[0] ? L - panel_width(avg) - 10 : L;
-        if (paged && !avg[0]) {   /* the page dots, right-aligned, centred on the rule */
+        if (paged && g_panel.pages == 2 && !avg[0]) {   /* the page dots, right-aligned, centred on the rule */
             panel_dot(L - 4 - 16, y + 1, 4, g_panel.page == 2 ? 50 : 100);
             panel_dot(L - 4, y + 1, 4, g_panel.page == 2 ? 100 : 50);
             x1 = L - 24 - 10;
@@ -889,10 +891,17 @@ static int spr_open(void)
         return -1;
     }
     g_spr.window = (unsigned long)read_number(RT_DIR "/decoder.panelwin", 1024);
-    g_panel.paged = access(RT_DIR "/decoder.panelpages", F_OK) == 0;
+    {
+        char size[16] = "";
+        panel_read(RT_DIR "/decoder.panelsize", size, sizeof(size));
+        const int trip = !strncmp(size, "trip", 4), car = !strncmp(size, "car", 3);
+        const int small = !trip && !car && strncmp(size, "full", 4) != 0;   /* the default */
+        g_panel.paged = small || trip || car;
+        g_panel.pages = small ? 2 : 1;
+        g_panel.page = car ? 2 : small && access(PANEL_PAGE2_FILE, F_OK) == 0 ? 2 : 1;
+    }
     g_panel.w = g_panel.paged ? PANEL_PAGED_W : PANEL_W;
     g_panel.h = g_panel.paged ? PANEL_PAGED_H : PANEL_H;
-    g_panel.page = g_panel.paged && access(PANEL_PAGE2_FILE, F_OK) == 0 ? 2 : 1;
     g_spr.x = read_number(RT_DIR "/decoder.panelx", PANEL_X + PANEL_W - g_panel.w);
     g_spr.y = read_number(RT_DIR "/decoder.panely", PANEL_Y);
     g_spr_flip = (int)read_number(RT_DIR "/decoder.panelflip", 1);
@@ -916,8 +925,12 @@ static int spr_open(void)
         return -1;
     }
     g_panel.ok = 1;
+    const char* const kind = !g_panel.paged      ? ""
+                             : g_panel.pages == 2 ? " (small)"
+                             : g_panel.page == 2  ? " (car only)"
+                                                  : " (trip only)";
     say("panel: sprite 0x%x, %dx%d%s, window %lu at %ld,%ld, background %02x%02x%02x%02x", SPRITE_ID, g_panel.w,
-        g_panel.h, g_panel.paged ? " (pages)" : "", g_spr.window, g_spr.x, g_spr.y, g_bg_r, g_bg_g, g_bg_b, g_bg_a);
+        g_panel.h, kind, g_spr.window, g_spr.x, g_spr.y, g_bg_r, g_bg_g, g_bg_b, g_bg_a);
     return 0;
 }
 
@@ -1126,7 +1139,7 @@ static void panel_policy(int force)
     /* drawn every second (the short-term average speed integrates there), uploaded to the window server only while
      * the box is to be shown: a hidden box causes no WAL traffic */
     const int want = g_win.shown == 1 && access(PANEL_OFF_FILE, F_OK) != 0;
-    if (g_panel.paged) {   /* another page (long NAV): drawn and uploaded at once */
+    if (g_panel.pages == 2) {   /* another page (long NAV): drawn and uploaded at once */
         const int page = access(PANEL_PAGE2_FILE, F_OK) == 0 ? 2 : 1;
         if (page != g_panel.page) {
             g_panel.page = page;

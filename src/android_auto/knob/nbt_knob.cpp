@@ -841,9 +841,16 @@ void navLongIfNeeded() {
     pthread_mutex_unlock(&g_backMx);
     if (!go) return;
     const char* const off = "/fs/ram3/nbt-aa-panel-off";
-    // paged box (user 2026-11-23, decoder.panelpages): page 1, page 2, off; /fs/ram3/nbt-aa-panel-page2 = page 2
+    // "Widget size: Small" (user 2026-11-23, the default: decoder.panelsize missing or "small"): page 1, page 2, off;
+    // /fs/ram3/nbt-aa-panel-page2 = page 2. The other sizes ("full", "trip", "car"): on / off.
     const char* const page2 = "/fs/ram3/nbt-aa-panel-page2";
-    const bool paged = access("/var/opt/hmi/data/rw/NbtAndroidAutoRT/decoder.panelpages", F_OK) == 0;
+    bool paged = true;
+    if (FILE* f = fopen("/var/opt/hmi/data/rw/NbtAndroidAutoRT/decoder.panelsize", "r")) {
+        char size[16] = "";
+        if (fgets(size, sizeof(size), f))
+            paged = !strncmp(size, "small", 5);
+        fclose(f);
+    }
     if (access(off, F_OK) == 0) {
         unlink(page2);                                          // back on, on the first page
         unlink(off);

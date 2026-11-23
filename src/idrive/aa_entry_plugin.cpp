@@ -95,7 +95,7 @@ const unsigned kRestartState=32;                     // "Android Auto neu starte
 const unsigned kBootState=35, kBootModel=91;         // "Start at boot" -> inert page 35, back to 10
 const char* const kBootOff="/var/opt/hmi/data/rw/NbtAndroidAutoRT/start-at-boot.off";
 bool bootOn() { return access(kBootOff,F_OK)!=0; }   // default: on (no file)
-// "Trip computer at start" (user 2026-11-23): only in full width (the box is not shown in split screen anyway; the
+// "Show widget at startup" (user 2026-11-23, was "Trip computer"): only in full width (the box is not shown in split screen anyway; the
 // button is made invisible there, RHMI property 3). On: panel-at-start exists in the package, and nbt_decoder shows the
 // box at every session start (off: hidden until long NAV). Default: off (no file).
 const unsigned kPanelState=36, kPanelModel=97, kPanelButton=96, kPropVisible=3;
@@ -107,6 +107,27 @@ bool panelOn() { return access(kPanelAtStart,F_OK)==0; }
 const unsigned kDecoderState=37, kDecoderModel=103;
 const char* const kDecoderHw="/var/opt/hmi/data/rw/NbtAndroidAutoRT/decoder.hw";
 bool decoderHw() { return access(kDecoderHw,F_OK)==0; }
+// "Widget size: Full width / Small / Trip only / Car only" (user 2026-11-23): full width only, like "Show widget at
+// startup". decoder.panelsize in the package: "full" = the full box (384 px), none (default) or "small" = 256 px with
+// the pages Trip and Car (long NAV: page 1, page 2, off), "trip" / "car" = 256 px with only that page (long NAV: on,
+// off). Each press takes the next one; nbt_decoder reads it when a session starts, nbt_knob at each long NAV.
+const unsigned kSizeState=38, kSizeModel=108, kSizeButton=107;
+const char* const kPanelSize="/var/opt/hmi/data/rw/NbtAndroidAutoRT/decoder.panelsize";
+int panelSize() {   // 0 full width, 1 small, 2 trip only, 3 car only
+    char b[16]={0};
+    const int fd=open(kPanelSize,O_RDONLY);
+    if(fd<0)return 1;                                  // default: small
+    const int n=read(fd,b,sizeof(b)-1);
+    close(fd);
+    if(n<=0)return 1;
+    return !strncmp(b,"full",4)?0:!strncmp(b,"trip",4)?2:!strncmp(b,"car",3)?3:1;
+}
+void setPanelSize(int v) {
+    static const char* const name[4]={"full\n","","trip\n","car\n"};
+    if(v<0||v>3||v==1){unlink(kPanelSize);return;}     // small: the default, no file
+    const int fd=open(kPanelSize,O_WRONLY|O_CREAT|O_TRUNC,0644);
+    if(fd>=0){write(fd,name[v],strlen(name[v]));close(fd);}
+}
 const unsigned kEvHoldAlt=54;                        // focus event to hold state 13 (fallback when 52 is ignored)
 // The real reason iDrive "ignored" 52 / 54 (car 2026-11-18, HmiMain3D CFocusEvent::perform @0x88fd70b): every focus
 // event object counts its performs and refuses from the 12th on ("FocusEvent counter > 10"; never reset, only apps with
@@ -117,7 +138,7 @@ const unsigned kEvPoolFirst=200, kEvPoolCount=500, kEvPoolUses=10;   // 500 (use
 enum { kTxtConnectUsb=2, kTxtNoPhone=3, kTxtStarting=4, kTxtRunning=5, kTxtReplug=6, kTxtUnsupported=7,
        kTxtServiceDown=8, kTxtSeveral=9, kTxt169=11, kTxtWide=12, kTxt169On=16, kTxtWideOn=17,
        kTxtBootOn=31, kTxtBootOff=32, kTxtPanelOn=35, kTxtPanelOff=36,
-       kTxtDecoderSw=38, kTxtDecoderHw=39 };
+       kTxtDecoderSw=38, kTxtDecoderHw=39, kTxtSizeFull=41 /* 41..44: full width, small, trip only, car only */ };
 void touch(const char* path) { int fd=open(path,O_WRONLY|O_CREAT|O_TRUNC,0644); if(fd>=0)close(fd); }
 // --- automatic start of the Android Auto service (boot.sh of the persistent package), like the NBT-AAD reference:
 // QNX spawn() into a new process group, no zombie, stdin/out/err /dev/null. Rate-limited to one start per 30 s.
@@ -418,14 +439,14 @@ public:
     bmw::PluginApp* app;
     bool stopping, polling, entryFocused, running;
     unsigned focusMask, visibleMask;
-    unsigned shownText; int shownMode, shownBoot, shownPanel, shownPanelVis, shownDecoder; long long lastBootToggleMs, lastPanelToggleMs; long window; unsigned holds, ignoredHolds; long lastSideHold, lastAutoHold; long long lastSideHoldMs, lastHoldMs, lastFocusMs;
+    unsigned shownText; int shownMode, shownBoot, shownPanel, shownPanelVis, shownDecoder, shownSize; long long lastBootToggleMs, lastPanelToggleMs, lastSizeToggleMs; long window; unsigned holds, ignoredHolds; long lastSideHold, lastAutoHold; long long lastSideHoldMs, lastHoldMs, lastFocusMs;
     Checker checker;
     Verifier verifier;
     BackToEntry back;
     TargetPoll target;
     HoldSlot slots[kHoldCount];
     Entry():app(0),stopping(false),polling(false),entryFocused(false),running(false),focusMask(0),visibleMask(0),
-            shownText(0),shownMode(0),shownBoot(0),shownPanel(0),shownPanelVis(-1),shownDecoder(0),lastBootToggleMs(-100000),lastPanelToggleMs(-100000),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0),showUntilMs(0),showRetryAtMs(0),evIdx(kEvPoolCount-1),evUses(kEvPoolUses),evIgnoredSeen(0) {
+            shownText(0),shownMode(0),shownBoot(0),shownPanel(0),shownPanelVis(-1),shownDecoder(0),shownSize(0),lastBootToggleMs(-100000),lastPanelToggleMs(-100000),lastSizeToggleMs(-100000),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0),showUntilMs(0),showRetryAtMs(0),evIdx(kEvPoolCount-1),evUses(kEvPoolUses),evIgnoredSeen(0) {
         checker.e=this; verifier.e=this; target.e=this;
         for(unsigned i=0;i<kHoldCount;++i){slots[i].e=this;slots[i].idx=i;}
     }
@@ -478,13 +499,16 @@ public:
         if(dec!=shownDecoder){bmw::TextID td(dec==1?kTxtDecoderHw:kTxtDecoderSw);app->updateModel(kDecoderModel,td);shownDecoder=dec;}
         int panel=panelOn()?1:2;
         if(panel!=shownPanel){bmw::TextID tp(panel==1?kTxtPanelOn:kTxtPanelOff);app->updateModel(kPanelModel,tp);shownPanel=panel;}
+        int size=panelSize()+1;
+        if(size!=shownSize){bmw::TextID tz(kTxtSizeFull+size-1);app->updateModel(kSizeModel,tz);shownSize=size;}
         const int vis=mode==2?1:0;   // only in full width
         if(vis!=shownPanelVis){
             static bmw::Parcel* yes=new bmw::Parcel(true);
             static bmw::Parcel* no=new bmw::Parcel(false);
             app->setProperty(kPanelButton,kPropVisible,vis?*yes:*no);
+            app->setProperty(kSizeButton,kPropVisible,vis?*yes:*no);
             shownPanelVis=vis;
-            plog("trip computer button visible",vis);
+            plog("widget buttons visible",vis);
         }
         long t=now_s();
         if(running&&entryFocused&&!holdFocused()&&t-lastAutoHold>=10){lastAutoHold=t;hold("hold (entry page, retry)");}
@@ -547,6 +571,23 @@ public:
             plog("trip computer at start now",panelOn()?1:0);
         }
         e->shownPanel=0;e->app->post(&e->back,400);
+        return true;
+    }
+    // page 38: the next widget size, back to page 10 (as page 36)
+    static bool sizeFocus(void* self,const bmw::Parcel& p) {
+        Entry* e=static_cast<Entry*>(self);
+        bool focused=false;p.readBool(focused);
+        plog("widget size page focus",focused);
+        if(!focused||e->stopping)return true;
+        const long long tm=now_ms();
+        if(!g_entrySeen)plog("widget size ignored: page 10 not opened in this boot (restored state)",0);
+        else if(tm-e->lastSizeToggleMs<2000)plog("widget size ignored: switched just before",0);
+        else{
+            e->lastSizeToggleMs=tm;
+            setPanelSize((panelSize()+1)%4);
+            plog("widget size now",panelSize());
+        }
+        e->shownSize=0;e->app->post(&e->back,400);
         return true;
     }
     // page 35: switch "Start at boot", back to page 10 (not for a page the HMI restores at boot, not twice within 2 s)
@@ -863,6 +904,9 @@ bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& 
     bmw::ActionDelegate onPanel={&entry,&Entry::panelFocus};
     app->addHandler(kPanelState,kFocus,onPanel);
     entry.shownPanel=0;entry.shownPanelVis=-1;
+    bmw::ActionDelegate onSize={&entry,&Entry::sizeFocus};
+    app->addHandler(kSizeState,kFocus,onSize);
+    entry.shownSize=0;
     bmw::ActionDelegate on169={&entry,&Entry::mode169Focus};
     bmw::ActionDelegate onWide={&entry,&Entry::modeWideFocus};
     app->addHandler(kMode169State,kFocus,on169);
