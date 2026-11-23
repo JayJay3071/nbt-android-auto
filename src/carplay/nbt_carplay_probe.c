@@ -221,7 +221,7 @@ static const char* iface_name(unsigned c, unsigned s, unsigned p)
 
 static const char* text(struct usbd_device* dev, unsigned index)
 {
-    char* s = index ? usbd_string(dev, (_Uint8)index, 0) : 0;
+    char* s = index ? usbd_string(dev, (unsigned char)index, 0) : 0;
     return s ? s : "";
 }
 
@@ -239,7 +239,7 @@ static void describe(struct usbd_device* dev)
     say("usb: device %04x:%04x \"%s\" \"%s\", USB %x.%02x, %u configurations", d->idVendor, d->idProduct,
         text(dev, d->iManufacturer), text(dev, d->iProduct), d->bcdUSB >> 8, d->bcdUSB & 0xff, d->bNumConfigurations);
     for (cfg = 1; cfg <= 16; ++cfg) {
-        usbd_configuration_descriptor_t* c = usbd_configuration_descriptor(dev, (_Uint8)cfg, &cn);
+        usbd_configuration_descriptor_t* c = usbd_configuration_descriptor(dev, (unsigned char)cfg, &cn);
         unsigned mux = 0, ncm = 0;
         if (!c)
             continue;
@@ -248,7 +248,7 @@ static void describe(struct usbd_device* dev)
         for (ifc = 0; ifc < 16; ++ifc)
             for (alt = 0; alt < 4; ++alt) {
                 usbd_interface_descriptor_t* i =
-                    usbd_interface_descriptor(dev, (_Uint8)cfg, (_Uint8)ifc, (_Uint8)alt, &in);
+                    usbd_interface_descriptor(dev, (unsigned char)cfg, (unsigned char)ifc, (unsigned char)alt, &in);
                 if (!i)
                     continue;
                 printf("        interface %u alt %u: %02x/%02x/%02x %s \"%s\", endpoints", i->bInterfaceNumber,

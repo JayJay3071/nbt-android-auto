@@ -139,7 +139,7 @@ static struct {
     int panel;  /* --panel: this process is the trip computer box (started by the main one) */
     const char* self;
     int hwscale; /* --hw-scale: hardware decoding with --rows into stream buffers of the whole coded height (scaled twice) */
-} g_opt = {0, 0, 1280, 480, 30, 0, 5000, 50, 0, 0, 0, 0};
+} g_opt = {0, 0, 1280, 480, 30, 0, 5000, 50, 0, 0, 0, 0, 0};
 
 /* rows of a decoded picture that are shown */
 static int shown_rows(int height) { return g_opt.rows && height > g_opt.rows ? g_opt.rows : height; }
