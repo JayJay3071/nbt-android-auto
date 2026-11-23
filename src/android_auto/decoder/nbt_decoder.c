@@ -416,7 +416,7 @@ static void car_present(const struct picture* p)
  * (wal::WalApplicationInterface createSprite / assignSpriteToWindow / setSpritePosition / setSpriteSize /
  * setSpriteVisible, as in experiments/wal-overlay). Caution: the earlier sprite path for the whole picture (800x480,
  * ~1.5 MB per upload, 10-15 uploads/s) deadlocked the WalServer and restarted the head unit (docs/DEVELOPMENT.md).
- * Here: one sprite of 380 x 136 (207 KB), uploaded only when its text changed and at most once a second; a watchdog
+ * Here: one sprite of 384 x 167 (257 KB), uploaded only when its text changed and at most once a second; a watchdog
  * ends the box's process if a WAL call blocks for over 4 s. createSprite with an existing id only replaces the content
  * (assignment, position, size and visibility stay; car 2026-11-06).
  * Window: decoder.panelwin (default 1024 = EARLYVIDEO, Android Auto's own window; the sprite is drawn over its stream,
@@ -442,7 +442,7 @@ static void car_present(const struct picture* p)
  * left / right and 8 px top / bottom: 356 x 112 */
 enum { PANEL_PAD_X = 12, PANEL_PAD_Y = 8 };
 enum { PANEL_LINE = PANEL_FONT_HEIGHT + 4 };   /* line pitch: 31 px at 22 px */
-enum { PANEL_X = 875, PANEL_Y = 100, PANEL_W = 384, PANEL_H = 2 * 8 + 3 * PANEL_LINE + PANEL_FONT_HEIGHT, PANEL_BG = 24, PANEL_FG = 235, PANEL_RADIUS = 12 };
+enum { PANEL_X = 875, PANEL_Y = 100, PANEL_W = 384, PANEL_H = 2 * 8 + 4 * PANEL_LINE + PANEL_FONT_HEIGHT, PANEL_BG = 24, PANEL_FG = 235, PANEL_RADIUS = 12 };
 
 static struct {
     int ok, have;
@@ -557,7 +557,18 @@ static void panel_compose(void)
     double x;
     memset(g_panel.draw, PANEL_BG, sizeof(g_panel.draw));
     const int L = PANEL_W - PANEL_PAD_X, M = PANEL_W / 2, R = PANEL_PAD_X;
-    const int top[4] = {PANEL_PAD_Y, PANEL_PAD_Y + PANEL_LINE, PANEL_PAD_Y + 2 * PANEL_LINE, PANEL_PAD_Y + 3 * PANEL_LINE};
+    /* title line (user 2026-11-23): "Trip computer" and a rule from after it to the right padding, 2 px, at the height
+     * of the lower-case letters' middle, a little dimmer than the text; the four value lines below it */
+    {
+        static const char title[] = "Trip computer";
+        panel_text_at(title, R, PANEL_PAD_Y, 0);
+        const int x0 = R + panel_width(title) + 10, y = PANEL_PAD_Y + PANEL_FONT_ASCENT - 7;
+        for (int row = y; row < y + 2; ++row)
+            for (int col = x0; col < L; ++col)
+                g_panel.draw[row * PANEL_W + col] = (uint8_t)(PANEL_BG + (PANEL_FG - PANEL_BG) * 6 / 10);
+    }
+    const int top[4] = {PANEL_PAD_Y + PANEL_LINE, PANEL_PAD_Y + 2 * PANEL_LINE, PANEL_PAD_Y + 3 * PANEL_LINE,
+                        PANEL_PAD_Y + 4 * PANEL_LINE};
     /* 1: trip start, duration, distance (cluster) */
     if (strstr(kombi, "start=") && sscanf(strstr(kombi, "start=") + 6, "%d:%d", &v, &w) == 2 && v >= 0)
         snprintf(a, sizeof(a), I_CLOCK "%d:%02d", v, w);
