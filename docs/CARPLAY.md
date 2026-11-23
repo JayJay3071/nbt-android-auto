@@ -109,9 +109,43 @@ Over SSH the library path lacks `/lib` (`libusbdi.so.2`): run it with `LD_LIBRAR
   signed by the chip). 1D02 / AA05 = accepted; then CarPlayAvailability (4300) should follow. Framing checked on a PC
   (a SYN and the identification round-trip through the parser).
 
-## Plan
+- `carkit` with iAP2 (car 2026-11-23): works. After "Trust" (asked again on the first run), the iPhone sent 1D00;
+  identification accepted (1D02), certificate (908 bytes) and a 20-byte challenge signed by the 2.0B chip in about
+  1.55 s, authentication succeeded (AA05), then CarPlayAvailability (4300: wired available, the iPhone's UDID). The
+  gate is passed: the iPhone takes the car's old chip for CarPlay.
 
-1. `nbt_carplay_probe`: chip I/O and signing, the iPhone's USB configurations, the CarPlay configuration (now).
-2. USB multiplexor, lockdown pairing and TLS (Mbed TLS, already in the build), `com.apple.carkit.service`.
-3. iAP2 link, identification as CarPlay and authentication with the 2.0B chip: the iPhone accepts or rejects it.
-4. Only if 3 is accepted: NCM networking, AirPlay, picture, sound, input.
+## nbt_carplay (CarPlay mode)
+
+`src/carplay/nbt_carplay.c` and its parts, GPLv3. native_service starts it when an Apple device is plugged in
+(decoder mode, `nbt_carplay` in the package, no `carplay.off`); the picture goes into `annexb.fifo` for nbt_decoder
+and the keys come from nbt_knob's `input.fifo`, as for Android Auto. One run = one iPhone session; it ends when the
+iPhone is unplugged. Log: `/fs/ram3/nbt-aa-native/carplay-<session>.log`.
+
+| Part | What it does |
+| --- | --- |
+| `cp_usb.c` | the CarPlay configuration (vendor request 0x52 if needed), the multiplexor's pipes, the first NCM function's data interface (alternate 1) and its MAC address; if the USB stack does not report the new interfaces within 3 s, it connects again (the probe needed a second run) |
+| `cp_lockdown.c` | multiplexor, lockdown, pairing ("Trust", once: the record is kept in `NbtAndroidAutoRT/carplay/pair-*`; an iPhone that forgot it is paired again), TLS session, `com.apple.carkit.service` |
+| `cp_iap2.c` | iAP2 link, identification, authentication with the chip (`cp_acp.c`), power, subscriptions, HID media remote, CarPlayStartSession for each CarPlayAvailability; NowPlaying -> `/fs/ram3/nbt-aa-media` |
+| `cp_ncm.c`, `cp_net_lwip.c`, `lwip_port/` | step a: NTB16 blocks <-> Ethernet frames <-> lwIP 2.2.1 (in the process; the car's network is not touched), IPv6 link-local address from the MAC |
+| `cp_airplay.c`, `cp_bplist.c`, `cp_crypto.c` | step b: AirPlay on port 7000: /info (1280x480, knob, no touch), pair-setup (SRP, PIN 3939, Ed25519 with Monocypher), pair-verify (X25519), encrypted control connection, auth-setup (the chip), SETUP, event connection, timing, feedback; identity and paired iPhones in `NbtAndroidAutoRT/carplay/airplay-*` |
+| `cp_screen.c` | step c: screen stream (type 110) decrypted, AVCC -> Annex B with an access unit delimiter after each frame |
+| `cp_audio.c`, `cp_mic.c` | LPCM streams 100 / 101 -> 48 kHz stereo -> media `input_stereo_1`, prompts on it too or, while another source plays, `input_stereo_3` over b8 (as aa_media_out); microphone `/output_multich_0` -> the iPhone |
+| `cp_input.c` | `R` turns -> knob wheel, tilts -> knob x / y, push -> select, BACK -> back, media keys -> media HID, voice -> Siri |
+
+Debugging step by step (run by hand with native_service stopped or `carplay.off`, iPhone plugged in):
+
+    LD_LIBRARY_PATH=/opt/sys/lib:/lib:/usr/lib ./nbt_carplay --stop-after STEP [--seconds N] [--pcap F] [--dump F] [--audio-dump D]
+
+`--stop-after usb` (configuration, pipes, NCM interface up), `iap2` (CarPlayStartSession sent), `net` (the iPhone
+connected to port 7000 over NCM), `airplay` (pairing done, screen stream set up), `video` (60 frames written); it ends
+N seconds (default 15) later. `--pcap` writes every NCM frame (Wireshark), `--dump` the H.264 (ffplay), `--audio-dump`
+one WAV per audio stream. `--fifo none` writes no picture, `--no-audio`, `--no-mic`, `--knob-invert`.
+
+On a PC (no car): `src/carplay/test_ncm_host.c` (two lwIP stacks over NTB16 in random pieces: neighbour discovery,
+2 MB TCP echo, UDP) and `src/carplay/test_airplay_host.c` with `scripts/carplay_test.py` (the iPhone's side of
+/info, pairing, encrypted control, auth-setup, SETUP, screen frames, audio packets, event connection, timing, feedback,
+TEARDOWN) pass.
+
+Guesses, to be checked on the car: `primaryInputDevice` 3 for the knob (xcertplay uses 1 = touch); the wheel's
+direction; whether the NCM interfaces are free (another driver of the car could hold them); the iPhone's choice of
+audio formats (no AAC is offered: type 102 is left out); Siri via `requestSiri` 2 then 3.
