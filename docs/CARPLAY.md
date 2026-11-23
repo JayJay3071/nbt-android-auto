@@ -93,6 +93,9 @@ Over SSH the library path lacks `/lib` (`libusbdi.so.2`): run it with `LD_LIBRAR
   EnableServiceSSL), then what the iPhone sends first. The record is kept in RAM (`/fs/ram3/carplay-pair`): after a
   boot of the car the iPhone asks "Trust" again. Mbed TLS rejects empty X.509 names when parsing; the build patches it
   to read them as no name (`scripts/mbedtls_empty_name.py`).
+- `carkit`, first try (car 2026-11-23): SetValue and GetValue DevicePublicKey answered (a PKCS#1 PEM with CR LF lines),
+  but its base64 did not decode: Apple's plists break `<data>` into lines with tabs, which Mbed TLS rejects. The
+  whitespace is now removed first (tested on a PC with the iPhone's actual key).
 
 ## Plan
 

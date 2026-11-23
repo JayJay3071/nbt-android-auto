@@ -1140,6 +1140,17 @@ out:
     return r;
 }
 
+/* <data> text without the line breaks and tabs Apple's plists have in it (car 2026-11-23: DevicePublicKey did not
+ * decode with them; Mbed TLS takes only CR LF breaks) */
+static void strip_space(char* s)
+{
+    char* d = s;
+    for (; *s; ++s)
+        if (*s != '\n' && *s != '\r' && *s != '\t' && *s != ' ')
+            *d++ = *s;
+    *d = 0;
+}
+
 static void pem_base64(const char* pem, char* out, unsigned size)
 {
     size_t n = 0;
@@ -1176,7 +1187,7 @@ static int pair(void)
         return -1;
     if (lockdown_request(&s, "<key>Request</key>\n<string>GetValue</string>\n<key>Key</key>\n"
                              "<string>DevicePublicKey</string>\n") ||
-        !plist_value(g_answer, "Value", value, sizeof(value)) ||
+        !plist_value(g_answer, "Value", value, sizeof(value)) || (strip_space(value), 0) ||
         mbedtls_base64_decode((unsigned char*)device_pem, sizeof(device_pem) - 1, &n, (const unsigned char*)value,
                               strlen(value))) {
         say("pair: no DevicePublicKey");
@@ -1215,7 +1226,7 @@ static int pair(void)
                 file_put("host_key.pem", g_pair.host_key, strlen(g_pair.host_key)) ||
                 file_put("host_cert.pem", g_pair.host_cert, strlen(g_pair.host_cert)) ||
                 file_put("device_cert.pem", g_pair.device_cert, strlen(g_pair.device_cert)) ||
-                (plist_value(g_answer, "EscrowBag", value, sizeof(value)) &&
+                (plist_value(g_answer, "EscrowBag", value, sizeof(value)) && (strip_space(value), 1) &&
                  file_put("escrow_bag.b64", value, strlen(value))) ||
                 file_put("paired", "1\n", 2))
                 say("pair: the record could not be written to %s (pairing again next time)", PAIR_DIR);
