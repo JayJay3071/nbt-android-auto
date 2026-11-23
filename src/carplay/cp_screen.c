@@ -8,6 +8,9 @@
  * 4-byte (avcC) lengths. Written to the FIFO as Annex B (start codes), SPS / PPS before each key frame, and an access
  * unit delimiter after each frame, so nbt_decoder decodes it at once (as oneplus_native does for Android Auto).
  * --dump FILE keeps a copy of what goes into the FIFO (plays with ffplay).
+ * A still screen gets no frames (car 2026-11-23: gaps of several seconds; only opcode 2, an empty message, every
+ * second), and nbt_decoder hides its window after decoder.stale ms (5000) without a picture: after 3 s without a frame
+ * a key frame is asked for (forceKeyFrame), at most every 3 s.
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -164,7 +167,8 @@ static void* screen_thread(void* arg)
     unsigned char *body = 0, *plain = 0, *out = 0;
     unsigned cap = 0;
     unsigned long long counter = 0, bytes = 0, last_frames = 0;
-    long long last = ms_now(), first = 0;
+    long long last = ms_now(), first = 0, last_frame = ms_now(), asked = 0;
+    int heartbeats = 0;
     struct net_addr peer;
     int c = -1;
     static const unsigned char aud[6] = {0, 0, 0, 1, 0x09, 0xf0};
@@ -203,14 +207,20 @@ static void* screen_thread(void* arg)
         }
         if (size && read_all(c, body, size))
             break;
+        if (op != 0 && ms_now() - last_frame >= 3000 && ms_now() - asked >= 3000) {
+            asked = ms_now();   /* a still screen: a key frame keeps nbt_decoder's window */
+            airplay_key_frame();
+        }
         if (op == 1) {
             config(body, size);
             continue;
         }
         if (op != 0) {
-            say("screen: message type %u (%u bytes) ignored", op, size);
+            if (op != 2 || !heartbeats++)
+                say("screen: message type %u (%u bytes) ignored%s", op, size, op == 2 ? " (comes every second)" : "");
             continue;
         }
+        last_frame = ms_now();
         {
             unsigned char nonce[12];
             const unsigned char* frame = body;
