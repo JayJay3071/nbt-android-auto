@@ -6,6 +6,7 @@
 #   reference/           NBT-AAD milestone-7 src/ and include/ with our overlay and patches applied
 #   mbedtls-3.6.7/       Mbed TLS release with the legacy-UTCTime patch and the QNX config
 #   ffmpeg/, ffmpeg-config/, ffmpeg-asm/, build-ffmpeg-qnx.sh   FFmpeg for nbt_decoder (scripts/ffmpeg_qnx.py)
+#   lwip/, monocypher/   lwIP and Monocypher sources for nbt_carplay (scripts/carplay_deps.py)
 #   expected/            optional: binaries of an installer payload to compare against
 # Environment: HMI_LIBS = folder with libAppFramework.A.so and libCoreFramework.A.so copied from your own NBT
 #              (needed only for the HMI plugin; without it the plugin is skipped).
@@ -94,6 +95,36 @@ echo "== nbt_carplay_probe (test: CarPlay first steps, docs/CARPLAY.md)"
 cd $W/src/carplay
 if ! $CC -O2 -Wall -Wextra -Wc,-std=gnu99 $TLSINC nbt_carplay_probe.c $TLSLIBS -lusbdi -o $OUT/nbt_carplay_probe; then
   echo "SKIPPED: nbt_carplay_probe did not compile (see above)"
+fi
+
+echo "== nbt_carplay (wired CarPlay: lwIP, Monocypher, Mbed TLS; docs/CARPLAY.md)"
+if test ! -d $W/lwip/src -o ! -d $W/monocypher/src; then
+  echo "SKIPPED: no lwIP / Monocypher sources (build_all.py could not get them)"
+else
+  mkdir -p $W/carplay-obj
+  LW=$W/lwip/src
+  CPINC="-I$W/src/carplay -I$W/src/carplay/lwip_port -I$LW/include -I$W/monocypher/src -I$W/monocypher/src/optional $TLSINC"
+  ok=1
+  # third-party code without warnings; ours with
+  for c in $LW/core/init.c $LW/core/def.c $LW/core/inet_chksum.c $LW/core/ip.c $LW/core/mem.c $LW/core/memp.c \
+           $LW/core/netif.c $LW/core/pbuf.c $LW/core/sys.c $LW/core/tcp.c $LW/core/tcp_in.c $LW/core/tcp_out.c \
+           $LW/core/timeouts.c $LW/core/udp.c $LW/core/ipv6/ethip6.c $LW/core/ipv6/icmp6.c $LW/core/ipv6/inet6.c \
+           $LW/core/ipv6/ip6.c $LW/core/ipv6/ip6_addr.c $LW/core/ipv6/ip6_frag.c $LW/core/ipv6/mld6.c \
+           $LW/core/ipv6/nd6.c $LW/api/api_lib.c $LW/api/api_msg.c $LW/api/err.c $LW/api/netbuf.c $LW/api/sockets.c \
+           $LW/api/tcpip.c $LW/netif/ethernet.c $W/monocypher/src/monocypher.c \
+           $W/monocypher/src/optional/monocypher-ed25519.c; do
+    $CC -O2 -w -Wc,-std=gnu99 $CPINC -c $c -o $W/carplay-obj/`basename $c .c`.o || ok=0
+  done
+  cd $W/src/carplay
+  for c in nbt_carplay cp_util cp_acp cp_usb cp_lockdown cp_iap2 cp_ncm cp_net_lwip cp_bplist cp_crypto cp_airplay \
+           cp_screen cp_audio cp_mic cp_input lwip_port/sys_arch; do
+    $CC -O2 -Wall -Wextra -Wc,-std=gnu99 $CPINC -c $c.c -o $W/carplay-obj/cp-`basename $c`.o || ok=0
+  done
+  if test $ok = 1 && $CC $W/carplay-obj/*.o $TLSLIBS -lusbdi -o $OUT/nbt_carplay; then
+    :
+  else
+    echo "SKIPPED: nbt_carplay did not compile (see above)"
+  fi
 fi
 
 cd $W
