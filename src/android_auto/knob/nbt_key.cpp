@@ -36,6 +36,16 @@
 //                             cm 053 6 00 11 00 b8   browser (interrupting: the main source is muted, input_stereo_3
 //                                                    is heard; the steering wheel still acts on the main source)
 //                             cm 054 6 00 12 00 b8   remove the browser connection again (main source back)
+//   nbt_key trip [N] [address]   2026-11-23 TEST: the trip computer as iDrive gets it from the cluster. HmiMain3D's
+//                           CPxyKombiInterface is FBlock E0 instance 00 (factory: new CPxyKombiInterface(0), base
+//                           constructor (0xE0, inst)); its properties are registered with function ids (0x8bd0019..):
+//                             509 BordcomputerAverage     status: u16, u16 x4 (12 bit), u8 (0..3), u8 (0..7)
+//                             510 BordcomputerTravelStart status: u16, u16, u8, u8, u8, u8 (0..15)
+//                             511 BordcomputerTravelData  status: u16, u16 (12 bit), u8, u16, s16
+//                           (field ranges from each property's decoder, vtable slot 6; meanings not traced). Sends Get
+//                           for 509/510/511 and a notification registration {01, our id, fkt} for each to the address
+//                           (default 0101, the cluster, as HUDTerminal), then prints every E0 message for N s (default
+//                           30). Reads only.
 // Needs LD_LIBRARY_PATH=/opt/sys/lib:/lib:/usr/lib (DSI library).
 #include "most/client.hpp"
 #include <pthread.h>
@@ -87,6 +97,22 @@ void onFb03(const nbt::most::View& m, void*) {
     printf("\n");
 }
 
+void onE0(const nbt::most::View& m, void*) {
+    printf("%6lld ms  E0/%02X fkt=%03X op=%X src=%04X dst=%04X len=%u:", nowMs() - g_t0, m.inst, m.fkt, m.op, m.src, m.dst,
+           (unsigned)m.len);
+    for (size_t i = 0; i < m.len && i < 24; ++i) printf(" %02x", m.data[i]);
+    if (m.op == 0xF && m.len >= 1) printf("   <- ERROR %02X", m.data[0]);
+    printf("\n");
+}
+
+nbt::most::Msg e0Msg(uint16_t src, uint16_t dst, uint16_t fkt, uint8_t op, const uint8_t* d, size_t n) {
+    nbt::most::Msg m;
+    m.txType = 0; m.varTag = 1; m.varVal = 0;
+    m.dst = dst; m.src = src; m.fblock = 0xE0; m.inst = 0x00; m.fkt = fkt; m.opType = op; m.hdrTag = 0xFFFFu;
+    m.data.assign(d, d + n);
+    return m;
+}
+
 nbt::most::Msg fb03Msg(uint16_t src, uint16_t fkt, uint8_t op, const uint8_t* d, size_t n) {
     nbt::most::Msg m;
     m.txType = 0; m.varTag = 1; m.varVal = 0;
@@ -108,7 +134,7 @@ nbt::most::Msg backMsg(uint16_t src, uint16_t dst, uint8_t counter, bool down) {
 
 int usage() {
     printf("usage: nbt_key --watch [seconds] | nbt_key back [seconds] | nbt_key source [seconds] |"
-           " nbt_key cm <fkt hex> <op hex> [data hex bytes...]\n"
+           " nbt_key cm <fkt hex> <op hex> [data hex bytes...] | nbt_key trip [seconds] [address hex]\n"
            "  cm 053 6 00 10 00 bb = build AUX, cm 053 6 00 11 00 b8 = build browser, cm 054 6 00 12 00 b8 = remove it\n");
     return 1;
 }
@@ -120,14 +146,18 @@ int main(int argc, char** argv) {
     if (argc < 2) return usage();
     const bool cm = !strcmp(argv[1], "cm");
     const bool watch = !strcmp(argv[1], "--watch"), back = !strcmp(argv[1], "back"), source = !strcmp(argv[1], "source");
-    if (!watch && !back && !source && !cm) return usage();
-    if (cm ? argc < 4 || argc > 4 + 32 : argc > 3) return usage();
-    const int seconds = cm ? 2 : argc == 3 ? atoi(argv[2]) : (watch ? 15 : source ? 5 : 20);
+    const bool trip = !strcmp(argv[1], "trip");
+    if (!watch && !back && !source && !cm && !trip) return usage();
+    if (cm ? argc < 4 || argc > 4 + 32 : argc > (trip ? 4 : 3)) return usage();
+    const int seconds = cm ? 2 : argc >= 3 ? atoi(argv[2]) : (watch ? 15 : source ? 5 : trip ? 30 : 20);
+    const uint16_t tripAddr = trip && argc == 4 ? (uint16_t)strtoul(argv[3], 0, 16) : 0x0101;
 
     static nbt::most::Client most;
     // the same device controller keys nbt_knob registers, so the E5 messages are delivered to us
     static const uint16_t keys[] = { 0xE510, 0xE503, 0xE505, 0xE512, 0xE514, 0xE501, 0xE502 };
-    if (source || cm) {
+    if (trip) {
+        if (!most.addRoute(0xE0, nbt::most::kAny, nbt::most::kAny, nbt::most::kAny, &onE0, NULL)) return 3;
+    } else if (source || cm) {
         if (!most.addRoute(0x03, nbt::most::kAny, nbt::most::kAny, nbt::most::kAny, &onFb03, NULL)) return 3;
     } else if (!most.addRoute(0xE5, nbt::most::kAny, nbt::most::kAny, nbt::most::kAny, &onE5, NULL)) return 3;
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) most.addDevCtrl(keys[i]);
@@ -144,6 +174,21 @@ int main(int argc, char** argv) {
         const uint8_t reg[5] = { 0x01, (uint8_t)(me >> 8), (uint8_t)me, 0x0C, 0x03 };
         printf("notification 03/00 001 {01 %04X 0C03} -> 100E: %s\n", me,
                most.send(fb03Msg(me, 0x001, 0x0, reg, 5)) ? "sent" : "FAILED");
+    }
+    if (trip) {
+        const uint16_t me = (uint16_t)most.deviceId();
+        static const uint16_t fkts[] = { 0x509, 0x510, 0x511 };
+        for (size_t i = 0; i < 3; ++i) {
+            printf("Get E0/00 %03X -> %04X: %s\n", fkts[i], tripAddr,
+                   most.send(e0Msg(me, tripAddr, fkts[i], 0x1, NULL, 0)) ? "sent" : "FAILED");
+            usleep(200000);
+        }
+        for (size_t i = 0; i < 3; ++i) {
+            const uint8_t reg[5] = { 0x01, (uint8_t)(me >> 8), (uint8_t)me, (uint8_t)(fkts[i] >> 8), (uint8_t)fkts[i] };
+            printf("notification E0/00 001 {01 %04X %03X} -> %04X: %s\n", me, fkts[i], tripAddr,
+                   most.send(e0Msg(me, tripAddr, 0x001, 0x0, reg, 5)) ? "sent" : "FAILED");
+            usleep(200000);
+        }
     }
     if (cm) {
         const unsigned fkt = (unsigned)strtoul(argv[2], 0, 16) & 0xFFF, op = (unsigned)strtoul(argv[3], 0, 16) & 0xF;
@@ -174,6 +219,15 @@ int main(int argc, char** argv) {
         usleep(20000);
     }
     if (back && !g_seen) printf("no controller C20 message seen\n");
+    if (trip) {   // the notifications are cleared again ({02, our id, fkt}, as nbt_knob clears its source notification)
+        const uint16_t me = (uint16_t)most.deviceId();
+        static const uint16_t fkts[] = { 0x509, 0x510, 0x511 };
+        for (size_t i = 0; i < 3; ++i) {
+            const uint8_t clr[5] = { 0x02, (uint8_t)(me >> 8), (uint8_t)me, (uint8_t)(fkts[i] >> 8), (uint8_t)fkts[i] };
+            most.send(e0Msg(me, tripAddr, 0x001, 0x0, clr, 5));
+            usleep(100000);
+        }
+    }
     fflush(stdout);
     _exit(0);   // as the other MOST tools: no DSI teardown races
 }
