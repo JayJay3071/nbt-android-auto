@@ -405,7 +405,7 @@ static void car_present(const struct picture* p)
 
 
 /* ---- trip computer box (decoder.panel, test 2026-11-23) ----
- * User: instead of iDrive's split screen, a box over Android Auto at x 840, y 100, 420 x 136 with the trip computer (20 px from the right edge, icons before the values).
+ * User: instead of iDrive's split screen, a box over Android Auto at x 880, y 100, 380 x 136 with the trip computer (20 px from the right edge, icons before the values).
  * The picture cannot be drawn on with hardware decoding (the car decodes into its own surfaces).
  * Car 2026-11-23, a stream of its own for the box: (1) in this process it took over Android Auto's window (only its
  * top-left 280 x 100 was left, as the reference decoder's 64x64 stream created first was taken over by the real one);
@@ -416,7 +416,7 @@ static void car_present(const struct picture* p)
  * (wal::WalApplicationInterface createSprite / assignSpriteToWindow / setSpritePosition / setSpriteSize /
  * setSpriteVisible, as in experiments/wal-overlay). Caution: the earlier sprite path for the whole picture (800x480,
  * ~1.5 MB per upload, 10-15 uploads/s) deadlocked the WalServer and restarted the head unit (docs/DEVELOPMENT.md).
- * Here: one sprite of 420 x 136 (228 KB), uploaded only when its text changed and at most once a second; a watchdog
+ * Here: one sprite of 380 x 136 (207 KB), uploaded only when its text changed and at most once a second; a watchdog
  * ends the box's process if a WAL call blocks for over 4 s. createSprite with an existing id only replaces the content
  * (assignment, position, size and visibility stay; car 2026-11-06).
  * Window: decoder.panelwin (default 1024 = EARLYVIDEO, Android Auto's own window; the sprite is drawn over its stream,
@@ -437,12 +437,12 @@ static void car_present(const struct picture* p)
 #define PANEL_OFF_FILE "/fs/ram3/nbt-aa-panel-off"
 #define TRIP_KOMBI_FILE "/fs/ram3/nbt-aa-tripkombi"
 #define TRIP_CDS_FILE "/fs/ram3/nbt-aa-trip"
-/* user 2026-11-23: icons before the values, 22 px font, 4 px between lines (420 x 136, x 840, 20 px from the right edge); at y 100, corners rounded like Android Auto's (radius 12), 20 px font
+/* user 2026-11-23: icons before the values, 22 px font, 4 px between lines (380 x 136, x 880, 20 px from the right edge, 12 px inner padding); at y 100, corners rounded like Android Auto's (radius 12), 20 px font
  * at full precision ("-12.5°C  E 105°  O 120°  B 100%" and "1036 km  57 L  112.5 L/100km" fit), inner padding 16 px
  * left / right and 8 px top / bottom: 356 x 112 */
-enum { PANEL_PAD_X = 16, PANEL_PAD_Y = 8 };
+enum { PANEL_PAD_X = 12, PANEL_PAD_Y = 8 };
 enum { PANEL_LINE = PANEL_FONT_HEIGHT + 4 };   /* line pitch: 31 px at 22 px */
-enum { PANEL_X = 840, PANEL_Y = 100, PANEL_W = 420, PANEL_H = 2 * 8 + 3 * PANEL_LINE + PANEL_FONT_HEIGHT, PANEL_BG = 24, PANEL_FG = 235, PANEL_RADIUS = 12 };
+enum { PANEL_X = 880, PANEL_Y = 100, PANEL_W = 380, PANEL_H = 2 * 8 + 3 * PANEL_LINE + PANEL_FONT_HEIGHT, PANEL_BG = 24, PANEL_FG = 235, PANEL_RADIUS = 12 };
 
 static struct {
     int ok, have;
@@ -639,7 +639,7 @@ static void panel_compose(void)
             }
         }
     }
-    /* rare: 4-digit range and 3-digit L/100km (pulling away) do not fit at 420 px: "L/100" then */
+    /* "833 km  52 L  8.8 L/100km" does not fit at 380 px: the instantaneous consumption reads "L/100" then */
     if (R + panel_width(a) + 16 + panel_width(b) + 12 > L - panel_width(c)) {
         char* km = strstr(c, "L/100km");
         if (km)
@@ -651,7 +651,10 @@ static void panel_compose(void)
     /* 4: outside, coolant, oil temperature, starter battery charge (CDS sensors.battery {"battery":N}, percent as
      * BimmerGestalt's apps read it, "ACC battery"; 255 = not known). Four items spread evenly over the line. */
     char d[40];
-    if (cds_value(cds, "sensors.temperatureExterior", "temperatureExterior", &x))
+    double out_value = 0;
+    const int have_out_value = cds_value(cds, "sensors.temperatureExterior", "temperatureExterior", &out_value);
+    x = out_value;
+    if (have_out_value)
         snprintf(a, sizeof(a), I_THERMO "%.1f\xb0" "C", x);
     else
         strcpy(a, I_THERMO "--\xb0" "C");
@@ -671,6 +674,12 @@ static void panel_compose(void)
     int total = 0;
     for (int i = 0; i < 4; ++i)
         total += panel_width(items[i]);
+    if (L - R - total < 3 * 6 && have_out_value) {   /* hot engine and cold outside at 380 px: "-12°C" */
+        snprintf(a, sizeof(a), I_THERMO "%.0f\xb0" "C", out_value);
+        total = 0;
+        for (int i = 0; i < 4; ++i)
+            total += panel_width(items[i]);
+    }
     {
         const int gap = (L - R - total) / 3;
         int xpos = R;
