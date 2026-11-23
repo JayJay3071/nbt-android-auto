@@ -745,7 +745,8 @@ typedef void (*spr_size_fn)(void*, unsigned long, unsigned long, unsigned long);
 typedef void (*spr_visible_fn)(void*, unsigned long, int);
 enum { SPRITE_ID = 0x7a40 };
 /* background colour and opacity: decoder.panelbg, hex RRGGBBAA (user 2026-11-23: to match Android Auto's dark grey
- * buttons; default 000000B4, translucent black). Read when the box's process starts (iDrive restart). */
+ * buttons; default 000000B4, translucent black; the car: 323232F0). Read when the box's process starts (iDrive
+ * restart). Text colour and outline follow from it (spr_rgba). */
 static unsigned g_bg_r = 0, g_bg_g = 0, g_bg_b = 0, g_bg_a = 0xB4;
 
 static struct {
@@ -834,45 +835,70 @@ static int spr_open(void)
     return 0;
 }
 
-/* coverage of the box with rounded corners (PANEL_RADIUS), 4 x 4 samples per pixel at the corners */
-static uint8_t g_corner[PANEL_W * PANEL_H];
+/* coverage of the box with rounded corners (PANEL_RADIUS), and of the same shape 1 px inside it: the difference is
+ * the 1 px outline (user 2026-11-23); 4 x 4 samples per pixel */
+static uint8_t g_corner[PANEL_W * PANEL_H], g_inner[PANEL_W * PANEL_H];
+static int shape_samples(int col, int row, double inset)
+{
+    int in = 0;
+    const double r = PANEL_RADIUS - inset;
+    for (int sy = 0; sy < 4; ++sy)
+        for (int sx = 0; sx < 4; ++sx) {
+            const double x = col + (sx + 0.5) / 4, y = row + (sy + 0.5) / 4;
+            if (x < inset || y < inset || x > PANEL_W - inset || y > PANEL_H - inset)
+                continue;
+            const double cx = x < PANEL_RADIUS ? PANEL_RADIUS : x > PANEL_W - PANEL_RADIUS ? PANEL_W - PANEL_RADIUS : x;
+            const double cy = y < PANEL_RADIUS ? PANEL_RADIUS : y > PANEL_H - PANEL_RADIUS ? PANEL_H - PANEL_RADIUS : y;
+            in += (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r;
+        }
+    return in;
+}
 static void corner_mask(void)
 {
     for (int row = 0; row < PANEL_H; ++row)
         for (int col = 0; col < PANEL_W; ++col) {
-            const int cx = col < PANEL_RADIUS ? PANEL_RADIUS : col >= PANEL_W - PANEL_RADIUS ? PANEL_W - PANEL_RADIUS : -1;
-            const int cy = row < PANEL_RADIUS ? PANEL_RADIUS : row >= PANEL_H - PANEL_RADIUS ? PANEL_H - PANEL_RADIUS : -1;
-            int in = 16;
-            if (cx >= 0 && cy >= 0) {
-                in = 0;
-                for (int sy = 0; sy < 4; ++sy)
-                    for (int sx = 0; sx < 4; ++sx) {
-                        const double px = col + (sx + 0.5) / 4 - cx, py = row + (sy + 0.5) / 4 - cy;
-                        in += px * px + py * py <= PANEL_RADIUS * PANEL_RADIUS;
-                    }
-            }
-            g_corner[row * PANEL_W + col] = (uint8_t)(in * 255 / 16);
+            g_corner[row * PANEL_W + col] = (uint8_t)(shape_samples(col, row, 0) * 255 / 16);
+            g_inner[row * PANEL_W + col] = (uint8_t)(shape_samples(col, row, 1) * 255 / 16);
         }
 }
 
-/* the drawn box (coverage over PANEL_BG) as RGBA: white text over translucent black.
+/* the drawn box (coverage over PANEL_BG) as RGBA (user 2026-11-23): text and icons white on a dark background, black
+ * on a light one (decoder.panelbg's luminance, BT.601); a 1 px outline derived from the background: a quarter of the
+ * way towards the text colour (lighter on dark, darker on light), at least as opaque as the background, half way to
+ * opaque. Layers, each "over" the one below (straight alpha): background, outline, text; then the rounded corners.
  * The WalServer reads sprite textures bottom-up (car 2026-11-06, nbt_wal_present; car 2026-11-23: the box came out
  * upside down): rows are written in reverse order. decoder.panelflip: bit 0 rows reversed (default 1), bit 1 columns
  * reversed (2, or 3 for both, if the box is still mirrored left-right). */
 static void spr_rgba(uint8_t* out)
 {
+    const unsigned luma = (299 * g_bg_r + 587 * g_bg_g + 114 * g_bg_b) / 1000;
+    const double fg = luma > 128 ? 0 : 255;                              /* text and icons */
+    const double bg[3] = {g_bg_r, g_bg_g, g_bg_b}, bga = g_bg_a / 255.0;
+    const double ol[3] = {bg[0] + (fg - bg[0]) / 4, bg[1] + (fg - bg[1]) / 4, bg[2] + (fg - bg[2]) / 4};
+    const double ola = (1 + bga) / 2;
     for (int i = 0; i < PANEL_W * PANEL_H; ++i) {
         const int row = i / PANEL_W, col = i % PANEL_W;
         const int src = ((g_spr_flip & 1) ? PANEL_H - 1 - row : row) * PANEL_W + ((g_spr_flip & 2) ? PANEL_W - 1 - col : col);
         const int d = g_panel.draw[src] - PANEL_BG;
-        const unsigned t = d <= 0 ? 0 : d >= PANEL_FG - PANEL_BG ? 255 : (unsigned)d * 255 / (PANEL_FG - PANEL_BG);
-        /* white text over the background colour, both "over" (straight alpha), then the rounded corners */
-        const unsigned a = t + g_bg_a * (255 - t) / 255;
-        const unsigned bg = g_bg_a * (255 - t) / 255;   /* the background's share, alpha-weighted */
-        out[4 * i] = a ? (uint8_t)((255 * t + g_bg_r * bg) / a) : 0;
-        out[4 * i + 1] = a ? (uint8_t)((255 * t + g_bg_g * bg) / a) : 0;
-        out[4 * i + 2] = a ? (uint8_t)((255 * t + g_bg_b * bg) / a) : 0;
-        out[4 * i + 3] = (uint8_t)(a * g_corner[src] / 255);
+        const double t = d <= 0 ? 0 : d >= PANEL_FG - PANEL_BG ? 1 : (double)d / (PANEL_FG - PANEL_BG);
+        const double outer = g_corner[src] / 255.0, inner = g_inner[src] / 255.0;
+        const double w = outer > 0 && outer > inner ? (outer - inner) / outer : 0;   /* the outline's share */
+        double c[3] = {bg[0], bg[1], bg[2]}, a = bga;
+        if (w > 0) {   /* outline over the background */
+            const double oa = ola * w, na = oa + a * (1 - oa);
+            for (int k = 0; k < 3; ++k)
+                c[k] = na > 0 ? (ol[k] * oa + c[k] * a * (1 - oa)) / na : 0;
+            a = na;
+        }
+        if (t > 0) {   /* text over both */
+            const double na = t + a * (1 - t);
+            for (int k = 0; k < 3; ++k)
+                c[k] = na > 0 ? (fg * t + c[k] * a * (1 - t)) / na : 0;
+            a = na;
+        }
+        for (int k = 0; k < 3; ++k)
+            out[4 * i + k] = (uint8_t)(c[k] + 0.5);
+        out[4 * i + 3] = (uint8_t)(a * outer * 255 + 0.5);
     }
 }
 
