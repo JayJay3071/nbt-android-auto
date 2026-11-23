@@ -96,6 +96,18 @@ Over SSH the library path lacks `/lib` (`libusbdi.so.2`): run it with `LD_LIBRAR
 - `carkit`, first try (car 2026-11-23): SetValue and GetValue DevicePublicKey answered (a PKCS#1 PEM with CR LF lines),
   but its base64 did not decode: Apple's plists break `<data>` into lines with tabs, which Mbed TLS rejects. The
   whitespace is now removed first (tested on a PC with the iPhone's actual key).
+- `carkit`, second try (car 2026-11-23): works up to the service. The two RSA-2048 keys took 24 s and 12 s on the
+  car (the final version keeps its pair record and makes them once). Pair answered at once with an EscrowBag (the
+  iPhone had been trusted already), StartSession asked for TLS (TLS 1.2, ECDHE-RSA-AES256-GCM-SHA384), StartService
+  gave `com.apple.carkit.service` on port 56706 with TLS too; the iPhone sent nothing on it within 5 s: the car
+  starts.
+- Next: iAP2 over carkit, as LIVI / xcertplay wired: the marker `FF 55 02 00 EE 10` and at once a link SYN (4
+  outstanding, 65535 bytes, zero acknowledgements, sessions 10 control v2, 11 EA, 12 file transfer, first sequence
+  99); the control session's messages (`40 40`, length, id, parameters). The iPhone asks for identification (1D00,
+  answered with 1D01: identity, message lists, USBHostTransport with CarPlay interface 3 = NCM control of
+  configuration 6, a media playback HID remote) and authentication (AA00 certificate from the chip, AA02 challenge
+  signed by the chip). 1D02 / AA05 = accepted; then CarPlayAvailability (4300) should follow. Framing checked on a PC
+  (a SYN and the identification round-trip through the parser).
 
 ## Plan
 

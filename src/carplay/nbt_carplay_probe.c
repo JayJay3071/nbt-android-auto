@@ -10,7 +10,9 @@
  *   nbt_carplay_probe lockdown      CarPlay configuration, the USB multiplexor in it, a connection to the iPhone's
  *                                   lockdown service and a few questions that need no pairing (no "Trust" prompt)
  *   nbt_carplay_probe carkit        pairing (the iPhone asks "Trust"; record in /fs/ram3/carplay-pair), a TLS
- *                                   session, the service com.apple.carkit.service, what it sends first
+ *                                   session, the service com.apple.carkit.service, iAP2 over it: identification
+ *                                   as a CarPlay car and authentication with the car's chip (the question whether
+ *                                   the iPhone takes the 2.0B chip for CarPlay)
  *
  * The chip: I2C bus 0, dev-i2c node /dev/i2c/i2c_0/acp (/opt/sys/etc/i2c-conf_x86.cfg). A plain read from a fresh
  * open returns the registers from 0 (car 2026-11-23, dd). How this driver addresses other registers is not known, so
@@ -78,6 +80,7 @@ static void hex(const char* what, const unsigned char* b, unsigned n)
 /* ---- the authentication chip ---- */
 
 static int g_acp = -1;
+static long long ms_now(void);
 
 /* one transfer, retried while the chip sleeps (it does not acknowledge the first one) */
 static int g_offsets;   /* 1: the file offset is the register number (pread / pwrite) */
@@ -182,33 +185,90 @@ static int acp_find_way(unsigned char* first4)
     return -1;
 }
 
+/* the chip's certificate (up to 1280 bytes) */
+static int acp_cert(unsigned char* b, unsigned* n_out)
+{
+    unsigned char len[2];
+    unsigned n, i;
+    if (acp_read(0x30, len, 2))
+        return -1;
+    n = (unsigned)len[0] << 8 | len[1];
+    if (n == 0 || n > 1280)
+        return -1;
+    for (i = 0; i * 128 < n; ++i)
+        if (acp_read(0x31 + i, b + i * 128, n - i * 128 < 128 ? n - i * 128 : 128))
+            return -1;
+    *n_out = n;
+    return 0;
+}
+
+/* one signature: challenge length, challenge, start; then the status polled until "signature ready" (0x10; car
+ * 2026-11-23: about 1.5 s for a 20-byte challenge), up to 5 s */
+static int acp_sign(const unsigned char* challenge, unsigned clen, unsigned char* sig, unsigned* slen)
+{
+    unsigned char b[2];
+    unsigned i, status = 0, n;
+    const long long t0 = ms_now();
+    if (clen == 0 || clen > 128)
+        return -1;
+    b[0] = (unsigned char)(clen >> 8);
+    b[1] = (unsigned char)clen;
+    if (acp_set(0x20, b, 2) || acp_set(0x21, challenge, clen))
+        return -1;
+    b[0] = 1;
+    if (acp_set(0x10, b, 1))
+        return -1;
+    for (i = 0; i < 250; ++i) {
+        usleep(20000);
+        if (acp_read(0x10, b, 1) == 0) {
+            status = b[0];
+            if ((status & 0x70) == 0x10 || (status & 0x80))
+                break;
+        }
+    }
+    say("acp: status after signing 0x%02x (%s), %lld ms", status,
+        (status & 0x70) == 0x10 ? "signature ready" : status & 0x80 ? "error" : "no result", ms_now() - t0);
+    if ((status & 0x70) != 0x10) {
+        if (acp_read(0x05, b, 1) == 0)
+            say("acp: error code 0x%02x", b[0]);
+        return -1;
+    }
+    if (acp_read(0x11, b, 2))
+        return -1;
+    n = (unsigned)b[0] << 8 | b[1];
+    if (n == 0 || n > 128 || acp_read(0x12, sig, n))
+        return -1;
+    *slen = n;
+    return 0;
+}
+
+static int acp_open(void)
+{
+    unsigned char b[4], id[4];
+    g_acp = open(ACP_NODE, O_RDWR);
+    if (g_acp < 0) {
+        say("acp: %s: %s", ACP_NODE, strerror(errno));
+        return -1;
+    }
+    if (acp_find_way(b) || acp_read(0x04, id, 4))
+        return -1;
+    say("acp: device version 0x%02x (%s), firmware 0x%02x, protocol %u.%u, device id %02x %02x %02x %02x", b[0],
+        b[0] == 0x03 ? "2.0B" : b[0] == 0x05 ? "2.0C" : b[0] == 0x07 ? "3.0" : "?", b[1], b[2], b[3], id[0], id[1],
+        id[2], id[3]);
+    return 0;
+}
+
 static int run_acp(void)
 {
-    unsigned char b[1280], id[4], len[2];
-    unsigned n, i, status = 0;
+    unsigned char b[1280];
+    unsigned n;
     FILE* f;
     /* a fixed test challenge: 20 bytes (a SHA-1 digest's size, what an iPhone sends to a 2.0 chip) */
     static const unsigned char challenge[20] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
                                                 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13};
-    g_acp = open(ACP_NODE, O_RDWR);
-    if (g_acp < 0) {
-        say("acp: %s: %s", ACP_NODE, strerror(errno));
+    if (acp_open() || acp_cert(b, &n))
         return 1;
-    }
-    if (acp_find_way(b) || acp_read(0x04, id, 4))
-        return 1;
-    say("acp: device version 0x%02x (%s), firmware 0x%02x, protocol %u.%u, device id %02x %02x %02x %02x", b[0],
-        b[0] == 0x03 ? "2.0B" : b[0] == 0x05 ? "2.0C" : b[0] == 0x07 ? "3.0" : "?", b[1], b[2], b[3], id[0], id[1],
-        id[2], id[3]);
-    if (acp_read(0x30, len, 2))
-        return 1;
-    n = (unsigned)len[0] << 8 | len[1];
     say("acp: certificate %u bytes", n);
-    if (n == 0 || n > sizeof(b))
-        return 1;
-    for (i = 0; i * 128 < n; ++i)
-        if (acp_read(0x31 + i, b + i * 128, n - i * 128 < 128 ? n - i * 128 : 128))
-            return 1;
     hex("certificate, start", b, n < 64 ? n : 64);
     if (b[0] != 0x30)
         say("acp: this does not start like a certificate (0x30): the register reads may be wrong");
@@ -217,34 +277,7 @@ static int run_acp(void)
         say("acp: certificate written to %s", CERT_FILE);
     else
         say("acp: %s could not be written", CERT_FILE);
-
-    /* one signature: challenge length, challenge, start; then poll the status until "signature ready" (0x10) */
-    len[0] = 0;
-    len[1] = sizeof(challenge);
-    if (acp_set(0x20, len, 2) || acp_set(0x21, challenge, sizeof(challenge)))
-        return 1;
-    b[0] = 1;
-    if (acp_set(0x10, b, 1))
-        return 1;
-    for (i = 0; i < 100; ++i) {
-        usleep(20000);
-        if (acp_read(0x10, b, 1) == 0) {
-            status = b[0];
-            if ((status & 0x70) == 0x10 || (status & 0x80))
-                break;
-        }
-    }
-    say("acp: status after signing 0x%02x (%s)", status,
-        (status & 0x70) == 0x10 ? "signature ready" : status & 0x80 ? "error" : "no result");
-    if ((status & 0x70) != 0x10) {
-        if (acp_read(0x05, b, 1) == 0)
-            say("acp: error code 0x%02x", b[0]);
-        return 1;
-    }
-    if (acp_read(0x11, len, 2))
-        return 1;
-    n = (unsigned)len[0] << 8 | len[1];
-    if (n == 0 || n > 128 || acp_read(0x12, b, n))
+    if (acp_sign(challenge, sizeof(challenge), b, &n))
         return 1;
     hex("challenge", challenge, sizeof(challenge));
     hex("signature", b, n);
@@ -812,16 +845,18 @@ static int bio_send(void* ctx, const unsigned char* buf, size_t len)
     return tcp_send(c, TCP_ACK, buf, n) ? MBEDTLS_ERR_NET_SEND_FAILED : (int)n;
 }
 
+static unsigned g_recv_ms = 8000;   /* how long a TLS read waits for data */
+
 static int bio_recv(void* ctx, unsigned char* buf, size_t len)
 {
     struct tcpc* c = (struct tcpc*)ctx;
-    const long long until = ms_now() + 8000;
+    const long long until = ms_now() + g_recv_ms;
     unsigned n;
     while (!c->datan && !c->closed && ms_now() < until)
         if (tcp_poll(200) < 0)
             return MBEDTLS_ERR_NET_RECV_FAILED;
-    if (!c->datan)
-        return c->closed ? MBEDTLS_ERR_NET_CONN_RESET : MBEDTLS_ERR_SSL_TIMEOUT;
+    if (!c->datan)   /* polling (iAP2): "try again" keeps Mbed TLS's record state; else a timeout */
+        return c->closed ? MBEDTLS_ERR_NET_CONN_RESET : g_recv_ms < 8000 ? MBEDTLS_ERR_SSL_WANT_READ : MBEDTLS_ERR_SSL_TIMEOUT;
     n = c->datan < len ? c->datan : (unsigned)len;
     memcpy(buf, c->data, n);
     memmove(c->data, c->data + n, c->datan - n);
@@ -1254,7 +1289,409 @@ static int pair_identity(mbedtls_x509_crt* cert, mbedtls_pk_context* key)
     return r ? -1 : 0;
 }
 
-/* pairing if needed, a TLS session, the carkit service on its own connection (slot 1); first bytes printed */
+/* ---- iAP2 over the carkit service (as LIVI / xcertplay, wired) ----
+ * Link layer: we send the marker FF 55 02 00 EE 10 and at once a SYN; packets are FF 5A, length (16 bit, all of it),
+ * control (80 SYN, 40 ACK, 20 EAK, 10 RST), sequence, acknowledgement, session, header checksum, then the payload and
+ * its checksum (checksums: the bytes sum to 0). Our SYN (version 1): 4 packets outstanding, 65535 bytes, no
+ * retransmission or acknowledgement timers ("zero acknowledgements", as LIVI wired), sessions 10 control (version 2),
+ * 11 external accessory, 12 file transfer; our first sequence 99. The control session carries messages: 40 40,
+ * length, id, then parameters (length, id, data; groups nest). Over carkit the iPhone asks for identification
+ * (1D00) and authentication (AA00 certificate, AA02 challenge) and answers 1D02 / 1D03 and AA05 / AA04. */
+
+enum { IAP2_CONTROL = 10 };
+
+static struct {
+    struct stream* s;
+    unsigned char in[140000];
+    unsigned inn;
+    unsigned sent_seq, last_rx, synced, peer_maxlen, peer_acks, normal;
+    unsigned char csm[140000];   /* control-session bytes, not yet a whole message */
+    unsigned csmn;
+} g_l;
+
+static unsigned char csum(const unsigned char* b, unsigned n)
+{
+    unsigned s = 0, i;
+    for (i = 0; i < n; ++i)
+        s += b[i];
+    return (unsigned char)(0x100 - (s & 0xff));
+}
+
+static int link_packet(unsigned control, unsigned seq, unsigned session, const unsigned char* p, unsigned n)
+{
+    static unsigned char f[70000];
+    const unsigned len = 9 + (n ? n + 1 : 0);
+    if (len > sizeof(f))
+        return -1;
+    f[0] = 0xff;
+    f[1] = 0x5a;
+    put16(f + 2, len);
+    f[4] = (unsigned char)control;
+    f[5] = (unsigned char)seq;
+    f[6] = (unsigned char)g_l.last_rx;
+    f[7] = (unsigned char)session;
+    f[8] = csum(f, 8);
+    if (n) {
+        memcpy(f + 9, p, n);
+        f[9 + n] = csum(p, n);
+    }
+    return stream_write(g_l.s, f, len);
+}
+
+/* one control-session message: split over packets as the iPhone's maximum length allows */
+static int csm_send(unsigned id, const unsigned char* params, unsigned n)
+{
+    static unsigned char m[70000];
+    unsigned off = 0;
+    const unsigned chunk = g_l.peer_maxlen > 10 ? g_l.peer_maxlen - 10 : 1000;
+    if (n + 6 > 0xffff)
+        return -1;
+    m[0] = 0x40;
+    m[1] = 0x40;
+    put16(m + 2, n + 6);
+    put16(m + 4, id);
+    memcpy(m + 6, params, n);
+    say("iap2: -> %04x (%u bytes)", id, n + 6);
+    while (off < n + 6) {
+        const unsigned k = n + 6 - off < chunk ? n + 6 - off : chunk;
+        g_l.sent_seq = (g_l.sent_seq + 1) & 0xff;
+        if (link_packet(0x40, g_l.sent_seq, IAP2_CONTROL, m + off, k))
+            return -1;
+        off += k;
+    }
+    return 0;
+}
+
+/* parameters: append one */
+static unsigned prm(unsigned char* b, unsigned at, unsigned id, const void* data, unsigned n)
+{
+    put16(b + at, n + 4);
+    put16(b + at + 2, id);
+    if (n)
+        memcpy(b + at + 4, data, n);
+    return at + 4 + n;
+}
+static unsigned prm_str(unsigned char* b, unsigned at, unsigned id, const char* s)
+{
+    return prm(b, at, id, s, (unsigned)strlen(s) + 1);
+}
+static unsigned prm_u8(unsigned char* b, unsigned at, unsigned id, unsigned v)
+{
+    const unsigned char x = (unsigned char)v;
+    return prm(b, at, id, &x, 1);
+}
+static unsigned prm_u16(unsigned char* b, unsigned at, unsigned id, unsigned v)
+{
+    unsigned char x[2];
+    put16(x, v);
+    return prm(b, at, id, x, 2);
+}
+static unsigned prm_u16s(unsigned char* b, unsigned at, unsigned id, const unsigned short* v, unsigned count)
+{
+    unsigned char x[128];
+    unsigned i;
+    for (i = 0; i < count; ++i)
+        put16(x + 2 * i, v[i]);
+    return prm(b, at, id, x, 2 * count);
+}
+/* a group: the parameters built in g (length n) as one parameter */
+static unsigned prm_group(unsigned char* b, unsigned at, unsigned id, const unsigned char* g, unsigned n)
+{
+    return prm(b, at, id, g, n);
+}
+
+/* IdentificationInformation (1D01) as LIVI / xcertplay wired: identity strings, the messages we send and take,
+ * power "advanced", 20 mA from the iPhone, an external accessory protocol, English, the USB host transport with the
+ * CarPlay interface (NCM control, interface 3 of configuration 6) and a media playback HID remote */
+static int send_identification(void)
+{
+    static const unsigned short sent[] = {0x5000, 0x5002, 0x5200, 0x5203, 0xae00, 0xae02, 0x4157, 0x4159,
+                                          0x4154, 0x4156, 0xae03, 0x4301, 0x6800, 0x6802, 0x6803};
+    static const unsigned short taken[] = {0xea00, 0xea01, 0x5001, 0x5201, 0x5202, 0xae01, 0x4158, 0x4155, 0x4300,
+                                           0x6801};
+    unsigned char b[2048], g[256];
+    unsigned at = 0, gn;
+    at = prm_str(b, at, 0, "BMW NBT");
+    at = prm_str(b, at, 1, "NBT");
+    at = prm_str(b, at, 2, "BMW");
+    at = prm_str(b, at, 3, "nbt-android-auto");
+    at = prm_str(b, at, 4, "1.0");
+    at = prm_str(b, at, 5, "1.0");
+    at = prm_u16s(b, at, 6, sent, sizeof(sent) / sizeof(sent[0]));
+    at = prm_u16s(b, at, 7, taken, sizeof(taken) / sizeof(taken[0]));
+    at = prm_u8(b, at, 8, 2);
+    at = prm_u16(b, at, 9, 20);
+    gn = prm_u8(g, 0, 0, 1);
+    gn = prm_str(g, gn, 1, "com.nbtaa.carplay");
+    gn = prm_u8(g, gn, 2, 0);
+    at = prm_group(b, at, 10, g, gn);
+    at = prm_str(b, at, 12, "en");
+    at = prm_str(b, at, 13, "en");
+    gn = prm_u16(g, 0, 0, 0);
+    gn = prm_str(g, gn, 1, "USBHostTransport");
+    gn = prm(g, gn, 2, 0, 0);
+    gn = prm_u8(g, gn, 3, 3);
+    gn = prm(g, gn, 4, 0, 0);
+    at = prm_group(b, at, 16, g, gn);
+    gn = prm_u16(g, 0, 0, 0);
+    gn = prm_str(g, gn, 1, "Media Playback Remote");
+    gn = prm_u8(g, gn, 2, 1);
+    at = prm_group(b, at, 18, g, gn);
+    return csm_send(0x1d01, b, at);
+}
+
+/* the first parameter with this id at the top level of a message's parameters */
+static const unsigned char* prm_find(const unsigned char* p, unsigned n, unsigned id, unsigned* len)
+{
+    unsigned at = 0;
+    while (at + 4 <= n) {
+        const unsigned l = get16(p + at), i = get16(p + at + 2);
+        if (l < 4 || at + l > n)
+            return 0;
+        if (i == id) {
+            *len = l - 4;
+            return p + at + 4;
+        }
+        at += l;
+    }
+    return 0;
+}
+
+static struct {
+    unsigned char cert[1280];
+    unsigned certn;
+    int identified, authenticated, failed;
+} g_ia;
+
+static void on_message(unsigned id, const unsigned char* p, unsigned n)
+{
+    unsigned char out[1400], sig[128];
+    unsigned at, len, sl;
+    const unsigned char* v;
+    say("iap2: <- %04x (%u bytes)", id, n + 6);
+    switch (id) {
+    case 0x1d00:   /* StartIdentification */
+        send_identification();
+        break;
+    case 0x1d02:
+        say("iap2: IDENTIFICATION ACCEPTED");
+        g_ia.identified = 1;
+        break;
+    case 0x1d03: {   /* rejected: the parameters it did not like */
+        unsigned a = 0;
+        printf("      rejected parameters:");
+        while (a + 4 <= n) {
+            const unsigned l = get16(p + a);
+            printf(" %u", get16(p + a + 2));
+            if (l < 4)
+                break;
+            a += l;
+        }
+        putchar('\n');
+        hex("1D03", p, n < 256 ? n : 256);
+        g_ia.failed = 1;
+        break;
+    }
+    case 0xaa00:   /* RequestAuthenticationCertificate */
+        at = prm(out, 0, 0, g_ia.cert, g_ia.certn);
+        csm_send(0xaa01, out, at);
+        break;
+    case 0xaa02:   /* RequestAuthenticationChallengeResponse */
+        v = prm_find(p, n, 0, &len);
+        if (!v) {
+            say("iap2: challenge without parameter 0");
+            g_ia.failed = 1;
+            break;
+        }
+        hex("challenge", v, len);
+        if (acp_sign(v, len, sig, &sl)) {
+            g_ia.failed = 1;
+            break;
+        }
+        at = prm(out, 0, 0, sig, sl);
+        csm_send(0xaa03, out, at);
+        break;
+    case 0xaa04:
+        say("iap2: AUTHENTICATION FAILED");
+        g_ia.failed = 1;
+        break;
+    case 0xaa05:
+        say("iap2: AUTHENTICATION SUCCEEDED");
+        g_ia.authenticated = 1;
+        break;
+    default:
+        hex("parameters", p, n < 128 ? n : 128);
+        break;
+    }
+}
+
+/* control-session bytes in: whole messages out */
+static void csm_in(const unsigned char* b, unsigned n)
+{
+    if (n > sizeof(g_l.csm) - g_l.csmn)
+        g_l.csmn = 0;
+    memcpy(g_l.csm + g_l.csmn, b, n);
+    g_l.csmn += n;
+    for (;;) {
+        unsigned skip = 0;
+        while (skip + 1 < g_l.csmn && !(g_l.csm[skip] == 0x40 && g_l.csm[skip + 1] == 0x40))
+            ++skip;
+        if (skip) {
+            memmove(g_l.csm, g_l.csm + skip, g_l.csmn - skip);
+            g_l.csmn -= skip;
+        }
+        if (g_l.csmn < 6)
+            return;
+        const unsigned len = get16(g_l.csm + 2);
+        if (len < 6) {
+            memmove(g_l.csm, g_l.csm + 1, --g_l.csmn);
+            continue;
+        }
+        if (g_l.csmn < len)
+            return;
+        on_message(get16(g_l.csm + 4), g_l.csm + 6, len - 6);
+        memmove(g_l.csm, g_l.csm + len, g_l.csmn - len);
+        g_l.csmn -= len;
+    }
+}
+
+/* link packets in */
+static void link_in(void)
+{
+    for (;;) {
+        unsigned skip = 0;
+        while (skip + 1 < g_l.inn && !(g_l.in[skip] == 0xff && g_l.in[skip + 1] == 0x5a)) {
+            if (g_l.in[skip] == 0xff && skip + 6 <= g_l.inn && g_l.in[skip + 1] == 0x55) {
+                say("iap2: <- marker %02x %02x %02x %02x %02x %02x", g_l.in[skip], g_l.in[skip + 1],
+                    g_l.in[skip + 2], g_l.in[skip + 3], g_l.in[skip + 4], g_l.in[skip + 5]);
+                skip += 6;
+                continue;
+            }
+            ++skip;
+        }
+        if (skip) {
+            memmove(g_l.in, g_l.in + skip, g_l.inn - skip);
+            g_l.inn -= skip;
+        }
+        if (g_l.inn < 9)
+            return;
+        if (csum(g_l.in, 8) != g_l.in[8]) {   /* not a header: on */
+            memmove(g_l.in, g_l.in + 1, --g_l.inn);
+            continue;
+        }
+        const unsigned len = get16(g_l.in + 2), control = g_l.in[4], seq = g_l.in[5], session = g_l.in[7];
+        if (len < 9) {
+            memmove(g_l.in, g_l.in + 1, --g_l.inn);
+            continue;
+        }
+        if (g_l.inn < len)
+            return;
+        const unsigned char* pl = g_l.in + 9;
+        const unsigned pn = len > 9 ? len - 10 : 0;
+        if (len > 9 && csum(pl, pn) != pl[pn])
+            say("iap2: packet %u with a bad payload checksum (ignored)", seq);
+        else if (control & 0x10) {
+            say("iap2: the iPhone reset the link");
+            g_ia.failed = 1;
+        } else {
+            if (control & 0x80) {   /* its SYN: its limits; acknowledged */
+                if (pn >= 10) {
+                    g_l.peer_maxlen = get16(pl + 2);
+                    g_l.peer_acks = pl[9];
+                    say("iap2: <- SYN: version %u, %u outstanding, %u bytes, retransmit %u ms, ack %u ms, %u "
+                        "retransmissions, %u cumulative acks, %u sessions",
+                        pl[0], pl[1], g_l.peer_maxlen, get16(pl + 4), get16(pl + 6), pl[8], pl[9], (pn - 10) / 3);
+                }
+                g_l.last_rx = seq;
+                g_l.synced = 1;
+                link_packet(0x40, g_l.sent_seq, 0, 0, 0);
+            }
+            if ((control & 0x40) && !g_l.normal && g_l.synced) {
+                g_l.normal = 1;
+                say("iap2: link up");
+            }
+            if (control == 0x40 && pn) {   /* data */
+                if (seq == ((g_l.last_rx + 1) & 0xff)) {
+                    g_l.last_rx = seq;
+                    if (session == IAP2_CONTROL)
+                        csm_in(pl, pn);
+                    else
+                        say("iap2: %u bytes on session %u (ignored)", pn, session);
+                }
+                if (g_l.peer_acks)
+                    link_packet(0x40, g_l.sent_seq, 0, 0, 0);
+            }
+        }
+        memmove(g_l.in, g_l.in + len, g_l.inn - len);
+        g_l.inn -= len;
+    }
+}
+
+static int run_iap2(struct stream* s, int tls)
+{
+    static const unsigned char marker[6] = {0xff, 0x55, 0x02, 0x00, 0xee, 0x10};
+    unsigned char syn[19] = {1, 4, 0xff, 0xff, 0, 0, 0, 0, 0, 0, 10, 0, 2, 11, 2, 1, 12, 1, 2};
+    long long until, done_at = 0;
+    memset(&g_l, 0, sizeof(g_l));
+    memset(&g_ia, 0, sizeof(g_ia));
+    g_l.s = s;
+    g_l.sent_seq = 99;
+    if (acp_open() || acp_cert(g_ia.cert, &g_ia.certn))
+        return -1;
+    say("acp: certificate %u bytes", g_ia.certn);
+    if (stream_write(s, marker, sizeof(marker)) || link_packet(0x80, g_l.sent_seq, 0, syn, sizeof(syn)))
+        return -1;
+    say("iap2: -> marker, SYN");
+    g_recv_ms = 300;
+    until = ms_now() + 60000;
+    while (ms_now() < until && !g_ia.failed) {
+        unsigned char b[16384];
+        int r;
+        if (tls) {
+            r = mbedtls_ssl_read(&s->ssl, b, sizeof(b));
+            if (r == MBEDTLS_ERR_SSL_TIMEOUT || r == MBEDTLS_ERR_SSL_WANT_READ)
+                r = 0;
+            else if (r <= 0) {
+                tls_error("carkit read", r);
+                break;
+            }
+        } else {
+            r = 0;
+            if (!s->c->datan && tcp_poll(300) < 0)
+                break;
+            if (s->c->datan) {
+                r = (int)(s->c->datan < sizeof(b) ? s->c->datan : sizeof(b));
+                tcp_take(s->c, b, (unsigned)r, 0);
+            } else if (s->c->closed) {
+                say("iap2: carkit closed by the iPhone");
+                break;
+            }
+        }
+        if (r > 0) {
+            if ((unsigned)r > sizeof(g_l.in) - g_l.inn)
+                g_l.inn = 0;
+            memcpy(g_l.in + g_l.inn, b, (unsigned)r);
+            g_l.inn += (unsigned)r;
+            link_in();
+        }
+        if (!g_l.synced && ms_now() > until - 55000 && ms_now() < until - 54600) {   /* SYN again after 5 s */
+            link_packet(0x80, g_l.sent_seq, 0, syn, sizeof(syn));
+            say("iap2: -> SYN again");
+        }
+        if (g_ia.identified && g_ia.authenticated && !done_at) {
+            done_at = ms_now();
+            say("iap2: identified and authenticated; listening 10 s more (CarPlayAvailability 4300 expected)");
+        }
+        if (done_at && ms_now() - done_at > 10000)
+            break;
+    }
+    g_recv_ms = 8000;
+    say("iap2: result: identification %s, authentication %s", g_ia.identified ? "accepted" : "not accepted",
+        g_ia.authenticated ? "succeeded" : "not succeeded");
+    return g_ia.identified && g_ia.authenticated ? 0 : -1;
+}
+
+/* pairing if needed, a TLS session, the carkit service on its own connection (slot 1), iAP2 over it */
 static int run_carkit(void)
 {
     struct stream s, svc;
@@ -1293,33 +1730,12 @@ static int run_carkit(void)
     svc.c = tcp_open(1, port);
     if (!svc.c || (ssl && stream_tls(&svc, &cert, &key)))
         return -1;
-    say("carkit: connected; what the iPhone sends in the first 5 s:");
-    {
-        unsigned char b[256];
-        unsigned got = 0;
-        const long long until = ms_now() + 5000;
-        while (got < sizeof(b) && ms_now() < until) {
-            if (ssl) {
-                r = mbedtls_ssl_read(&svc.ssl, b + got, sizeof(b) - got);
-                if (r > 0)
-                    got += (unsigned)r;
-                else if (r != MBEDTLS_ERR_SSL_WANT_READ && r != MBEDTLS_ERR_SSL_TIMEOUT)
-                    break;
-            } else {
-                if (svc.c->datan) {
-                    const unsigned k = svc.c->datan < sizeof(b) - got ? svc.c->datan : sizeof(b) - got;
-                    tcp_take(svc.c, b + got, k, 0);
-                    got += k;
-                } else if (tcp_poll(200) < 0 || svc.c->closed)
-                    break;
-            }
-        }
-        hex("carkit data", b, got);
-    }
+    say("carkit: connected");
+    r = run_iap2(&svc, ssl);
     for (i = 0; i < 3; ++i)
         tcp_close(&g_tc[i]);
     say("carkit: done");
-    return 0;
+    return r;
 }
 
 /* the configuration with the multiplexor and NCM (the highest), and the multiplexor's interface in it */
