@@ -70,6 +70,13 @@ Over SSH the library path lacks `/lib` (`libusbdi.so.2`): run it with `LD_LIBRAR
   PTP + multiplexor; PTP + multiplexor + Apple USB Ethernet. Nothing else held it (the attach worked).
 - `usb carplay`: after the vendor request it re-connects within 1 s with 6: also "PTP + Apple Mobile Device + NCM" (5)
   and "PTP + Apple Mobile Device + Apple USB Ethernet + NCM" (6): the CarPlay configurations, as on LIVI.
+- Certificate: issuer "Apple iPod Accessories Certification Authority", subject `IPA_1212AA131029AA04AA0314AA474334`
+  (OU Apple iPod Accessories), RSA-1024, valid 2013-10-30 to 2021-10-30 (expired; whether iOS checks the validity of
+  accessory certificates is not known). The test signature verifies against its key: PKCS#1 v1.5 with a SHA-1
+  DigestInfo around the 20-byte challenge.
+- `lockdown`, first try: the configuration was selected, but transfers on the multiplexor's pipes failed with ENOENT
+  (opened through interface 0's attachment). The iPhone asked "Trust this computer?" afterwards (accepted). Now the
+  pipes go through the multiplexor interface's own attachment.
 - Next: `nbt_carplay_probe lockdown`: select the CarPlay configuration, open the multiplexor (bulk 04 / 85), version 2
   handshake, a TCP connection to lockdown (62078) and a few questions that need no pairing.
 

@@ -804,33 +804,46 @@ static int run_lockdown(void)
     }
     say("usb: %u configurations; CarPlay configuration %u, multiplexor interface %u", d ? d->bNumConfigurations : 0,
         cfg, ifc);
-    pthread_mutex_lock(&g_lock);
-    before = g_count;
-    pthread_mutex_unlock(&g_lock);
-    rc = usbd_select_config(dev, (unsigned char)cfg);
-    say("usb: select configuration %u: %s", cfg, rc == EOK ? "OK" : strerror(rc));
-    sleep(1);
-    if (open_mux_pipes(dev, cfg, ifc)) {   /* else through the multiplexor interface's own instance */
+    /* the multiplexor's pipes must be opened through its own interface's attachment (car 2026-11-23: through
+     * interface 0's, every transfer failed with ENOENT). After the configuration is selected the USB stack reports
+     * its interfaces (on the next connection at the latest: the iPhone stays in it until unplugged). */
+    if (used.config != cfg) {
+        pthread_mutex_lock(&g_lock);
+        before = g_count;
+        pthread_mutex_unlock(&g_lock);
+        rc = usbd_select_config(dev, (unsigned char)cfg);
+        say("usb: select configuration %u: %s", cfg, rc == EOK ? "OK" : strerror(rc));
+    } else
+        before = 0;
+    dev2 = 0;
+    for (i = 0; i < 50 && !dev2; ++i) {
+        unsigned k;
         pthread_mutex_lock(&g_lock);
         n = g_count;
         pthread_mutex_unlock(&g_lock);
-        dev2 = 0;
-        for (i = before; i < n && !dev2; ++i) {
+        for (k = before; k < n && !dev2; ++k) {
             usbd_device_instance_t inst;
             pthread_mutex_lock(&g_lock);
-            inst = g_inst[i];
+            inst = g_inst[k];
             pthread_mutex_unlock(&g_lock);
-            if (inst.iface != ifc)
+            if (inst.iface != ifc || inst.config != cfg)
                 continue;
             rc = usbd_attach(conn, &inst, 0, &dev2);
-            say("usb: attach to interface %u (configuration %u): %s", (unsigned)inst.iface, (unsigned)inst.config,
+            say("usb: attach to interface %u of configuration %u: %s", (unsigned)inst.iface, (unsigned)inst.config,
                 rc == EOK ? "OK" : strerror(rc));
             if (rc != EOK)
                 dev2 = 0;
         }
-        if (!dev2 || open_mux_pipes(dev2, cfg, ifc))
-            goto fail;
+        if (!dev2)
+            usleep(100000);
     }
+    if (!dev2) {
+        say("usb: the multiplexor interface was not reported yet: run the command again (the iPhone stays in "
+            "configuration %u until unplugged)", cfg);
+        goto fail;
+    }
+    if (open_mux_pipes(dev2, cfg, ifc))
+        goto fail;
     g_mux.uin = usbd_alloc_urb(0);
     g_mux.uout = usbd_alloc_urb(0);
     g_mux.bin = (unsigned char*)usbd_alloc(16384);
