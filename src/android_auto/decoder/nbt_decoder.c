@@ -405,7 +405,7 @@ static void car_present(const struct picture* p)
 
 
 /* ---- trip computer box (decoder.panel, test 2026-11-23) ----
- * User: instead of iDrive's split screen, a box over Android Auto at x 914, y 100, 356 x 112 with the trip computer.
+ * User: instead of iDrive's split screen, a box over Android Auto at x 874, y 100, 356 x 112 with the trip computer (50 px from the right edge).
  * The picture cannot be drawn on with hardware decoding (the car decodes into its own surfaces).
  * Car 2026-11-23, a stream of its own for the box: (1) in this process it took over Android Auto's window (only its
  * top-left 280 x 100 was left, as the reference decoder's 64x64 stream created first was taken over by the real one);
@@ -437,11 +437,11 @@ static void car_present(const struct picture* p)
 #define PANEL_OFF_FILE "/fs/ram3/nbt-aa-panel-off"
 #define TRIP_KOMBI_FILE "/fs/ram3/nbt-aa-tripkombi"
 #define TRIP_CDS_FILE "/fs/ram3/nbt-aa-trip"
-/* user 2026-11-23: at y 100, 10 px from the right edge, corners rounded like Android Auto's (radius 12), 20 px font
+/* user 2026-11-23: at y 100, 50 px from the right edge, corners rounded like Android Auto's (radius 12), 20 px font
  * at full precision ("-12.5°C  E 105°  O 120°  B 100%" and "1036 km  57 L  112.5 L/100km" fit), inner padding 16 px
  * left / right and 8 px top / bottom: 356 x 112 */
 enum { PANEL_PAD_X = 16, PANEL_PAD_Y = 8 };
-enum { PANEL_X = 914, PANEL_Y = 100, PANEL_W = 356, PANEL_H = 112, PANEL_BG = 24, PANEL_FG = 235, PANEL_RADIUS = 12 };
+enum { PANEL_X = 874, PANEL_Y = 100, PANEL_W = 356, PANEL_H = 112, PANEL_BG = 24, PANEL_FG = 235, PANEL_RADIUS = 12 };
 
 static struct {
     int ok, have;
