@@ -116,7 +116,8 @@ its parameters (offset 0x0c) without any copy on the CPU. With `--hw`:
 - `--rows 480` (the sharp full-screen default): the source rectangle is the top 480 rows, copied 1:1 into stream
   buffers of 1280x480, which the window shows 1:1. If the car refuses buffers smaller than the coded 1280x720, the
   destination is the whole 1280x720 buffer instead (the rows scaled up 1.5x, then down again by the window); `--hw-scale`
-  (in `decoder.args`) asks for that from the start, to compare.
+  (in `decoder.args`) asks for that from the start, to compare. Car 2026-11-23: the 1280x480 buffers are accepted
+  (`video: stream 1280x720 (buffers 1280x480)`), 1,471 pictures in 45 s, 0 errors.
 - If the car refuses the decoder at the start, the CPU path takes over in the same run. If decoding never works
   (10 pictures) or keeps failing (100 in a row), `nbt_decoder` writes `decoder.hwfail` (in `/fs/ram3/nbt-aa-native`)
   and ends; the session ends with it, and `native_service` starts it again without `--hw`: the CPU decodes until
@@ -125,6 +126,16 @@ its parameters (offset 0x0c) without any copy on the CPU. With `--hw`:
   `nbt_decoder` gives up as above.
 
 Log lines start with `hw:` (stream set-up, first picture, the surface of each handle, failures, a count every 5 s).
+
+Car results: 800x480 at 30 fps, 0 errors, about 0.6 ms per picture on the CPU (parsing and hand-over only); 1280x720
+(Baseline, level 3.2) at 60 fps with the top 480 rows shown, 0 errors.
+
+Which decoder a session used: `video: stream` says `decoded by the car` (hardware) or `pictures from the CPU`;
+`decoder.hwfail` in `/fs/ram3/nbt-aa-native` means the hardware decoder gave up until the next boot.
+
+```
+%CAR% "grep -h -e 'video: stream' -e 'hw:' /fs/ram3/nbt-aa-native/nbt_decoder-*.log | tail -20"
+```
 
 ## Boot
 
@@ -198,10 +209,16 @@ A box at x 875, y 96, 384x167 with a "Trip computer" title line (20 px from the 
   A video stream of its own did not work (car 2026-11-23): in the decoder's process it took over Android Auto's window,
   in a process of its own its window never showed (a window shows the stream its owner accepts). The box is now a WAL
   sprite: an RGBA bitmap with alpha (white text over translucent black) that the window server draws inside a window,
-  uploaded only when the text changed and at most once a second (280x100, 112 KB). It runs in its own process,
+  uploaded only when the text changed and at most once a second (384x167, 256 KB). It runs in its own process,
   `nbt_decoder --panel`, started by the main one, which tells it over a pipe when Android Auto's window is shown; a WAL
   call blocking for over 4 s ends that process. The earlier sprite path for the whole picture (1.5 MB at 10-15 uploads/s)
   deadlocked the WalServer; this is about a hundredth of that per upload, at most once a second.
+- CDS notes (car 2026-11-23): `engine.consumption` is a 16-bit counter (CPxyVehicle InjectionVolume) that wraps at
+  65536; the box uses the difference per second, its unit (µl per count) is a guess (`decoder.fuelscale`).
+  `sensors.battery` is the IBS state of charge and often reads 255 (shown as `--%`), sometimes a real value.
+  The 12 V battery voltage is not available to iDrive: not in CDS, not in the MOST proxies, not in the Jacinto
+  system registers (GPIO only).
+- In split screen (window 800 wide) the box's process is not started: no box.
 - Long roller push (700 ms, `NBT_PUSH_LONG_MS`, `nbt_knob`): short-term average speed on / off. On, it averages the
   current speed (CDS `driving.speedActual`) from that moment and shows it at the end of the title line; a short push
   is still play / pause (now on the release).
