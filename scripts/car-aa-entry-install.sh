@@ -25,4 +25,4 @@ for f in $FILES NbtAndroidAuto.manifest; do
   if cmp -s $S/$f $D/$f; then echo "ok $f"; else echo "FINAL MISMATCH $f"; fi
 done
 ls -l $D
-echo '=== installed; active after the next normal iDrive restart (Multimedia -> Android Auto)'
+echo '=== installed; active after the next normal iDrive restart (Multimedia -> CarPlay / Android Auto)'

@@ -15,7 +15,7 @@ assignees: ''
 | Feature | Works? | Notes |
 |---|---|---|
 | Install / uninstall | | |
-| Menu entry Multimedia → Android Auto | | |
+| Menu entry Multimedia → CarPlay / Android Auto | | |
 | Picture (wide / 16:9) | | |
 | iDrive controller | | |
 | Navigation in the cluster | | |

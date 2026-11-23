@@ -41,7 +41,7 @@ python installer\nbt_aa_installer.py --cli install
 Files already on the head unit with the same content are not written again (`same` in the output). To write
 everything anyway, add `--force`.
 
-5. Reboot the head unit: Multimedia → Android Auto → **Restart system**, or from the laptop:
+5. Reboot the head unit: Multimedia → CarPlay / Android Auto → **Restart system**, or from the laptop:
 ```
 python scripts\nbt_reset.py
 ```
@@ -87,7 +87,7 @@ hardware decoder on and off.
 
 ## Hardware decoder
 
-Off by default (software decoding). Applies from the next session: replug the phone or use **Restart Android Auto**.
+Off by default (software decoding). Applies from the next session: replug the phone or use **Restart service**.
 
 | What | Command |
 | --- | --- |
@@ -105,7 +105,7 @@ By default the phone's sound comes over USB into the car (source `f6`). To use t
 | USB (default) | `%CAR% "rm -f /var/opt/hmi/data/rw/NbtAndroidAutoRT/media-jack"` |
 | What the session does with the sound | `%CAR% "grep -h AA_MEDIA_OUT /fs/ram3/nbt-aa-native/capture-*.log"` |
 
-Applies after **Restart Android Auto** (the service reads the file when it starts).
+Applies after **Restart service** (the service reads the file when it starts).
 
 Navigation prompts while another source plays (radio, ...) cut in over connection `b8`. To turn that off (prompts only
 on Android Auto's own source): `%CAR% "touch /var/opt/hmi/data/rw/NbtAndroidAutoRT/prompts-off"`. What happened:

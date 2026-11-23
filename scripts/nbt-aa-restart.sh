@@ -1,6 +1,6 @@
 #!/bin/sh
 # Restart of the Android Auto service only (not the head unit). Started by the HMI plugin from the Android Auto page:
-# "Android Auto neu starten" (no argument) or a picture mode change ($1 = new mode flag: split800 | anamorph).
+# "Restart service" (no argument) or a picture mode change ($1 = new mode flag: split800 | anamorph).
 # First a diagnostic snapshot (car 2026-11-09: rarely "connected" but the picture does not come; sometimes the media tab
 # has no sound after switching between media and radio) into $P/snapshots, the newest 5 are kept.
 P=/var/opt/hmi/data/rw/NbtAndroidAutoRT

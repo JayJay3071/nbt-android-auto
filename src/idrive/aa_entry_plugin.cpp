@@ -17,7 +17,7 @@
 //   - BACK (or a tilt iDrive treats as back) pops iDrive from 13 to the entry page 10: while Android Auto runs the press
 //     belonged to the phone, so iDrive is put straight back on 13 (the presenter waits 300 ms before hiding: no blink).
 //   - MENU / MEDIA / NAV / COM / MAP / OPTION leave the page the iDrive way: the overlay hides, the session keeps running
-//     in the background. Multimedia -> Android Auto then brings the running session to the front at once.
+//     in the background. Multimedia -> CarPlay / Android Auto then brings the running session to the front at once.
 //   - "Start at boot: on/off" (inert page 35): switches the flag file start-at-boot.off in the package; nbt_knob reads it
 //     when the first session of a boot runs and then brings the picture to the front (show request) - or not.
 //   - "Restart system" (page 33 asks, its button leads to the inert page 34): reboots the head unit with nbt_reset
@@ -91,7 +91,7 @@ const unsigned kEntryState=10, kHoldState=13, kEvHold=52, kFocus=1, kVisible=11,
 // picture mode selection (2026-11-08): buttons on page 10 lead to the inert states 30 (16:9) / 31 (widescreen); their
 // focus handler stores the mode, restarts the service and sends focus event 53 back to page 10
 const unsigned kMode169State=30, kModeWideState=31, kEvEntry=53, kModel169=6, kModelWide=7;
-const unsigned kRestartState=32;                     // "Android Auto neu starten" -> inert page 32, back to 10
+const unsigned kRestartState=32;                     // "Restart service" -> inert page 32, back to 10
 const unsigned kBootState=35, kBootModel=91;         // "Start at boot" -> inert page 35, back to 10
 const char* const kBootOff="/var/opt/hmi/data/rw/NbtAndroidAutoRT/start-at-boot.off";
 bool bootOn() { return access(kBootOff,F_OK)!=0; }   // default: on (no file)

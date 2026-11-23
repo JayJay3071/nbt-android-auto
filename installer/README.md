@@ -26,7 +26,7 @@ Das Freischalten verändert die Konfiguration des Geräts. Wie alles hier geschi
    - macOS: `NBT-AndroidAuto-Installer.app`. Beim ersten Start mit Rechtsklick → Öffnen, weil die App nicht signiert ist.
 3. IP-Adresse und Passwort eingeben, dann **Installieren / Aktualisieren** klicken.
 4. Das iDrive neu starten.
-5. Telefon per USB anstecken und **Multimedia → Android Auto** wählen.
+5. Telefon per USB anstecken und **Multimedia → CarPlay / Android Auto** wählen.
 
 ## Was Android Auto auf dem NBT kann
 
@@ -42,7 +42,7 @@ Das Freischalten verändert die Konfiguration des Geräts. Wie alles hier geschi
   - Fahrspuren.
 
   Sobald die BMW-Navigation selbst führt, hat sie Vorrang.
-- **Android Auto neu starten** (Knopf auf der Android-Auto-Seite) startet nur den Android-Auto-Dienst neu, nicht das
+- **Dienst neu starten** (Knopf auf der Android-Auto-Seite) startet nur den Android-Auto-Dienst neu, nicht das
   NBT. Vorher wird ein Diagnose-Schnappschuss gespeichert. Den holt **Diagnose-Logs speichern** mit ab.
 
 Im **Breitbild**-Modus empfiehlt es sich, in iDrive den Split-Screen auszuschalten (OPTION → Split-Screen aus). Sonst

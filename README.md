@@ -37,12 +37,12 @@ iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrum
   resumes. iDrive's AUX stays factory.
 - **Steering wheel**: roller up / down = next / previous track, roller push = play / pause, only while Android Auto's
   audio source plays. After the phone button the roller stays with iDrive's contact list for 4 s.
-- **Menu entry** *Multimedia → Android Auto*: shows the status, starts the service as soon as the HMI boots and brings a
+- **Menu entry** *Multimedia → CarPlay / Android Auto*: shows the status, starts the service as soon as the HMI boots and brings a
   running session to the front. **Start at boot** (on / off) brings Android Auto to the front once per boot.
 - **Parking assistant**: when it closes, Android Auto comes back if it was on screen before.
 - **Navigation in the instrument cluster** (6WB cluster) while Google Maps guides a route: arrow, distance bar, street
   name, motorway/road shields and lanes (lanes not yet confirmed with a real phone). BMW navigation takes priority when it guides itself.
-- **Restart Android Auto** button on the Android Auto page restarts only the service (not the NBT) and saves a
+- **Restart service** button on the Android Auto page restarts only the service (not the NBT) and saves a
   diagnostic snapshot first. **Restart system** reboots the head unit (also from a laptop: `scripts/nbt_reset.py`).
 
 ## Known limitations
@@ -88,7 +88,7 @@ Unlocking SSH changes the head unit's configuration. As with everything here, yo
    with the `payload/` folder from the release next to it.
 2. Connect the ENET cable, ignition on, enter IP address and root password, click **Install / Update**.
 3. Restart the iDrive.
-4. Plug in the phone and choose **Multimedia → Android Auto**.
+4. Plug in the phone and choose **Multimedia → CarPlay / Android Auto**.
 
 The installer writes only two folders (`/var/opt/hmi/data/rw/NbtAndroidAutoRT/` and
 `/var/opt/hmi/data/rw/Plugins/NbtAndroidAuto/`), verifies every file byte by byte and can uninstall them again. It

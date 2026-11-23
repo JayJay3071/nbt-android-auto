@@ -4,7 +4,7 @@
      front of the HMI; libNbtAndroidAuto.so moves iDrive from state 10 to the inert state 13 and toggles
      /fs/ram3/nbt-aa-hidden / nbt-aa-request (see aa_entry_plugin.cpp). -->
 <pluginApps>
-  <pluginApp applicationType="Multimedia" applicationWeight="200" text="Android Auto">
+  <pluginApp applicationType="Multimedia" applicationWeight="200" text="CarPlay / Android Auto">
     <entryButton id="1" action="2" model="3"/>
     <actions>
       <hmiAction id="2" target="10" targetModel="5"/>
@@ -572,7 +572,7 @@
       <focusEvent id="699" target="13"/>
     </events>
     <hmiStates>
-      <hmiState id="10" textModel="3" text="Android Auto">
+      <hmiState id="10" textModel="3" text="CarPlay / Android Auto">
         <components>
           <label id="11" model="4" text="Telefon per USB verbinden"><properties><property id="2" value="false"/></properties></label>
           <button id="61" action="26" model="6" text="Split screen"/>
@@ -581,7 +581,7 @@
           <button id="96" action="100" model="97" text="Show widget at startup: off"/>
           <button id="107" action="106" model="108" text="Widget size: Small"/>
           <button id="102" action="101" model="103" text="Decoder: Software"/>
-          <button id="68" action="28" model="25" text="Android Auto neu starten"/>
+          <button id="68" action="28" model="25" text="Dienst neu starten"/>
           <button id="86" action="80" model="82" text="System neu starten"/>
         </components>
       </hmiState>
@@ -613,12 +613,12 @@
       </hmiState>
       <hmiState id="37" parentId="10" textModel="105" text="Decoder">
         <components>
-          <label id="104" model="70" text="Android Auto startet neu"/>
+          <label id="104" model="70" text="Dienst startet neu"/>
         </components>
       </hmiState>
-      <hmiState id="32" parentId="10" textModel="3" text="Android Auto">
+      <hmiState id="32" parentId="10" textModel="3" text="CarPlay / Android Auto">
         <components>
-          <label id="69" model="70" text="Android Auto startet neu"/>
+          <label id="69" model="70" text="Dienst startet neu"/>
         </components>
       </hmiState>
       <hmiState id="33" parentId="10" textModel="82" text="System neu starten">
@@ -637,7 +637,7 @@
            states (13..20) for BACK / tilt left; since 2026-11-17 nbt_knob's guards keep iDrive's focus there (tilt right
            on BACK / tilt left, then BACK), so one is enough (user decision 2026-11-17, revert this commit if it breaks).
            focusEvent 52 and 54 both lead here (car 2026-11-07: too many events made the HMI ignore them). -->
-      <hmiState id="13" parentId="10" textModel="3" text="Android Auto">
+      <hmiState id="13" parentId="10" textModel="3" text="CarPlay / Android Auto">
         <components>
           <label id="41" model="4" text="Telefon per USB verbinden"/>
         </components>
