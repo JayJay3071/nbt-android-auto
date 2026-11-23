@@ -442,7 +442,7 @@ static void car_present(const struct picture* p)
  * left / right and 8 px top / bottom: 356 x 112 */
 enum { PANEL_PAD_X = 12, PANEL_PAD_Y = 8 };
 enum { PANEL_LINE = PANEL_FONT_HEIGHT + 4 };   /* line pitch: 31 px at 22 px */
-enum { PANEL_X = 875, PANEL_Y = 100, PANEL_W = 384, PANEL_H = 2 * 8 + 4 * PANEL_LINE + PANEL_FONT_HEIGHT, PANEL_BG = 24, PANEL_FG = 235, PANEL_RADIUS = 12 };
+enum { PANEL_X = 875, PANEL_Y = 100, PANEL_W = 384, PANEL_H = 2 * 8 + 4 * PANEL_LINE + PANEL_FONT_HEIGHT, PANEL_BG = 24, PANEL_FG = 235, PANEL_RADIUS = 16 };
 
 static struct {
     int ok, have;
