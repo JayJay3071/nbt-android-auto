@@ -405,7 +405,7 @@ static void car_present(const struct picture* p)
 
 
 /* ---- trip computer box (decoder.panel, test 2026-11-23) ----
- * User: instead of iDrive's split screen, a box over Android Auto at x 930, y 100, 340 x 100 with the trip computer.
+ * User: instead of iDrive's split screen, a box over Android Auto at x 914, y 100, 356 x 112 with the trip computer.
  * The picture cannot be drawn on with hardware decoding (the car decodes into its own surfaces).
  * Car 2026-11-23, a stream of its own for the box: (1) in this process it took over Android Auto's window (only its
  * top-left 280 x 100 was left, as the reference decoder's 64x64 stream created first was taken over by the real one);
@@ -416,7 +416,7 @@ static void car_present(const struct picture* p)
  * (wal::WalApplicationInterface createSprite / assignSpriteToWindow / setSpritePosition / setSpriteSize /
  * setSpriteVisible, as in experiments/wal-overlay). Caution: the earlier sprite path for the whole picture (800x480,
  * ~1.5 MB per upload, 10-15 uploads/s) deadlocked the WalServer and restarted the head unit (docs/DEVELOPMENT.md).
- * Here: one sprite of 340 x 100 (136 KB), uploaded only when its text changed and at most once a second; a watchdog
+ * Here: one sprite of 356 x 112 (160 KB), uploaded only when its text changed and at most once a second; a watchdog
  * ends the box's process if a WAL call blocks for over 4 s. createSprite with an existing id only replaces the content
  * (assignment, position, size and visibility stay; car 2026-11-06).
  * Window: decoder.panelwin (default 1024 = EARLYVIDEO, Android Auto's own window; the sprite is drawn over its stream,
@@ -438,8 +438,10 @@ static void car_present(const struct picture* p)
 #define TRIP_KOMBI_FILE "/fs/ram3/nbt-aa-tripkombi"
 #define TRIP_CDS_FILE "/fs/ram3/nbt-aa-trip"
 /* user 2026-11-23: at y 100, 10 px from the right edge, corners rounded like Android Auto's (radius 12), 20 px font
- * at full precision: 340 wide, so "-12.5°C  E 105°  O 120°  B 100%" and "1036 km  57 L  112.5 L/100km" fit */
-enum { PANEL_X = 930, PANEL_Y = 100, PANEL_W = 340, PANEL_H = 100, PANEL_BG = 24, PANEL_FG = 235, PANEL_RADIUS = 12 };
+ * at full precision ("-12.5°C  E 105°  O 120°  B 100%" and "1036 km  57 L  112.5 L/100km" fit), inner padding 16 px
+ * left / right and 8 px top / bottom: 356 x 112 */
+enum { PANEL_PAD_X = 16, PANEL_PAD_Y = 8 };
+enum { PANEL_X = 914, PANEL_Y = 100, PANEL_W = 356, PANEL_H = 112, PANEL_BG = 24, PANEL_FG = 235, PANEL_RADIUS = 12 };
 
 static struct {
     int ok, have;
@@ -537,7 +539,8 @@ static void panel_compose(void)
     int v, w;
     double x;
     memset(g_panel.draw, PANEL_BG, sizeof(g_panel.draw));
-    const int L = PANEL_W - 10, M = PANEL_W / 2, R = 10, top[4] = {2, 26, 50, 74};   /* 20 px font, 24 px lines */
+    const int L = PANEL_W - PANEL_PAD_X, M = PANEL_W / 2, R = PANEL_PAD_X;
+    const int top[4] = {PANEL_PAD_Y, PANEL_PAD_Y + 24, PANEL_PAD_Y + 48, PANEL_PAD_Y + 72};   /* 24 px lines */   /* 20 px font, 24 px lines */
     /* 1: trip start, duration, distance (cluster) */
     if (strstr(kombi, "start=") && sscanf(strstr(kombi, "start=") + 6, "%d:%d", &v, &w) == 2 && v >= 0)
         snprintf(a, sizeof(a), "%d:%02d", v, w);
