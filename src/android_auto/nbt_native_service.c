@@ -571,7 +571,7 @@ int main(int argc, char** argv)
         int n = 0;
         const int gsplit = right;
         const int want60 = access("decoder.60fps", F_OK) == 0;
-        /* decoder.720 (full screen, test 2026-11-22): the phone draws a 1280x720 canvas with its interface in the top
+        /* decoder.720 (full screen, default since 2026-11-23: nbt-aa-boot.sh writes it unless $P/decoder.800): the phone draws a 1280x720 canvas with its interface in the top
          * 480 rows (inset 0,240,0,0, as NBT-AAD's own default for this panel) and nbt_decoder shows those rows 1:1:
          * sharp, instead of 800x480 stretched 1.6x horizontally. 2.4x the pixels to decode on the CPU. */
         const int sharp = !gsplit && access("decoder.720", F_OK) == 0;

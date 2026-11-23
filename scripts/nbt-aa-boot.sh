@@ -43,7 +43,7 @@ if test -f $P/nbt_decoder -a ! -e $P/decoder.off; then
   test -e $P/decoder.30fps || touch $R/decoder.60fps
   test -f $P/decoder.args && cp $P/decoder.args $R/decoder.args
   test -f $P/decoder.stale && cp $P/decoder.stale $R/decoder.stale
-  test -e $P/decoder.720 && touch $R/decoder.720       # full screen 1280x720, top 480 rows 1:1 (test)
+  test -e $P/decoder.800 || touch $R/decoder.720       # full screen 1280x720, top 480 rows 1:1 (default; touch $P/decoder.800 = 800x480 stretched)
   test -e $P/decoder.hw && touch $R/decoder.hw         # the car's hardware H.264 decoder (test)
   test -f $P/decoder.delay && cp $P/decoder.delay $R/decoder.delay   # seconds after "MARKER HMIReady" at boot (default 2)
   echo "video: nbt_decoder (`test -e $R/decoder.60fps && echo 60 || echo 30` fps)"
