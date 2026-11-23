@@ -76,7 +76,9 @@ Over SSH the library path lacks `/lib` (`libusbdi.so.2`): run it with `LD_LIBRAR
   DigestInfo around the 20-byte challenge.
 - `lockdown`, first try: the configuration was selected, but transfers on the multiplexor's pipes failed with ENOENT
   (opened through interface 0's attachment). The iPhone asked "Trust this computer?" afterwards (accepted). Now the
-  pipes go through the multiplexor interface's own attachment.
+  pipes go through the multiplexor interface's own attachment. Second try: the interface's attachment works (on the
+  run after the configuration was selected: QNX reports its interfaces only then), but `usbd_io` without a callback
+  only queues a bulk transfer (result 0, 0 bytes, status 0); transfers now wait for their completion callback.
 - Next: `nbt_carplay_probe lockdown`: select the CarPlay configuration, open the multiplexor (bulk 04 / 85), version 2
   handshake, a TCP connection to lockdown (62078) and a few questions that need no pairing.
 

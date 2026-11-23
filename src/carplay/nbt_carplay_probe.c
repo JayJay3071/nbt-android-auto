@@ -514,6 +514,64 @@ static void put32(unsigned char* p, unsigned v)
 static unsigned get16(const unsigned char* p) { return (unsigned)p[0] << 8 | p[1]; }
 static unsigned get32(const unsigned char* p) { return (unsigned)p[0] << 24 | (unsigned)p[1] << 16 | (unsigned)p[2] << 8 | p[3]; }
 
+/* one bulk transfer, waited for: usbd_io queues it and returns at once (car 2026-11-23: a send "succeeded" with 0
+ * bytes, status 0); the completion callback says when it is done. Returns usbd_io's result or ETIMEDOUT. */
+struct xfer_done {
+    pthread_mutex_t m;
+    pthread_cond_t c;
+    int done;
+    _Uint32t status, actual;
+};
+static void xfer_cb(struct usbd_urb* urb, struct usbd_pipe* pipe, void* arg)
+{
+    struct xfer_done* x = (struct xfer_done*)arg;
+    (void)pipe;
+    pthread_mutex_lock(&x->m);
+    usbd_urb_status(urb, &x->status, &x->actual);
+    x->done = 1;
+    pthread_cond_signal(&x->c);
+    pthread_mutex_unlock(&x->m);
+}
+static int xfer_wait(struct xfer_done* x, unsigned ms)
+{
+    struct timespec t;
+    int r = 0, done;
+    clock_gettime(CLOCK_REALTIME, &t);
+    t.tv_sec += ms / 1000;
+    t.tv_nsec += (long)(ms % 1000) * 1000000L;
+    if (t.tv_nsec >= 1000000000L) {
+        t.tv_sec++;
+        t.tv_nsec -= 1000000000L;
+    }
+    pthread_mutex_lock(&x->m);
+    while (!x->done && (r == 0 || r == EINTR))
+        r = pthread_cond_timedwait(&x->c, &x->m, &t);
+    done = x->done;
+    pthread_mutex_unlock(&x->m);
+    return done;
+}
+static int bulk(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigned char* buf, unsigned n, int in, unsigned ms,
+                _Uint32t* status, _Uint32t* actual)
+{
+    static struct xfer_done x = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, 0, 0, 0};
+    int rc;
+    x.done = 0;
+    x.status = x.actual = 0;
+    usbd_setup_bulk(urb, in ? URB_DIR_IN | URB_SHORT_XFER_OK : URB_DIR_OUT, buf, n);
+    rc = usbd_io(urb, pipe, xfer_cb, &x, ms);
+    if (rc == EOK && !xfer_wait(&x, ms + 1000)) {
+        usbd_abort_pipe(pipe);
+        if (!xfer_wait(&x, 1000)) {   /* the stack still owns the buffer: do not touch it again */
+            say("usb: a transfer did not end after its abort; stopping");
+            _exit(3);
+        }
+        rc = ETIMEDOUT;
+    }
+    *status = x.status;
+    *actual = x.actual;
+    return rc;
+}
+
 static int mux_send_raw(const unsigned char* data, unsigned n)
 {
     _Uint32t status = 0, actual = 0;
@@ -521,9 +579,7 @@ static int mux_send_raw(const unsigned char* data, unsigned n)
     if (n > 16384)
         return -1;
     memcpy(g_mux.bout, data, n);
-    usbd_setup_bulk(g_mux.uout, URB_DIR_OUT, g_mux.bout, n);
-    rc = usbd_io(g_mux.uout, g_mux.out, 0, 0, 2000);
-    usbd_urb_status(g_mux.uout, &status, &actual);
+    rc = bulk(g_mux.uout, g_mux.out, g_mux.bout, n, 0, 2000, &status, &actual);
     if (rc != EOK || actual != n) {
         say("mux: send of %u bytes failed: result %d, status %08x, %u sent", n, rc, (unsigned)status, (unsigned)actual);
         return -1;
@@ -575,11 +631,11 @@ static int mux_frame(unsigned char* f, unsigned* n, unsigned ms)
         if (now >= until)
             return 0;
         _Uint32t status = 0, actual = 0;
-        usbd_setup_bulk(g_mux.uin, URB_DIR_IN | URB_SHORT_XFER_OK, g_mux.bin, 16384);
-        const int rc = usbd_io(g_mux.uin, g_mux.in, 0, 0, (unsigned)(until - now < 200 ? 200 : until - now));
-        usbd_urb_status(g_mux.uin, &status, &actual);
-        if (rc != EOK && actual == 0) {
-            if (rc == ETIMEDOUT)
+        const unsigned left = (unsigned)(until - now);
+        const int rc = bulk(g_mux.uin, g_mux.in, g_mux.bin, 16384, 1, left < 200 ? 200 : left > 1000 ? 1000 : left,
+                            &status, &actual);
+        if (actual == 0) {
+            if (rc == ETIMEDOUT || rc == EOK)   /* nothing within the time (a timed-out transfer ends with a status) */
                 continue;
             say("mux: read failed: result %d, status %08x", rc, (unsigned)status);
             return -1;
