@@ -841,8 +841,18 @@ void navLongIfNeeded() {
     pthread_mutex_unlock(&g_backMx);
     if (!go) return;
     const char* const off = "/fs/ram3/nbt-aa-panel-off";
-    if (unlink(off) == 0) printf("[Knob] long NAV: trip computer box on\n");
-    else {
+    // paged box (user 2026-11-23, decoder.panelpages): page 1, page 2, off; /fs/ram3/nbt-aa-panel-page2 = page 2
+    const char* const page2 = "/fs/ram3/nbt-aa-panel-page2";
+    const bool paged = access("/var/opt/hmi/data/rw/NbtAndroidAutoRT/decoder.panelpages", F_OK) == 0;
+    if (access(off, F_OK) == 0) {
+        unlink(page2);                                          // back on, on the first page
+        unlink(off);
+        printf("[Knob] long NAV: trip computer box on\n");
+    } else if (paged && access(page2, F_OK) != 0) {
+        const int fd = open(page2, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd >= 0) close(fd);
+        printf("[Knob] long NAV: trip computer box, page 2\n");
+    } else {
         const int fd = open(off, O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (fd >= 0) close(fd);
         printf("[Knob] long NAV: trip computer box off\n");

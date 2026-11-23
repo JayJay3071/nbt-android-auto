@@ -446,11 +446,19 @@ static void car_present(const struct picture* p)
 enum { PANEL_PAD_X = 12, PANEL_PAD_Y = 8 };
 enum { PANEL_LINE = PANEL_FONT_HEIGHT + 4 };   /* line pitch: 31 px at 22 px */
 enum { PANEL_X = 875, PANEL_Y = 96, PANEL_W = 384, PANEL_H = 2 * 8 + 4 * PANEL_LINE + PANEL_FONT_HEIGHT, PANEL_BG = 24, PANEL_FG = 235, PANEL_RADIUS = 16 };
+/* paged box (user 2026-11-23, decoder.panelpages in RT_DIR, read when the session starts): a third narrower (256 px,
+ * the right edge where the full box's is, so x 1003), two pages of a title and four lines ("Trip": start, duration,
+ * distance, average consumption, average speed; "Car": range, tank, instantaneous consumption, temperatures, battery),
+ * two dots under the lines, the current page's bigger and brighter. Long NAV (nbt_knob) cycles page 1, page 2, off;
+ * /fs/ram3/nbt-aa-panel-page2 = the second page. The short-term average speed is at the end of the title on both. */
+#define PANEL_PAGE2_FILE "/fs/ram3/nbt-aa-panel-page2"
+enum { PANEL_PAGED_W = 256, PANEL_DOTS = 12, PANEL_PAGED_H = PANEL_H + PANEL_DOTS, PANEL_H_MAX = PANEL_PAGED_H };
 
 static struct {
     int ok, have;
     volatile int shown;
-    uint8_t draw[PANEL_W * PANEL_H];   /* coverage over PANEL_BG */
+    int w, h, paged, page;                 /* size (PANEL_W x PANEL_H, or paged), page 1 or 2 */
+    uint8_t draw[PANEL_W * PANEL_H_MAX];   /* coverage over PANEL_BG, rows of w */
     long long text_at;
 } g_panel;
 
@@ -490,14 +498,14 @@ static void panel_text_at(const char* t, int x, int top, int align)
         const int gw = panel_glyphs[g].width, gx = x + panel_glyphs[g].left;
         for (int row = 0; row < PANEL_FONT_HEIGHT; ++row) {
             const int y = top + row;
-            if (y < 0 || y >= PANEL_H)
+            if (y < 0 || y >= g_panel.h)
                 continue;
             for (int col = 0; col < gw; ++col) {
                 const int px = gx + col;
                 const unsigned a = bits[row * gw + col];
-                if (px < 0 || px >= PANEL_W || !a)
+                if (px < 0 || px >= g_panel.w || !a)
                     continue;
-                uint8_t* d = &g_panel.draw[y * PANEL_W + px];
+                uint8_t* d = &g_panel.draw[y * g_panel.w + px];
                 const unsigned v = PANEL_BG + (PANEL_FG - PANEL_BG) * a / 255;
                 if (v > *d)
                     *d = (uint8_t)v;
@@ -548,6 +556,46 @@ static int cds_value(const char* text, const char* name, const char* key, double
     return 0;
 }
 
+/* a filled circle (4 x 4 samples per pixel) in the drawing, level = brightness in percent of the text's */
+static void panel_dot(double cx, double cy, double r, int level)
+{
+    for (int y = (int)(cy - r) - 1; y <= (int)(cy + r) + 1; ++y)
+        for (int x = (int)(cx - r) - 1; x <= (int)(cx + r) + 1; ++x) {
+            if (y < 0 || y >= g_panel.h || x < 0 || x >= g_panel.w)
+                continue;
+            int in = 0;
+            for (int sy = 0; sy < 4; ++sy)
+                for (int sx = 0; sx < 4; ++sx) {
+                    const double dx = x + (sx + 0.5) / 4 - cx, dy = y + (sy + 0.5) / 4 - cy;
+                    in += dx * dx + dy * dy <= r * r;
+                }
+            const unsigned v = PANEL_BG + (PANEL_FG - PANEL_BG) * level / 100 * in / 16;
+            uint8_t* d = &g_panel.draw[y * g_panel.w + x];
+            if (v > *d)
+                *d = (uint8_t)v;
+        }
+}
+
+/* paged box: the page's four lines (two values: one left, one right) and the two dots under them.
+ * v = start, duration, distance, average consumption, average speed, range, tank, instantaneous consumption, outside,
+ * coolant, oil, battery */
+static void panel_pages(char v[12][40], const int top[4], int L, int R)
+{
+    static const signed char page[2][4][2] = {
+        {{0, 1}, {2, -1}, {3, -1}, {4, -1}},    /* Trip */
+        {{5, 6}, {7, -1}, {8, 11}, {9, 10}},    /* Car */
+    };
+    const int p = g_panel.page == 2;
+    for (int line = 0; line < 4; ++line) {
+        panel_text_at(v[(int)page[p][line][0]], R, top[line], 0);
+        if (page[p][line][1] >= 0)
+            panel_text_at(v[(int)page[p][line][1]], L, top[line], 2);
+    }
+    const double y = PANEL_H, mid = g_panel.w / 2.0;
+    panel_dot(mid - 8, y, p ? 2.5 : 4, p ? 60 : 100);
+    panel_dot(mid + 8, y, p ? 4 : 2.5, p ? 100 : 60);
+}
+
 static void panel_compose(void)
 {
     char kombi[256], cds[1200];
@@ -556,10 +604,12 @@ static void panel_compose(void)
     if (!have_kombi && !have_cds)
         return;
     char a[40], b[40], c[40];
+    char pg[12][40];   /* paged box: the values, in the order they appear on the pages */
+    const int paged = g_panel.paged;
     int v, w;
     double x;
     memset(g_panel.draw, PANEL_BG, sizeof(g_panel.draw));
-    const int L = PANEL_W - PANEL_PAD_X, M = PANEL_W / 2, R = PANEL_PAD_X;
+    const int L = g_panel.w - PANEL_PAD_X, M = g_panel.w / 2, R = PANEL_PAD_X;
     /* title line (user 2026-11-23): "Trip computer" and a rule from after it to the right padding, 2 px, at the height
      * of the lower-case letters' middle, a little dimmer than the text; the four value lines below it */
     {
@@ -593,7 +643,7 @@ static void panel_compose(void)
             } else
                 started[0] = 0;
         }
-        static const char title[] = "Trip computer";
+        const char* const title = !paged ? "Trip computer" : g_panel.page == 2 ? "Car" : "Trip";
         panel_text_at(title, R, PANEL_PAD_Y, 0);
         if (avg[0])
             panel_text_at(avg, L, PANEL_PAD_Y, 2);
@@ -601,7 +651,7 @@ static void panel_compose(void)
         const int x1 = avg[0] ? L - panel_width(avg) - 10 : L;
         for (int row = y; row < y + 2; ++row)
             for (int col = x0; col < x1; ++col)
-                g_panel.draw[row * PANEL_W + col] = (uint8_t)(PANEL_BG + (PANEL_FG - PANEL_BG) * 6 / 10);
+                g_panel.draw[row * g_panel.w + col] = (uint8_t)(PANEL_BG + (PANEL_FG - PANEL_BG) * 6 / 10);
     }
     const int top[4] = {PANEL_PAD_Y + PANEL_LINE, PANEL_PAD_Y + 2 * PANEL_LINE, PANEL_PAD_Y + 3 * PANEL_LINE,
                         PANEL_PAD_Y + 4 * PANEL_LINE};
@@ -622,9 +672,15 @@ static void panel_compose(void)
         snprintf(c, sizeof(c), I_ROAD "%d km", v);
     else
         strcpy(c, I_ROAD "-- km");
-    panel_text_at(a, R, top[0], 0);
-    panel_text_at(b, M, top[0], 1);
-    panel_text_at(c, L, top[0], 2);
+    if (paged) {
+        strcpy(pg[0], a);
+        strcpy(pg[1], b);
+        strcpy(pg[2], c);
+    } else {
+        panel_text_at(a, R, top[0], 0);
+        panel_text_at(b, M, top[0], 1);
+        panel_text_at(c, L, top[0], 2);
+    }
     /* 2: average consumption and speed (cluster, x0.1; CDS averageConsumption2 / averageSpeed2 otherwise) */
     if (kombi_value(kombi, "cons", &v) && v < 4095)
         snprintf(a, sizeof(a), I_PUMP "%d.%d L/100km", v / 10, v % 10);
@@ -638,8 +694,13 @@ static void panel_compose(void)
         snprintf(b, sizeof(b), I_GAUGE "%.1f km/h", x);
     else
         strcpy(b, I_GAUGE "-- km/h");
-    panel_text_at(a, R, top[1], 0);
-    panel_text_at(b, L, top[1], 2);
+    if (paged) {
+        strcpy(pg[3], a);
+        strcpy(pg[4], b);
+    } else {
+        panel_text_at(a, R, top[1], 0);
+        panel_text_at(b, L, top[1], 2);
+    }
     /* 3: range, tank, instantaneous consumption. CDS engine.consumption is a counter, not a rate (car 2026-11-23: it
      * rises with the engine idling and wraps at 65536). Its unit is a guess: microlitres of fuel per count
      * (decoder.fuelscale: microlitres per count x 1000, default 1000), so L/h = counts per second x 0.0036. The rate is
@@ -686,15 +747,21 @@ static void panel_compose(void)
             }
         }
     }
-    /* "833 km  52 L  8.8 L/100km" does not fit at 380 px: the instantaneous consumption reads "L/100" then */
-    if (R + panel_width(a) + 16 + panel_width(b) + 12 > L - panel_width(c)) {
-        char* km = strstr(c, "L/100km");
-        if (km)
-            km[5] = 0;
+    if (paged) {
+        strcpy(pg[5], a);
+        strcpy(pg[6], b);
+        strcpy(pg[7], c);
+    } else {
+        /* "833 km  52 L  8.8 L/100km" does not fit at 380 px: the instantaneous consumption reads "L/100" then */
+        if (R + panel_width(a) + 16 + panel_width(b) + 12 > L - panel_width(c)) {
+            char* km = strstr(c, "L/100km");
+            if (km)
+                km[5] = 0;
+        }
+        panel_text_at(a, R, top[2], 0);
+        panel_text_at(b, R + panel_width(a) + 16, top[2], 0);   /* tank right after range */
+        panel_text_at(c, L, top[2], 2);
     }
-    panel_text_at(a, R, top[2], 0);
-    panel_text_at(b, R + panel_width(a) + 16, top[2], 0);   /* tank right after range */
-    panel_text_at(c, L, top[2], 2);
     /* 4: outside, coolant, oil temperature, starter battery charge (CDS sensors.battery {"battery":N}, percent as
      * BimmerGestalt's apps read it, "ACC battery"; 255 = not known). Four items spread evenly over the line. */
     char d[40];
@@ -717,6 +784,15 @@ static void panel_compose(void)
         snprintf(d, sizeof(d), I_BATTERY "%.0f%%", x);
     else
         strcpy(d, I_BATTERY "--%");
+    if (paged) {
+        strcpy(pg[8], a);
+        strcpy(pg[9], b);
+        strcpy(pg[10], c);
+        strcpy(pg[11], d);
+        panel_pages(pg, top, L, R);
+        g_panel.have = 1;
+        return;
+    }
     const char* items[4] = {a, b, c, d};
     int total = 0;
     for (int i = 0; i < 4; ++i)
@@ -810,7 +886,11 @@ static int spr_open(void)
         return -1;
     }
     g_spr.window = (unsigned long)read_number(RT_DIR "/decoder.panelwin", 1024);
-    g_spr.x = read_number(RT_DIR "/decoder.panelx", PANEL_X);
+    g_panel.paged = access(RT_DIR "/decoder.panelpages", F_OK) == 0;
+    g_panel.w = g_panel.paged ? PANEL_PAGED_W : PANEL_W;
+    g_panel.h = g_panel.paged ? PANEL_PAGED_H : PANEL_H;
+    g_panel.page = g_panel.paged && access(PANEL_PAGE2_FILE, F_OK) == 0 ? 2 : 1;
+    g_spr.x = read_number(RT_DIR "/decoder.panelx", PANEL_X + PANEL_W - g_panel.w);
     g_spr.y = read_number(RT_DIR "/decoder.panely", PANEL_Y);
     g_spr_flip = (int)read_number(RT_DIR "/decoder.panelflip", 1);
     {
@@ -833,14 +913,14 @@ static int spr_open(void)
         return -1;
     }
     g_panel.ok = 1;
-    say("panel: sprite 0x%x, %dx%d, window %lu at %ld,%ld, background %02x%02x%02x%02x", SPRITE_ID, PANEL_W, PANEL_H,
-        g_spr.window, g_spr.x, g_spr.y, g_bg_r, g_bg_g, g_bg_b, g_bg_a);
+    say("panel: sprite 0x%x, %dx%d%s, window %lu at %ld,%ld, background %02x%02x%02x%02x", SPRITE_ID, g_panel.w,
+        g_panel.h, g_panel.paged ? " (pages)" : "", g_spr.window, g_spr.x, g_spr.y, g_bg_r, g_bg_g, g_bg_b, g_bg_a);
     return 0;
 }
 
 /* coverage of the box with rounded corners (PANEL_RADIUS), and of the same shape 1 px inside it: the difference is
  * the 1 px outline (user 2026-11-23); 4 x 4 samples per pixel */
-static uint8_t g_corner[PANEL_W * PANEL_H], g_inner[PANEL_W * PANEL_H];
+static uint8_t g_corner[PANEL_W * PANEL_H_MAX], g_inner[PANEL_W * PANEL_H_MAX];
 static int shape_samples(int col, int row, double inset)
 {
     int in = 0;
@@ -848,20 +928,21 @@ static int shape_samples(int col, int row, double inset)
     for (int sy = 0; sy < 4; ++sy)
         for (int sx = 0; sx < 4; ++sx) {
             const double x = col + (sx + 0.5) / 4, y = row + (sy + 0.5) / 4;
-            if (x < inset || y < inset || x > PANEL_W - inset || y > PANEL_H - inset)
+            const int W = g_panel.w, H = g_panel.h;
+            if (x < inset || y < inset || x > W - inset || y > H - inset)
                 continue;
-            const double cx = x < PANEL_RADIUS ? PANEL_RADIUS : x > PANEL_W - PANEL_RADIUS ? PANEL_W - PANEL_RADIUS : x;
-            const double cy = y < PANEL_RADIUS ? PANEL_RADIUS : y > PANEL_H - PANEL_RADIUS ? PANEL_H - PANEL_RADIUS : y;
+            const double cx = x < PANEL_RADIUS ? PANEL_RADIUS : x > W - PANEL_RADIUS ? W - PANEL_RADIUS : x;
+            const double cy = y < PANEL_RADIUS ? PANEL_RADIUS : y > H - PANEL_RADIUS ? H - PANEL_RADIUS : y;
             in += (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r;
         }
     return in;
 }
 static void corner_mask(void)
 {
-    for (int row = 0; row < PANEL_H; ++row)
-        for (int col = 0; col < PANEL_W; ++col) {
-            g_corner[row * PANEL_W + col] = (uint8_t)(shape_samples(col, row, 0) * 255 / 16);
-            g_inner[row * PANEL_W + col] = (uint8_t)(shape_samples(col, row, 1) * 255 / 16);
+    for (int row = 0; row < g_panel.h; ++row)
+        for (int col = 0; col < g_panel.w; ++col) {
+            g_corner[row * g_panel.w + col] = (uint8_t)(shape_samples(col, row, 0) * 255 / 16);
+            g_inner[row * g_panel.w + col] = (uint8_t)(shape_samples(col, row, 1) * 255 / 16);
         }
 }
 
@@ -879,9 +960,10 @@ static void spr_rgba(uint8_t* out)
     const double bg[3] = {g_bg_r, g_bg_g, g_bg_b}, bga = g_bg_a / 255.0;
     const double ol[3] = {bg[0] + (fg - bg[0]) / 4, bg[1] + (fg - bg[1]) / 4, bg[2] + (fg - bg[2]) / 4};
     const double ola = (1 + bga) / 2;
-    for (int i = 0; i < PANEL_W * PANEL_H; ++i) {
-        const int row = i / PANEL_W, col = i % PANEL_W;
-        const int src = ((g_spr_flip & 1) ? PANEL_H - 1 - row : row) * PANEL_W + ((g_spr_flip & 2) ? PANEL_W - 1 - col : col);
+    const int W = g_panel.w, H = g_panel.h;
+    for (int i = 0; i < W * H; ++i) {
+        const int row = i / W, col = i % W;
+        const int src = ((g_spr_flip & 1) ? H - 1 - row : row) * W + ((g_spr_flip & 2) ? W - 1 - col : col);
         const int d = g_panel.draw[src] - PANEL_BG;
         const double t = d <= 0 ? 0 : d >= PANEL_FG - PANEL_BG ? 1 : (double)d / (PANEL_FG - PANEL_BG);
         const double outer = g_corner[src] / 255.0, inner = g_inner[src] / 255.0;
@@ -908,7 +990,7 @@ static void spr_rgba(uint8_t* out)
 /* upload the box if its picture changed (at most once a second); the first upload also places it */
 static void spr_update(void)
 {
-    static uint8_t rgba[PANEL_W * PANEL_H * 4], last[PANEL_W * PANEL_H * 4];
+    static uint8_t rgba[PANEL_W * PANEL_H_MAX * 4], last[PANEL_W * PANEL_H_MAX * 4];
     const long long now = now_ms();
     if (!g_panel.have || now < g_spr.upload_at)
         return;
@@ -919,11 +1001,11 @@ static void spr_update(void)
     g_spr.upload_at = now + 1000;
     const long long t0 = now_ms();
     g_spr.busy_since = t0;
-    g_spr.create(g_spr.app, SPRITE_ID, rgba, PANEL_W, PANEL_H);
+    g_spr.create(g_spr.app, SPRITE_ID, rgba, g_panel.w, g_panel.h);
     if (!g_spr.created) {
         g_spr.assign(g_spr.app, SPRITE_ID, g_spr.window);
         g_spr.pos(g_spr.app, SPRITE_ID, g_spr.x, g_spr.y);
-        g_spr.size(g_spr.app, SPRITE_ID, PANEL_W, PANEL_H);
+        g_spr.size(g_spr.app, SPRITE_ID, g_panel.w, g_panel.h);
         g_spr.visible(g_spr.app, SPRITE_ID, 0);
         g_spr.created = 1;
     }
@@ -1041,6 +1123,15 @@ static void panel_policy(int force)
     /* drawn every second (the short-term average speed integrates there), uploaded to the window server only while
      * the box is to be shown: a hidden box causes no WAL traffic */
     const int want = g_win.shown == 1 && access(PANEL_OFF_FILE, F_OK) != 0;
+    if (g_panel.paged) {   /* another page (long NAV): drawn and uploaded at once */
+        const int page = access(PANEL_PAGE2_FILE, F_OK) == 0 ? 2 : 1;
+        if (page != g_panel.page) {
+            g_panel.page = page;
+            g_panel.text_at = 0;
+            g_spr.upload_at = 0;
+            say("panel: page %d", page);
+        }
+    }
     if (now >= g_panel.text_at) {
         g_panel.text_at = now + 1000;
         panel_compose();
@@ -1689,6 +1780,7 @@ static int run(void)
         /* the trip computer box at the start of a session (user 2026-11-23): shown only with "Trip computer: on" in
          * iDrive's Android Auto page (panel-at-start in the package, default off); long NAV still toggles it */
         if (!g_opt.bench) {
+            unlink(PANEL_PAGE2_FILE);   /* the paged box starts on its first page */
             if (access(RT_DIR "/panel-at-start", F_OK) == 0)
                 unlink(PANEL_OFF_FILE);
             else {
