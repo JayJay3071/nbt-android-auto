@@ -58,6 +58,20 @@ Over SSH the library path lacks `/lib` (`libusbdi.so.2`): run it with `LD_LIBRAR
   it reports. Changes nothing. If every interface is held by another driver, the stock iPod stack has it.
 - `nbt_carplay_probe usb carplay`: the same, then sends the vendor request of step 1 and prints what the iPhone
   offers after re-connecting. Unplugging the iPhone brings it back to normal.
+- `nbt_carplay_probe lockdown`: the CarPlay configuration (asked for if needed), the USB multiplexor in it, a TCP
+  connection to lockdown and QueryType / GetValue (DeviceName, ProductVersion, ProductType). No pairing, no prompt.
+
+## Car results (2026-11-23)
+
+- `acp`: the chip answers when its register number is written first and the read follows after a pause (an immediate
+  read gives Input/output error). Certificate 908 bytes (PKCS#7 around an X.509 certificate); a test signature took
+  about 1.5 s, 128 bytes (RSA-1024).
+- `usb`: the iPhone 15 Pro Max (05ac:12a8, USB 2.10) offers 4 configurations: PTP; "iPod USB Interface" (audio + HID);
+  PTP + multiplexor; PTP + multiplexor + Apple USB Ethernet. Nothing else held it (the attach worked).
+- `usb carplay`: after the vendor request it re-connects within 1 s with 6: also "PTP + Apple Mobile Device + NCM" (5)
+  and "PTP + Apple Mobile Device + Apple USB Ethernet + NCM" (6): the CarPlay configurations, as on LIVI.
+- Next: `nbt_carplay_probe lockdown`: select the CarPlay configuration, open the multiplexor (bulk 04 / 85), version 2
+  handshake, a TCP connection to lockdown (62078) and a few questions that need no pairing.
 
 ## Plan
 

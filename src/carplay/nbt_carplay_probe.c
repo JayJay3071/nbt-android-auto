@@ -7,6 +7,8 @@
  *   nbt_carplay_probe usb           wait for an iPhone, print what it offers over USB (changes nothing)
  *   nbt_carplay_probe usb carplay   the same, then ask the iPhone for its CarPlay USB configuration and print what
  *                                   it offers after that (the iPhone re-connects; unplug it to undo)
+ *   nbt_carplay_probe lockdown      CarPlay configuration, the USB multiplexor in it, a connection to the iPhone's
+ *                                   lockdown service and a few questions that need no pairing (no "Trust" prompt)
  *
  * The chip: I2C bus 0, dev-i2c node /dev/i2c/i2c_0/acp (/opt/sys/etc/i2c-conf_x86.cfg). A plain read from a fresh
  * open returns the registers from 0 (car 2026-11-23, dd). How this driver addresses other registers is not known, so
@@ -479,6 +481,416 @@ static int run_usb(int carplay)
     return 0;
 }
 
+/* ---- lockdown over the USB multiplexor (usbmux version 2, as LIVI / xcertplay) ----
+ * Car 2026-11-23: after the vendor request the iPhone 15 Pro Max offers 6 configurations; 5 and 6 have the multiplexor
+ * (ff/fe/02, bulk 04 out / 85 in) and NCM; 6 also Apple USB Ethernet. Frames: big-endian {protocol, length (whole
+ * frame), magic 0xfeedface, our sequence (16 bit), the last sequence received (16 bit)}, then the payload. Start:
+ * {0, 20, 2, 0, 0} raw (version 2), the iPhone answers the same; then a "setup" frame (protocol 2, one byte 7).
+ * Protocol 6 carries a small TCP: a 20-byte header {source port, destination port, seq, ack, 0x50, flags, window 512,
+ * 0, 0}; lockdown listens on 62078. Lockdown messages: a 4-byte big-endian length, then an XML plist. */
+
+enum { MUX_TCP = 6, TCP_FIN = 0x01, TCP_SYN = 0x02, TCP_RST = 0x04, TCP_ACK = 0x10, LOCKDOWN_PORT = 62078 };
+
+static struct {
+    struct usbd_pipe *in, *out;
+    struct usbd_urb *uin, *uout;
+    unsigned char *bin, *bout;
+    unsigned char rx[70000];
+    unsigned rxn;
+    unsigned seq, ack;                       /* multiplexor frame counters */
+    unsigned tseq, tack, sport, connected;   /* the TCP connection */
+    unsigned char data[16384];               /* TCP payload received, not yet taken */
+    unsigned datan;
+} g_mux;
+
+static void put16(unsigned char* p, unsigned v) { p[0] = (unsigned char)(v >> 8); p[1] = (unsigned char)v; }
+static void put32(unsigned char* p, unsigned v)
+{
+    p[0] = (unsigned char)(v >> 24);
+    p[1] = (unsigned char)(v >> 16);
+    p[2] = (unsigned char)(v >> 8);
+    p[3] = (unsigned char)v;
+}
+static unsigned get16(const unsigned char* p) { return (unsigned)p[0] << 8 | p[1]; }
+static unsigned get32(const unsigned char* p) { return (unsigned)p[0] << 24 | (unsigned)p[1] << 16 | (unsigned)p[2] << 8 | p[3]; }
+
+static int mux_send_raw(const unsigned char* data, unsigned n)
+{
+    _Uint32t status = 0, actual = 0;
+    int rc;
+    if (n > 16384)
+        return -1;
+    memcpy(g_mux.bout, data, n);
+    usbd_setup_bulk(g_mux.uout, URB_DIR_OUT, g_mux.bout, n);
+    rc = usbd_io(g_mux.uout, g_mux.out, 0, 0, 2000);
+    usbd_urb_status(g_mux.uout, &status, &actual);
+    if (rc != EOK || actual != n) {
+        say("mux: send of %u bytes failed: result %d, status %08x, %u sent", n, rc, (unsigned)status, (unsigned)actual);
+        return -1;
+    }
+    return 0;
+}
+
+static int mux_send(unsigned protocol, const unsigned char* payload, unsigned n)
+{
+    static unsigned char f[16 + 16384];
+    if (n > 16384 - 16)
+        return -1;
+    put32(f, protocol);
+    put32(f + 4, 16 + n);
+    put32(f + 8, 0xfeedfaceu);
+    put16(f + 12, g_mux.seq);
+    put16(f + 14, g_mux.ack);
+    memcpy(f + 16, payload, n);
+    g_mux.seq = (g_mux.seq + 1) & 0xffff;
+    return mux_send_raw(f, 16 + n);
+}
+
+/* one whole frame into f (its length in *n), waiting up to ms; 1 = got one, 0 = timeout, -1 = error */
+static int mux_frame(unsigned char* f, unsigned* n, unsigned ms)
+{
+    long long until = 0;
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    until = ts.tv_sec * 1000LL + ts.tv_nsec / 1000000 + ms;
+    for (;;) {
+        if (g_mux.rxn >= 8) {
+            const unsigned len = get32(g_mux.rx + 4);
+            if (len < 8 || len > sizeof(g_mux.rx)) {
+                say("mux: bad frame length %u", len);
+                return -1;
+            }
+            if (g_mux.rxn >= len) {
+                memcpy(f, g_mux.rx, len);
+                *n = len;
+                memmove(g_mux.rx, g_mux.rx + len, g_mux.rxn - len);
+                g_mux.rxn -= len;
+                if (len >= 16)
+                    g_mux.ack = get16(f + 12);
+                return 1;
+            }
+        }
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        const long long now = ts.tv_sec * 1000LL + ts.tv_nsec / 1000000;
+        if (now >= until)
+            return 0;
+        _Uint32t status = 0, actual = 0;
+        usbd_setup_bulk(g_mux.uin, URB_DIR_IN | URB_SHORT_XFER_OK, g_mux.bin, 16384);
+        const int rc = usbd_io(g_mux.uin, g_mux.in, 0, 0, (unsigned)(until - now < 200 ? 200 : until - now));
+        usbd_urb_status(g_mux.uin, &status, &actual);
+        if (rc != EOK && actual == 0) {
+            if (rc == ETIMEDOUT)
+                continue;
+            say("mux: read failed: result %d, status %08x", rc, (unsigned)status);
+            return -1;
+        }
+        if (actual > sizeof(g_mux.rx) - g_mux.rxn)
+            return -1;
+        memcpy(g_mux.rx + g_mux.rxn, g_mux.bin, actual);
+        g_mux.rxn += actual;
+    }
+}
+
+static int tcp_send(unsigned flags, const unsigned char* payload, unsigned n)
+{
+    static unsigned char t[20 + 16000];
+    if (n > 16000)
+        return -1;
+    memset(t, 0, 20);
+    put16(t, g_mux.sport);
+    put16(t + 2, LOCKDOWN_PORT);
+    put32(t + 4, g_mux.tseq);
+    put32(t + 8, g_mux.tack);
+    t[12] = 0x50;
+    t[13] = (unsigned char)flags;
+    put16(t + 14, 512);
+    memcpy(t + 20, payload, n);
+    if (mux_send(MUX_TCP, t, 20 + n))
+        return -1;
+    g_mux.tseq += n;
+    return 0;
+}
+
+/* frames until one TCP segment for us has been handled; 1 = handled, 0 = timeout, -1 = error / reset */
+static int tcp_poll(unsigned ms)
+{
+    static unsigned char f[70000];
+    unsigned n;
+    for (;;) {
+        const int r = mux_frame(f, &n, ms);
+        if (r <= 0)
+            return r;
+        const unsigned proto = get32(f);
+        if (proto != MUX_TCP || n < 16 + 20) {
+            say("mux: frame protocol %u, %u bytes (ignored)", proto, n);
+            continue;
+        }
+        const unsigned char* t = f + 16;
+        const unsigned hl = (t[12] >> 4) * 4, flags = t[13];
+        if (get16(t + 2) != g_mux.sport || hl < 20 || 16 + hl > n)
+            continue;
+        if (flags & TCP_RST) {
+            say("tcp: reset by the iPhone");
+            return -1;
+        }
+        if ((flags & (TCP_SYN | TCP_ACK)) == (TCP_SYN | TCP_ACK)) {
+            g_mux.tseq += 1;
+            g_mux.tack = get32(t + 4) + 1;
+            g_mux.connected = 1;
+            tcp_send(TCP_ACK, 0, 0);
+            return 1;
+        }
+        const unsigned len = n - 16 - hl;
+        if (len) {
+            if (len > sizeof(g_mux.data) - g_mux.datan)
+                return -1;
+            memcpy(g_mux.data + g_mux.datan, t + hl, len);
+            g_mux.datan += len;
+            g_mux.tack += len;
+            tcp_send(TCP_ACK, 0, 0);
+        }
+        if (flags & TCP_FIN) {
+            g_mux.tack += 1;
+            tcp_send(TCP_ACK, 0, 0);
+            say("tcp: closed by the iPhone");
+            return -1;
+        }
+        return 1;
+    }
+}
+
+/* one lockdown request (an XML dictionary body), its answer printed */
+static int lockdown_ask(const char* body)
+{
+    static const char head[] = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD "
+                               "PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist "
+                               "version=\"1.0\">\n<dict>\n<key>Label</key>\n<string>nbt</string>\n";
+    static const char tail[] = "</dict>\n</plist>\n";
+    char msg[2048];
+    const int len = snprintf(msg + 4, sizeof(msg) - 4, "%s%s%s", head, body, tail);
+    unsigned i, want, t;
+    if (len <= 0 || len >= (int)sizeof(msg) - 4)
+        return -1;
+    put32((unsigned char*)msg, (unsigned)len);
+    if (tcp_send(TCP_ACK, (const unsigned char*)msg, 4 + (unsigned)len))
+        return -1;
+    for (t = 0; t < 50; ++t) {
+        if (g_mux.datan >= 4) {
+            want = get32(g_mux.data);
+            if (want > sizeof(g_mux.data) - 4) {
+                say("lockdown: answer of %u bytes is too long", want);
+                return -1;
+            }
+            if (g_mux.datan >= 4 + want)
+                break;
+        }
+        if (tcp_poll(200) < 0)
+            return -1;
+    }
+    if (g_mux.datan < 4 || g_mux.datan < 4 + get32(g_mux.data)) {
+        say("lockdown: no answer");
+        return -1;
+    }
+    want = get32(g_mux.data);
+    printf("      answer: ");
+    for (i = 4; i < 4 + want; ++i) {   /* the XML on one line */
+        const char c = (char)g_mux.data[i];
+        if (c != '\n' && c != '\t' && c != '\r')
+            putchar(c);
+    }
+    putchar('\n');
+    memmove(g_mux.data, g_mux.data + 4 + want, g_mux.datan - 4 - want);
+    g_mux.datan -= 4 + want;
+    return 0;
+}
+
+/* the configuration with the multiplexor and NCM (the highest), and the multiplexor's interface in it */
+static int find_carplay(struct usbd_device* dev, unsigned* cfg_out, unsigned* ifc_out)
+{
+    struct usbd_desc_node* node;
+    unsigned cfg, ifc, found = 0;
+    for (cfg = 1; cfg <= 16; ++cfg) {
+        unsigned mux = 99, ncm = 0;
+        if (!usbd_configuration_descriptor(dev, (unsigned char)cfg, &node))
+            continue;
+        for (ifc = 0; ifc < 16; ++ifc) {
+            usbd_interface_descriptor_t* i =
+                usbd_interface_descriptor(dev, (unsigned char)cfg, (unsigned char)ifc, 0, &node);
+            if (!i)
+                continue;
+            if (i->bInterfaceClass == 0xff && i->bInterfaceSubClass == 0xfe && i->bInterfaceProtocol == 0x02)
+                mux = ifc;
+            if (i->bInterfaceClass == 0x02 && i->bInterfaceSubClass == 0x0d)
+                ncm = 1;
+        }
+        if (mux != 99 && ncm) {
+            *cfg_out = cfg;
+            *ifc_out = mux;
+            found = 1;
+        }
+    }
+    return found ? 0 : -1;
+}
+
+static int open_mux_pipes(struct usbd_device* dev, unsigned cfg, unsigned ifc)
+{
+    struct usbd_desc_node *in_node, *ep_node;
+    usbd_descriptors_t *e, *bin = 0, *bout = 0;
+    int k, rc;
+    if (!usbd_interface_descriptor(dev, (unsigned char)cfg, (unsigned char)ifc, 0, &in_node))
+        return -1;
+    for (k = 0; (e = usbd_parse_descriptors(dev, in_node, USB_DESC_ENDPOINT, k, &ep_node)) != 0; ++k)
+        if ((e->endpoint.bmAttributes & 3) == 2) {
+            if (e->endpoint.bEndpointAddress & 0x80)
+                bin = e;
+            else
+                bout = e;
+        }
+    if (!bin || !bout)
+        return -1;
+    rc = usbd_open_pipe(dev, bin, &g_mux.in);
+    if (rc == EOK)
+        rc = usbd_open_pipe(dev, bout, &g_mux.out);
+    say("mux: pipes %02x in / %02x out: %s", bin->endpoint.bEndpointAddress, bout->endpoint.bEndpointAddress,
+        rc == EOK ? "open" : strerror(rc));
+    return rc == EOK ? 0 : -1;
+}
+
+static int run_lockdown(void)
+{
+    usbd_connect_parm_t parm;
+    usbd_funcs_t funcs;
+    usbd_device_ident_t ident;
+    struct usbd_connection* conn = 0;
+    struct usbd_device *dev, *dev2;
+    usbd_device_instance_t used;
+    struct usbd_desc_node* node;
+    usbd_device_descriptor_t* d;
+    unsigned before, cfg = 0, ifc = 0, i, n;
+    static unsigned char f[70000];
+    int rc;
+    memset(&parm, 0, sizeof(parm));
+    memset(&funcs, 0, sizeof(funcs));
+    ident.vendor = APPLE;
+    ident.device = ident.dclass = ident.subclass = ident.protocol = USBD_CONNECT_WILDCARD;
+    funcs.nentries = _USBDI_NFUNCS;
+    funcs.insertion = inserted;
+    funcs.removal = removed;
+    parm.vusb = USB_VERSION;
+    parm.vusbd = USBD_VERSION;
+    parm.ident = &ident;
+    parm.funcs = &funcs;
+    parm.connect_wait = 1;
+    rc = usbd_connect(&parm, &conn);
+    if (rc != EOK) {
+        say("usb: connect to the USB stack failed: %s", strerror(rc));
+        return 1;
+    }
+    say("usb: waiting up to 60 s for an iPhone (plug it in now if it is not)");
+    if (wait_apple(0, 60) || !(dev = attach_any(conn, 0, &used)))
+        goto fail;
+    d = usbd_device_descriptor(dev, &node);
+    if (find_carplay(dev, &cfg, &ifc)) {   /* not yet: ask for the CarPlay configurations */
+        pthread_mutex_lock(&g_lock);
+        before = g_count;
+        pthread_mutex_unlock(&g_lock);
+        carplay_request(dev);
+        usbd_detach(dev);
+        if (wait_apple(before, 15) || !(dev = attach_any(conn, before, &used)) || find_carplay(dev, &cfg, &ifc)) {
+            say("usb: no CarPlay configuration after the request");
+            goto fail;
+        }
+        d = usbd_device_descriptor(dev, &node);
+    }
+    say("usb: %u configurations; CarPlay configuration %u, multiplexor interface %u", d ? d->bNumConfigurations : 0,
+        cfg, ifc);
+    pthread_mutex_lock(&g_lock);
+    before = g_count;
+    pthread_mutex_unlock(&g_lock);
+    rc = usbd_select_config(dev, (unsigned char)cfg);
+    say("usb: select configuration %u: %s", cfg, rc == EOK ? "OK" : strerror(rc));
+    sleep(1);
+    if (open_mux_pipes(dev, cfg, ifc)) {   /* else through the multiplexor interface's own instance */
+        pthread_mutex_lock(&g_lock);
+        n = g_count;
+        pthread_mutex_unlock(&g_lock);
+        dev2 = 0;
+        for (i = before; i < n && !dev2; ++i) {
+            usbd_device_instance_t inst;
+            pthread_mutex_lock(&g_lock);
+            inst = g_inst[i];
+            pthread_mutex_unlock(&g_lock);
+            if (inst.iface != ifc)
+                continue;
+            rc = usbd_attach(conn, &inst, 0, &dev2);
+            say("usb: attach to interface %u (configuration %u): %s", (unsigned)inst.iface, (unsigned)inst.config,
+                rc == EOK ? "OK" : strerror(rc));
+            if (rc != EOK)
+                dev2 = 0;
+        }
+        if (!dev2 || open_mux_pipes(dev2, cfg, ifc))
+            goto fail;
+    }
+    g_mux.uin = usbd_alloc_urb(0);
+    g_mux.uout = usbd_alloc_urb(0);
+    g_mux.bin = (unsigned char*)usbd_alloc(16384);
+    g_mux.bout = (unsigned char*)usbd_alloc(16384);
+    if (!g_mux.uin || !g_mux.uout || !g_mux.bin || !g_mux.bout)
+        goto fail;
+
+    {   /* version 2 */
+        unsigned char v[20];
+        memset(v, 0, sizeof(v));
+        put32(v + 4, 20);
+        put32(v + 8, 2);
+        if (mux_send_raw(v, 20))
+            goto fail;
+        for (;;) {
+            rc = mux_frame(f, &n, 5000);
+            if (rc <= 0) {
+                say("mux: no version answer");
+                goto fail;
+            }
+            if (get32(f) == 0 && n == 20) {
+                say("mux: version %u accepted", get32(f + 8));
+                break;
+            }
+            say("mux: frame protocol %u, %u bytes before the version answer (ignored)", get32(f), n);
+        }
+        const unsigned char setup = 7;
+        if (mux_send(2, &setup, 1))
+            goto fail;
+    }
+    g_mux.sport = 1 + (unsigned)(time(0) % 1000);
+    g_mux.tseq = g_mux.tack = 0;
+    if (tcp_send(TCP_SYN, 0, 0))
+        goto fail;
+    for (i = 0; i < 25 && !g_mux.connected; ++i)
+        if (tcp_poll(200) < 0)
+            goto fail;
+    if (!g_mux.connected) {
+        say("tcp: no answer from lockdown (port %u)", LOCKDOWN_PORT);
+        goto fail;
+    }
+    say("lockdown: connected");
+    say("lockdown: QueryType");
+    lockdown_ask("<key>Request</key>\n<string>QueryType</string>\n");
+    say("lockdown: GetValue DeviceName");
+    lockdown_ask("<key>Request</key>\n<string>GetValue</string>\n<key>Key</key>\n<string>DeviceName</string>\n");
+    say("lockdown: GetValue ProductVersion");
+    lockdown_ask("<key>Request</key>\n<string>GetValue</string>\n<key>Key</key>\n<string>ProductVersion</string>\n");
+    say("lockdown: GetValue ProductType");
+    lockdown_ask("<key>Request</key>\n<string>GetValue</string>\n<key>Key</key>\n<string>ProductType</string>\n");
+    tcp_send(TCP_FIN | TCP_ACK, 0, 0);
+    usbd_disconnect(conn);
+    say("lockdown: done (unplug the iPhone to bring it back to normal)");
+    return 0;
+fail:
+    usbd_disconnect(conn);
+    say("lockdown: stopped");
+    return 1;
+}
+
 int main(int argc, char** argv)
 {
     setvbuf(stdout, 0, _IOLBF, 0);
@@ -489,6 +901,8 @@ int main(int argc, char** argv)
         return run_usb(0);
     if (argc == 3 && !strcmp(argv[1], "usb") && !strcmp(argv[2], "carplay"))
         return run_usb(1);
-    fprintf(stderr, "usage: nbt_carplay_probe acp | usb | usb carplay\n");
+    if (argc == 2 && !strcmp(argv[1], "lockdown"))
+        return run_lockdown();
+    fprintf(stderr, "usage: nbt_carplay_probe acp | usb | usb carplay | lockdown\n");
     return 2;
 }
