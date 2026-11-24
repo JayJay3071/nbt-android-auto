@@ -544,6 +544,7 @@ int main(int argc, char** argv)
     Child carplay = {0, 0, 0}; /* CarPlay mode: nbt_carplay, one per iPhone session */
     int carplay_failures = 0;
     int kept = 0; /* nbt_decoder left running for the next service run */
+    int sess_bus = -1, sess_device = -1; /* the accessory-mode device of the last Android Auto session */
     (void)argv;
     int guard = -1, lock = -1, bus, device, type, attempts = 0, resets = 0;
     long long absent_since = 0;
@@ -962,6 +963,8 @@ int main(int argc, char** argv)
         report("connecting", session);
         ++attempts;
         ++session;
+        sess_bus = bus;
+        sess_device = device;
         report("starting_decoder", session);
         drain(guard);
         /* no leftover client of the shared io-nme from an earlier, abruptly ended session (only our own NmeCmdLine copy
@@ -1083,6 +1086,17 @@ int main(int argc, char** argv)
             if (fd >= 0) {
                 drain(fd);
                 close(fd);
+            }
+        }
+        /* The device left the bus by itself (gone, back in normal mode or at another address): not a stuck phone, so
+         * no USB reset and no "Reconnect the phone" (car 2026-11-24: a wireless Android Auto adapter drops off and
+         * comes back on its own while it connects the phone; our resets on top of that only delayed it). The reset
+         * stays for a phone that still sits there in accessory mode after a failed session. */
+        if (attempts > 0) {
+            int b2 = -1, d2 = -1;
+            if (find_phone(&b2, &d2) != PHONE_ACCESSORY || b2 != sess_bus || d2 != sess_device) {
+                printf("[native] the device reconnected by itself after session %u: no USB reset\n", session);
+                attempts = 0;
             }
         }
         if (!stopping)
