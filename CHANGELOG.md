@@ -2,12 +2,13 @@
 
 Versions are named after the build date of the installer payload.
 
-## Unreleased (in the repository, not yet in an installer release)
+## 2026.11.24 (pre-release)
 
-Running in the developer's car (BMW F07 2014, OnePlus 7 Pro); built from this repository the programs are identical to
-the ones on the car (checked 2026-11-24 with `scripts/build_all.py`).
+The programs run in the developer's car (BMW F07 2014, OnePlus 7 Pro); built from this repository they are identical
+to the ones on the car (checked 2026-11-24 with `scripts/build_all.py`). The installer itself was tested in the QNX VM
+only, not yet on a car.
 
-- **Installer (payload 2026.11.24, built and tested in the QNX VM, not yet run on a car):** installs the sound as
+- **Installer:** installs the sound as
   "iPod over Bluetooth" (`nbt_aa_wms`, `nbt_ipod_tap`, `nbt_aa_ipod`, `iap.sh`) and the skip key map `mfl.map`;
   every install / update switches the sound mode on (removes `iap.off`); uninstall also stops the sound helpers;
   diagnostic logs include `iap.log`, `btipod.log`, `sound.log`. Plugin XML is written with LF line ends (as the HMI

@@ -20,6 +20,9 @@ iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrum
   Android Auto, which keeps running in the background.
 - **Menu entry** *Multimedia → Android Auto*: shows the status, starts the service 15 s after the HMI boots and brings a
   running session to the front.
+- **Sound through the car speakers** (since 2026.11.24): Android Auto music appears under Multimedia as an Apple
+  device "Android Auto" with title, artist, album, cover and length, also in the instrument cluster; skip works from
+  iDrive, the steering wheel and the radio panel keys. Needs the phone connected by Bluetooth as well (see below).
 - **Navigation in the instrument cluster** (6WB cluster) while Google Maps guides a route: arrow, distance bar, street
   name, motorway/road shields and lanes (lanes not yet confirmed with a real phone). BMW navigation takes priority when it guides itself.
 - **Restart Android Auto** button on the Android Auto page restarts only the service (not the NBT) and saves a
@@ -27,10 +30,10 @@ iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrum
 
 ## Known limitations
 
-- **Release 2026.11.10.2 has no Android Auto audio:** music runs over Bluetooth as before, calls work. The repository
-  already contains Android Auto sound through the car speakers, including an "iPod over Bluetooth" mode with titles,
-  cover and skip keys; it runs in the developer's car, the next installer release will contain it (see
-  [CHANGELOG.md](CHANGELOG.md)).
+- **Sound needs Bluetooth (since 2026.11.24):** Android Auto media sound plays through the car speakers as an Apple
+  device "Android Auto" (title, cover, skip keys). The phone has to connect by Bluetooth while Android Auto is already
+  running (USB first, then Bluetooth; if it was connected before, switch Bluetooth off and on once). Tested with one
+  phone only. Navigation prompts still come from the phone over its normal Bluetooth connection.
 - **800x480 only.** The hardware capture (`dev-nvideocapture`) is limited to WVGA. 720p was tested: not sharper, more
   input lag.
 - The controller has a noticeable delay because of the video buffer.
@@ -121,7 +124,8 @@ files and shows how they work together.
 
 ## Contributing
 
-Help is very welcome, especially for **Android Auto audio** and other NBT software levels and cars. Everything can be
+Help is very welcome, especially for **sound on more phones and cars, navigation prompts** and other NBT software
+levels. Everything can be
 built from this repository with one command in a QNX 6.5.0 VM (`scripts/build_all.py`). Start with
 [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
@@ -167,8 +171,10 @@ So sieht es im Auto aus: [Video auf Instagram](https://www.instagram.com/reel/Df
   [Forum-Thread](https://www.supramkv.com/threads/ssh-access-guide-supra-nbtevo-headunit.24190/).
 - **Installation:** Installer aus den [Releases](../../releases) laden und der Anleitung in
   [installer/README.md](installer/README.md) folgen.
-- **Einschränkungen:** noch kein Ton über Android Auto (Musik weiter per Bluetooth), 800x480, getestet mit einem Auto
-  (F07, 2014) und einem Telefon.
+- **Ton (seit 2026.11.24):** Android-Auto-Musik über die Lautsprecher als Apple-Gerät „Android Auto“ mit Titel, Cover
+  und Skip. Dafür muss das Telefon zusätzlich per Bluetooth verbunden sein (erst USB, dann Bluetooth).
+- **Einschränkungen:** 800x480, Navi-Ansagen weiter über das Telefon per Bluetooth, getestet mit einem Auto (F07, 2014)
+  und einem Telefon.
 - **Nutzung auf eigene Gefahr**, keine Gewähr. Lizenz: PolyForm Noncommercial 1.0.0, also keine kommerzielle Nutzung.
 - Mitmachen ist ausdrücklich erwünscht: [CONTRIBUTING.md](CONTRIBUTING.md). Issues und Pull Requests gern auf Deutsch
   oder Englisch.
