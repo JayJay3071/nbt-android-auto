@@ -39,6 +39,9 @@ iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrum
 - The controller has a noticeable delay because of the video buffer.
 - No map picture in the instrument cluster: the 6WB cluster shows pictures only in its top line (turn arrow, shields).
 - In wide mode, switch iDrive split screen off (OPTION → split screen off), otherwise tilting right twice opens it.
+- **Wired only.** Wireless Android Auto is not built in. One user reports that an aftermarket wireless Android Auto
+  adapter on the car's USB port works in an F11, with occasional disconnects
+  ([#3](https://github.com/JayJay3071/nbt-android-auto/issues/3)); I have not tested this myself.
 - Tested with one car and one phone only.
 
 What changed between versions: [CHANGELOG.md](CHANGELOG.md).
