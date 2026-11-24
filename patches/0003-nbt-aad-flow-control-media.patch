@@ -1,0 +1,312 @@
+NBT-AAD patch (2026-11-12, car-tested): video flow control and frame-rate limit, media status channel, media keys.
+- AASession::setVideoAckGate / postVideoConsumed: a video frame is acked only after the decoder chain took it, so the phone
+  never runs ahead of the stock player (it stalled and restarted every ~65 s before). NBT_AA_VIDEO_FPS limits the ack rate,
+  NBT_AA_VIDEO_WINDOW the number of unacked frames (default 3 when paced).
+- AASession::setMediaStatusCallback: playback status (0x8001) and track metadata with cover (0x8003) of channel 12.
+- sdr_builder: NBT_SDR_MEDIA_KEYS=1 declares MEDIA_PLAY_PAUSE/NEXT/PREVIOUS/PLAY/PAUSE for the steering wheel keys.
+Upstream: https://github.com/Sq00ky/Supra-iDrive6-Android-Auto commit 41975f2 (PolyForm Noncommercial 1.0.0).
+Applies after scripts/aa_session_overlay.py and the patches whose names sort before this one; scripts/build_all.py does all.
+
+diff --git a/milestone-7/src/aa_session.cpp b/milestone-7/src/aa_session.cpp
+index a2e1b34..ffff987 100644
+--- a/milestone-7/src/aa_session.cpp
++++ b/milestone-7/src/aa_session.cpp
+@@ -52,6 +52,10 @@ AASession::AASession()
+     pthread_mutex_init(&touch_mutex_, NULL);
+     input_ready_ = false;
+     memset(av_session_, 0, sizeof(av_session_));
++    video_fps_ = 0;
++    video_window_ = 10;
++    video_ack_pending_ = 0;
++    video_ack_next_s_ = 0;
+     pending_focus_ = 0;
+     pending_bye_ = false;
+     night_state_ = -1;
+@@ -63,6 +67,12 @@ AASession::AASession()
+     mic_user_data_ = NULL;
+     nav_cb_ = NULL;
+     nav_user_data_ = NULL;
++    media_cb_ = NULL;
++    media_user_data_ = NULL;
++    video_gate_ = false;
++    video_granted_ = 0;
++    video_used_ = 0;
++    video_gate_wait_s_ = 0;
+     mic_open_ = false;
+     mic_sent_ = 0;
+     audio_frames_[0] = audio_frames_[1] = audio_frames_[2] = 0;
+@@ -238,6 +248,71 @@ void AASession::drainAcks() {
+     acks_.drain(&sendAckThunk, this);
+ }
+ 
++// ---- Paced video acks (NBT car 2026-11-12, see aa_session.hpp) --------------------------------------------------------
++
++void AASession::pumpVideoAcks() {
++    while (video_ack_pending_ && (video_fps_ || video_gate_)) {
++        if (video_gate_) {
++            // one credit per frame the consumer has passed on (postVideoConsumed); never more credits than frames waiting
++            const unsigned granted = video_granted_;
++            if (granted - video_used_ > video_ack_pending_) video_used_ = granted - video_ack_pending_;
++            if (granted == video_used_) {
++                // Safety net: the consumer has reported nothing for 15 s (longer than any decoder restart). Ack what
++                // is waiting so a lost report can never freeze the video for good.
++                const double t = monoS();
++                if (video_gate_wait_s_ == 0) video_gate_wait_s_ = t;
++                if (t - video_gate_wait_s_ < 15.0) return;
++                printf("[AASession] video gate: no report from the consumer for 15 s, acking %u frame(s) anyway\n",
++                       video_ack_pending_);
++                while (video_ack_pending_) {
++                    sendAvMediaAck(6);
++                    --video_ack_pending_;
++                }
++                video_gate_wait_s_ = 0;
++                return;
++            }
++            video_gate_wait_s_ = 0;
++        }
++        const double now = monoS();
++        if (video_fps_ && now < video_ack_next_s_) return;
++        sendAvMediaAck(6);
++        --video_ack_pending_;
++        if (video_gate_) ++video_used_;
++        if (!video_fps_) continue;
++        const double period = 1.0 / video_fps_;
++        // on schedule: next slot one period after this one (keeps the average when a tick came late);
++        // after a pause no credit is saved up
++        video_ack_next_s_ = (video_ack_next_s_ + period > now) ? video_ack_next_s_ + period : now + period;
++        return;
++    }
++}
++
++void AASession::setVideoAckGate(bool on) {
++    video_gate_ = on;
++}
++
++void AASession::postVideoConsumed(unsigned frames, bool wake) {
++    if (!frames) return;
++    __sync_fetch_and_add(&video_granted_, frames);
++    if (wake) wakeSessionThread();
++}
++
++void AASession::setMediaStatusCallback(MediaStatusCallback cb, void* user_data) {
++    media_cb_ = cb;
++    media_user_data_ = user_data;
++}
++
++uint32_t AASession::videoTickMs() const {
++    if (!video_ack_pending_) return 1000u;
++    // waiting for the consumer: postVideoConsumed() wakes the thread, the short tick is only a fallback
++    if (video_gate_ && video_granted_ == video_used_) return 20u;
++    if (!video_fps_) return 1u;
++    const double wait = video_ack_next_s_ - monoS();
++    if (wait <= 0.001) return 1u;
++    if (wait >= 1.0) return 1000u;
++    return (uint32_t)(wait * 1000.0) + 1u;
++}
++
+ void AASession::setUnderflowReports(bool on) { acks_.setUnderflowReports(on); }
+ 
+ void AASession::postAudioUnderflow(uint8_t channel) {
+@@ -341,6 +416,23 @@ bool AASession::start(int client_fd) {
+     rx_note_count_ = 0;
+     rx_start_s_ = monoS();
+     memset(av_session_, 0, sizeof(av_session_));
++    {
++        const char* e = getenv("NBT_AA_VIDEO_FPS");
++        long v = e ? strtol(e, NULL, 10) : 0;
++        video_fps_ = (v > 0 && v <= 60) ? (unsigned)v : 0u;
++        e = getenv("NBT_AA_VIDEO_WINDOW");
++        v = e ? strtol(e, NULL, 10) : 0;
++        video_window_ = (v >= 1 && v <= 10) ? (unsigned)v : ((video_fps_ || video_gate_) ? 3u : 10u);
++        video_ack_pending_ = 0;
++        video_ack_next_s_ = 0;
++        video_used_ = video_granted_;   // credits of an earlier session do not count
++        video_gate_wait_s_ = 0;
++        if (video_fps_)
++            printf("[AASession] video paced: at most %u frames/s acked, window %u\n", video_fps_, video_window_);
++        if (video_gate_)
++            printf("[AASession] video gated: a frame is acked once the consumer has passed it on, window %u\n",
++                   video_window_);
++    }
+     for (int c = 0; c < 32; ++c) offered_audio_[c].clear();   // filled again when this session sends its SDR
+     audio_frames_[0] = audio_frames_[1] = audio_frames_[2] = 0;
+     acks_.startSession();
+@@ -465,8 +557,14 @@ bool AASession::readExact(uint8_t* buffer, size_t length) {
+                 FD_SET(wake_pipe_[0], &rf);
+                 if (wake_pipe_[0] > maxfd) maxfd = wake_pipe_[0];
+             }
+-            // 1 s ticks, 250 ms while a deferred audio ack is pending so a forced ack goes out on time.
+-            const uint32_t tick_ms = acks_.hasPending() ? 250u : 1000u;
++            // 1 s ticks, 250 ms while a deferred audio ack is pending so a forced ack goes out on time; while a paced
++            // video ack waits, until it is due.
++            pumpVideoAcks();
++            uint32_t tick_ms = acks_.hasPending() ? 250u : 1000u;
++            if (video_ack_pending_) {
++                const uint32_t v = videoTickMs();
++                if (v < tick_ms) tick_ms = v;
++            }
+             struct timeval tv;
+             tv.tv_sec = tick_ms / 1000u;
+             tv.tv_usec = (tick_ms % 1000u) * 1000u;
+@@ -477,6 +575,7 @@ bool AASession::readExact(uint8_t* buffer, size_t length) {
+             }
+             if (r == 0) {
+                 drainAcks();
++                pumpVideoAcks();
+                 if (limit_ms) {
+                     idle_ms += tick_ms;
+                     if (idle_ms >= limit_ms) {
+@@ -807,7 +906,8 @@ bool AASession::sendAvSetupResponse(uint8_t channel) {
+     // AVChannelSetupResponse: media_status=OK(2), max_unacked=10, configs[0]=0. Audio sinks get NBT_AA_MAX_UNACKED
+     // (default 10, 4..64; at most 64 keeps it a one-byte varint): with deferred acks it is how far the phone may run
+     // ahead.
+-    const uint8_t window = isAaAudioSinkChannel(channel) ? (uint8_t)acks_.maxUnacked() : 10;
++    const uint8_t window = isAaAudioSinkChannel(channel) ? (uint8_t)acks_.maxUnacked()
++                           : channel == 6 ? (uint8_t)video_window_ : 10;
+     uint8_t plain[8] = { 0x80, 0x03, 0x08, 0x02, 0x10, window, 0x18, 0x00 };
+     std::vector<uint8_t> enc;
+     if (cryptor_.encrypt(plain, sizeof(plain), enc)) {
+@@ -1162,6 +1262,11 @@ void AASession::sessionLoop() {
+                         printf("[AASession] media status ch12: state %u\n", st);
+                     }
+                 }
++                // NBT project 2026-11-12: playback status (0x8001) and track metadata (0x8003) for the head unit's own
++                // display and the skip keys; body = protobuf after the 2-byte message id
++                if (media_cb_)
++                    media_cb_(msg_id, frame_data.size() > 2 ? &frame_data[2] : NULL,
++                              frame_data.size() > 2 ? frame_data.size() - 2 : 0, media_user_data_);
+             } else if (msg_id == 0x8000) { // AV SETUP_REQUEST (Phone requests AV configuration on Video/Audio channel)
+                 // Only focus/open the main dashboard display. Advertising/focusing all
+                 // DHU display channels makes the phone encode several H.264 streams; we
+@@ -1176,6 +1281,13 @@ void AASession::sessionLoop() {
+                 uint32_t sess = pbFirstVarint(frame_data, 2, 1);
+                 // A new stream: ack what the old one still has pending (deferred acks), start counting afresh.
+                 acks_.onStreamStart(channel, &sendAckThunk, this);
++                if (channel == 6) {   // same for paced video acks: the old stream's frames are acked at once
++                    while (video_ack_pending_) {
++                        sendAvMediaAck(6);
++                        --video_ack_pending_;
++                    }
++                    video_ack_next_s_ = 0;
++                }
+                 if (sess != 0xFFFFFFFFu) av_session_[channel & 31] = sess;
+                 printf("[AASession] >>> Received AV START_INDICATION on Channel %u (session %u)! Projection ACTIVE!\n", channel,
+                        sess == 0xFFFFFFFFu ? 0u : sess);
+@@ -1307,7 +1419,10 @@ void AASession::sessionLoop() {
+                     }
+                 }
+                 if (deferred) drainAcks();   // the consumer may already have taken it
+-                else if (isAaAudioSinkChannel(channel) && msg_id == 0x0000 && acks_.ackTimes())
++                else if (channel == 6 && msg_id == 0x0000 && (video_fps_ || video_gate_)) {
++                    ++video_ack_pending_;    // paced: acked by pumpVideoAcks() when its slot is due
++                    pumpVideoAcks();
++                } else if (isAaAudioSinkChannel(channel) && msg_id == 0x0000 && acks_.ackTimes())
+                     sendAvMediaAck(channel, wallNs());   // acked on arrival: received now
+                 else sendAvMediaAck(channel);
+             } else if (channel == 0) {
+diff --git a/milestone-7/src/aa_session.hpp b/milestone-7/src/aa_session.hpp
+index e4dab93..5c7064e 100644
+--- a/milestone-7/src/aa_session.hpp
++++ b/milestone-7/src/aa_session.hpp
+@@ -31,6 +31,9 @@ typedef void (*MicRequestCallback)(bool open, void* user_data);
+ // Navigation status channel (ch 10, messages 0x8000 and up): the message id and its protobuf body (after the 2-byte
+ // message id). Session thread: copy what you need and return, never block.
+ typedef void (*NavStatusCallback)(uint16_t msg_id, const uint8_t* body, size_t len, void* user_data);
++// Media playback status channel (ch 12): 0x8001 = playback state / source / position (every second), 0x8003 = track
++// metadata with album art. Same rules as NavStatusCallback.
++typedef void (*MediaStatusCallback)(uint16_t msg_id, const uint8_t* body, size_t len, void* user_data);
+ 
+ class AASession {
+ public:
+@@ -47,6 +50,13 @@ public:
+     void setVideoFocusCallback(VideoFocusCallback cb, void* user_data = NULL);
+     void setMicRequestCallback(MicRequestCallback cb, void* user_data = NULL);
+     void setNavStatusCallback(NavStatusCallback cb, void* user_data = NULL);
++    void setMediaStatusCallback(MediaStatusCallback cb, void* user_data = NULL);
++    // Video flow control (NBT project 2026-11-12). On: a video frame is acked only after the consumer reported it as
++    // passed on (postVideoConsumed; also call it for frames that were dropped), so the phone can never be more than the
++    // ack window ahead of the decoder and a stalled decoder simply pauses the phone's video. Works together with the
++    // frame rate limit (NBT_AA_VIDEO_FPS). Set before start(). postVideoConsumed is thread-safe.
++    void setVideoAckGate(bool on);
++    void postVideoConsumed(unsigned frames, bool wake = true);   // wake = false when called on the session thread
+     bool isActive() const { return isRunning(); }   // true from start() until the session ended or stop()
+     // Touch forwarding (default on, NBT_TOUCH_FWD=0 disables): thread-safe, called from the touch thread.
+     // Events are queued and sent by the session thread.
+@@ -173,6 +183,23 @@ private:
+     static bool sendAckThunk(uint8_t channel, uint64_t rx_wall_ns, void* self);
+     static bool sendUnderflowThunk(uint8_t channel, void* self);
+     uint32_t av_session_[32];    // AV session id per channel from START_INDICATION; echoed in media acks (session thread)
++    // Video pacing (NBT car 2026-11-12): the stock player decodes about 25 pictures/s, the phone sends 30 while the map
++    // moves; the surplus piled up in the player until it stalled and was restarted (every ~65 s). Video frames on
++    // channel 6 are acked at most video_fps_ per second (NBT_AA_VIDEO_FPS, 0 = ack on arrival as before) and the setup
++    // response allows only video_window_ unacked frames (NBT_AA_VIDEO_WINDOW, default 3 when paced), so the phone
++    // cannot send faster than the player shows. Session thread only.
++    unsigned video_fps_;
++    unsigned video_window_;
++    unsigned video_ack_pending_;
++    double video_ack_next_s_;
++    bool video_gate_;                // acks wait for postVideoConsumed()
++    volatile unsigned video_granted_; // frames the consumer has passed on so far (consumer thread, atomic add)
++    unsigned video_used_;            // credits spent on acks (session thread)
++    double video_gate_wait_s_;       // since when acks wait for a report (0 = not waiting); safety net after 15 s
++    MediaStatusCallback media_cb_;
++    void* media_user_data_;
++    void pumpVideoAcks();            // send the video acks that are due, if any
++    uint32_t videoTickMs() const;    // how long the select may wait before the next video ack is due
+     // AudioConfigs our ServiceDiscoveryResponse offered per audio sink channel, in order (session thread).
+     std::vector<AaAudioConfig> offered_audio_[32];
+ 
+diff --git a/milestone-7/src/sdr_builder.cpp b/milestone-7/src/sdr_builder.cpp
+index 6a6e2a0..5f26301 100644
+--- a/milestone-7/src/sdr_builder.cpp
++++ b/milestone-7/src/sdr_builder.cpp
+@@ -665,7 +665,13 @@ bool patchMainVideo(std::vector<uint8_t>& sdr) {
+ // Touchscreen geometry the phone is told about (channel 7 -> input source (4) -> touchscreen (2) -> height (2)).
+ // The phone renders a 1280x720 canvas that we squash into the 480-row panel, so by default the touch space is
+ // declared 1280x720 and the forwarder scales y by 1.5 (NBT_TOUCH_SY). NBT_TOUCH_CFG_H overrides the height.
++//
++// Media keys (NBT project 2026-11-12, NBT_SDR_MEDIA_KEYS=1): the DHU blob declares HOME, BACK, CALL, DPAD, SEARCH and the
++// rotary/media/navigation keys only. For skip from the steering wheel the input source also declares MEDIA_PLAY_PAUSE 85,
++// MEDIA_NEXT 87, MEDIA_PREVIOUS 88, MEDIA_PLAY 126, MEDIA_PAUSE 127 (keycodes_supported, field 1, appended as plain
++// varints: a repeated field may be given packed and unpacked in one message).
+ namespace {
++bool g_media_keys = false;
+ bool patchTouchscreen(const uint8_t* p, size_t n, int h, std::vector<uint8_t>& out) {
+     size_t pos = 0;
+     while (pos < n) {
+@@ -708,6 +714,13 @@ bool patchInputSource(const uint8_t* p, size_t n, int h, std::vector<uint8_t>& o
+         else if (wt == 1) { pos += 8; out.insert(out.end(), p + start, p + pos); }
+         else return false;
+     }
++    if (g_media_keys) {
++        static const unsigned keys[] = { 85, 87, 88, 126, 127 };
++        for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
++            putVarint(out, (1u << 3) | 0);
++            putVarint(out, keys[i]);
++        }
++    }
+     return true;
+ }
+ bool patchInputChannel(const uint8_t* p, size_t n, int h, std::vector<uint8_t>& out, bool& is7) {
+@@ -749,7 +762,11 @@ bool patchInputChannel(const uint8_t* p, size_t n, int h, std::vector<uint8_t>&
+ bool patchTouchConfig(std::vector<uint8_t>& sdr) {
+     int h = 720;
+     envInt("NBT_TOUCH_CFG_H", h);
+-    if (h == 480) return false;
++    {
++        const char* e = getenv("NBT_SDR_MEDIA_KEYS");
++        g_media_keys = e && e[0] == '1';
++    }
++    if (h == 480 && !g_media_keys) return false;
+     std::vector<uint8_t> out;
+     size_t n = sdr.size(), pos = 0;
+     bool changed = false;
+@@ -775,7 +792,7 @@ bool patchTouchConfig(std::vector<uint8_t>& sdr) {
+         }
+     }
+     if (changed) {
+-        printf("[SDR] touchscreen declared 1280x%d\n", h);
++        printf("[SDR] touchscreen declared 1280x%d%s\n", h, g_media_keys ? ", media keys 85 87 88 126 127 declared" : "");
+         sdr.swap(out);
+     }
+     return changed;

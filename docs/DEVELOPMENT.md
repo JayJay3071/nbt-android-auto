@@ -99,6 +99,11 @@ What `build_all.py` puts together (on your PC) and `scripts/build-qnx.sh` compil
 | `fifo_http`, `accessory_window` | C, no optimisation (as shipped) |
 | `nbt_knob`, `nbt_hwvideo`, `nbt_cluster` | C++ `-O1`, with the MOST/DSI client from `knob/ref/` |
 | `libNbtAndroidAuto.so` | C++ shared library without exceptions/RTTI, linked against the two HMI libraries |
+| `nbt_a2i_play`, `nbt_aa_wms` (`-lm`), `nbt_ipod_tap`, `nbt_aa_ipod` | C, `-O2` (sound and iPod mode) |
+| `nbt_bt_inject` | C, no optimisation (as built for the car) |
+
+**Verified on 2026-11-24** against the programs in the developer's car: all 14 programs that are on the car are
+byte-identical (`oneplus_native` apart from the symbol table), except `nbt_hwvideo` (see below).
 
 **Verified on 2026-11-11** against installer 2026.11.10.2: `native_service`, `decode_runner`, `fifo_http`,
 `accessory_window`, `nbt_knob`, `nbt_cluster` and `libNbtAndroidAuto.so` are byte-identical, `oneplus_native` is

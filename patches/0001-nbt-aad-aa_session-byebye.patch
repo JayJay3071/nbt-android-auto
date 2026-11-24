@@ -1,0 +1,100 @@
+NBT-AAD patch: clean session end (ByeByeRequest / ByeByeResponse), adds AASession::postByeBye().
+Used by src/android_auto/aa_video_capture.cpp since 2026-11-10 (car-tested).
+Upstream: https://github.com/Sq00ky/Supra-iDrive6-Android-Auto commit 41975f2 (PolyForm Noncommercial 1.0.0).
+Apply AFTER scripts/aa_session_overlay.py (aa_session.cpp context is the overlaid file); scripts/build_all.py does both.
+
+diff --git a/milestone-7/src/aa_session.cpp b/milestone-7/src/aa_session.cpp
+index 8141a8c..a2e1b34 100644
+--- a/milestone-7/src/aa_session.cpp
++++ b/milestone-7/src/aa_session.cpp
+@@ -53,6 +53,7 @@ AASession::AASession()
+     input_ready_ = false;
+     memset(av_session_, 0, sizeof(av_session_));
+     pending_focus_ = 0;
++    pending_bye_ = false;
+     night_state_ = -1;
+     night_started_ = false;
+     pending_night_ = false;
+@@ -127,6 +128,16 @@ void AASession::postVideoFocus(bool projected) {
+     (void)w;
+ }
+ 
++void AASession::postByeBye() {
++    if (wake_pipe_[1] < 0) { printf("[AASession] ByeByeRequest not sent (no wake pipe)\n"); return; }
++    pthread_mutex_lock(&touch_mutex_);
++    pending_bye_ = true;
++    pthread_mutex_unlock(&touch_mutex_);
++    char b = 1;
++    ssize_t w = write(wake_pipe_[1], &b, 1);
++    (void)w;
++}
++
+ void AASession::postNightMode(bool night) {
+     pthread_mutex_lock(&touch_mutex_);
+     int v = night ? 1 : 0;
+@@ -316,6 +327,7 @@ bool AASession::start(int client_fd) {
+     touch_queue_.clear();
+     key_queue_.clear();
+     pending_focus_ = 0;
++    pending_bye_ = false;
+     night_started_ = false;
+     pending_night_ = false;
+     mic_open_ = false;
+@@ -618,6 +630,8 @@ void AASession::drainTouch() {
+     keys.swap(key_queue_);
+     int focus = pending_focus_;
+     pending_focus_ = 0;
++    bool bye = pending_bye_;
++    pending_bye_ = false;
+     bool night = pending_night_ && night_started_;
+     pending_night_ = false;
+     std::vector<std::vector<uint8_t> > mic;
+@@ -627,6 +641,15 @@ void AASession::drainTouch() {
+         if (!sendMicFrame(mic[i])) { printf("[AASession] mic -> phone: SEND FAILED\n"); break; }
+         if ((mic_sent_++ % 250) == 0) printf("[AASession] mic -> phone: %u chunks sent (%u bytes each)\n", mic_sent_, (unsigned)mic[i].size());
+     }
++    if (bye) {
++        bool ok = false;
++        if (cryptor_.isHandshakeComplete()) {
++            const uint8_t req[4] = { 0x00, 0x0F, 0x08, 0x01 };     // ByeByeRequest {reason = 1 USER_SELECTION}
++            std::vector<uint8_t> enc;
++            ok = cryptor_.encrypt(req, sizeof(req), enc) && sendFrame(0x00, 0x0B, &enc[0], enc.size());
++        }
++        printf("[AASession] ByeByeRequest -> phone: %s\n", ok ? "sent" : "not sent (no encrypted session)");
++    }
+     if (night && !sendSensorEvent(10)) printf("[AASession] NIGHT_MODE event: SEND FAILED\n");
+     if (focus) {
+         bool ok = sendVideoFocusIndication(6, focus == 1, true);
+@@ -1373,6 +1396,9 @@ void AASession::sessionLoop() {
+                            reason == 0xFFFFFFFFu ? -1 : (int)reason, reason == 1 ? " = quit" : "",
+                            (unsigned)media_frames_, ok ? "sent" : "SEND FAILED");
+                     break;
++                } else if (msg_id == 0x0010) { // ByeByeResponse: the phone confirmed our ByeByeRequest
++                    printf("[AASession] >>> ByeByeResponse from the phone: ending the session cleanly\n");
++                    break;
+                 } else if (msg_id == 11) { // PingRequest
+                     printf("[AASession] >>> Received PingRequest. Replying with PingResponse...\n");
+                     // PingResponse {timestamp = field 1}: echo the request's timestamp varint.
+diff --git a/milestone-7/src/aa_session.hpp b/milestone-7/src/aa_session.hpp
+index ee51f3c..e4dab93 100644
+--- a/milestone-7/src/aa_session.hpp
++++ b/milestone-7/src/aa_session.hpp
+@@ -58,6 +58,10 @@ public:
+     // Tell the phone the car took (projected=false) or gave back (projected=true) the screen: an unrequested
+     // VideoFocusIndication, sent by the session thread. Thread-safe. Needs the wake pipe (touch forwarding on).
+     void postVideoFocus(bool projected);
++    // End the session the clean way (NBT project 2026-11-10): ByeByeRequest {reason=1 USER_SELECTION} on the control
++    // channel; the session ends when the phone answers with ByeByeResponse. Without it an abrupt end (service restart)
++    // left Android Auto on the phone stuck until it was force-stopped. Thread-safe, needs the wake pipe.
++    void postByeBye();
+     // Car day/night (iDrive's day/night change-over, via the iDrive app): 1 night, 0 day. Kept across sessions;
+     // sent to the phone as a NIGHT_MODE sensor event once it has started that sensor. NBT_NIGHT_MODE=0/1 overrides.
+     // Thread-safe.
+@@ -112,6 +116,7 @@ private:
+     bool sendKeyEvent(const KeyOut& k);            // session thread only
+     std::vector<KeyOut> key_queue_;                // guarded by touch_mutex_
+     int pending_focus_;                            // guarded by touch_mutex_: 0 none, 1 projected, 2 native
++    bool pending_bye_;                             // guarded by touch_mutex_: send a ByeByeRequest on next drain
+     int night_state_;                              // guarded by touch_mutex_: -1 unknown, 0 day, 1 night (car)
+     bool night_started_;                           // guarded by touch_mutex_: phone started sensor 10 this session
+     bool pending_night_;                           // guarded by touch_mutex_: send a NIGHT_MODE event on next drain

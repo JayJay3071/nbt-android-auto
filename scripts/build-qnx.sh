@@ -52,6 +52,13 @@ $CC -O2 -Wall -Wextra nbt_decode_runner.c -o $OUT/decode_runner
 $CC -Wall -Wextra nbt_fifo_http.c -lsocket -o $OUT/fifo_http   # no -O: as in the shipped package
 $CC -Wall -Wextra accessory_window.c -o $OUT/accessory_window
 
+echo "== media sound and track info: nbt_a2i_play, nbt_aa_wms, nbt_ipod_tap, nbt_aa_ipod, nbt_bt_inject"
+$CC -O2 -Wall -Wextra nbt_a2i_play.c -o $OUT/nbt_a2i_play      # sound to an amplifier input (A2I)
+$CC -O2 -Wall -Wextra nbt_aa_wms.c -lm -o $OUT/nbt_aa_wms      # own A2DP-like sound device (SBC), "iPod over Bluetooth"
+$CC -O2 -Wall -Wextra nbt_ipod_tap.c -o $OUT/nbt_ipod_tap      # filter in front of the Bluetooth audio driver
+$CC -O2 -Wall -Wextra nbt_aa_ipod.c -o $OUT/nbt_aa_ipod        # Apple driver stand-in: titles, cover, skip
+$CC -Wall -Wextra nbt_bt_inject.c -o $OUT/nbt_bt_inject        # older way: titles on the Bluetooth entry (no -O, as built)
+
 echo "== nbt_knob, nbt_hwvideo, nbt_cluster (MOST/DSI)"
 cd $A/knob
 $CXX -Iref nbt_knob.cpp ref/dsi_client.cpp ref/most/client.cpp ref/car/ccs_input.cpp -o $OUT/nbt_knob
