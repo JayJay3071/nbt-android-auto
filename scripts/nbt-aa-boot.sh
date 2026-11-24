@@ -79,7 +79,7 @@ if test $MODE != classic; then
 fi
 echo "picture mode $MODE, dpi $DPI"
 cd $R
-NBT_VID_DPI=$DPI NBT_VID_INSETS=0,180,0,0 LD_LIBRARY_PATH=/opt/mm/lib:/opt/mm/lib/cinemo:/lib:/usr/lib ./native_service </dev/null >/dev/null 2>&1 &
+NBT_VID_DPI=$DPI NBT_VID_INSETS=0,180,0,0 LD_LIBRARY_PATH=/opt/mm/lib:/opt/mm/lib/cinemo:/lib:/usr/lib ./native_service </dev/null >$R/native.log 2>&1 &
 echo "native_service started pid=$!"
 
 # Android Auto turn-by-turn in the instrument cluster (arrow, distance, street, road shield, lanes; nbt_cluster draws only
@@ -118,7 +118,7 @@ fi
     if test "$s" != "$last"; then
       last="$s"
       echo "`date +%T` $s" >> $L/states.txt
-      cp /fs/ram3/nbt-aa-plugin.log /fs/ram3/nbt-aa-boot.log $L/ 2>/dev/null
+      cp /fs/ram3/nbt-aa-plugin.log /fs/ram3/nbt-aa-boot.log $R/native.log $L/ 2>/dev/null
       for k in capture decoder hwvideo; do
         f=`ls -t $R/$k-*.log 2>/dev/null | sed 1q`
         if test -n "$f"; then cp $f $L/$k-last.log; fi

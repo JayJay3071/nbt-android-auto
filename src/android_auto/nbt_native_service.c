@@ -553,6 +553,7 @@ int main(int argc, char** argv)
 
     if (argc != 1 || geteuid() != 0 || chdir(RUNTIME_DIR))
         return 2;
+    setvbuf(stdout, 0, _IOLBF, 0);   /* native.log (boot.sh): each line as it happens */
     signal(SIGTERM, stopped);
     signal(SIGINT, stopped);
     signal(SIGPIPE, SIG_IGN);

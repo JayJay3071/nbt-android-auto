@@ -308,6 +308,7 @@ def save_logs(nbt, log, target_zip, root=''):
         if code == 0:
             sources += [directory + '/' + name for name in out.decode('utf-8', 'replace').split()]
     sources += ['/fs/ram3/nbt-aa-plugin.log', '/fs/ram3/nbt-aa-boot.log', '/fs/ram3/nbt-aa-state', '/fs/ram3/nbt-cluster.log',
+                '/fs/ram3/nbt-aa-native/native.log',
                 root + RT_DIR + '/VERSION', root + RT_DIR + '/vid.dpi']
     count = 0
     with zipfile.ZipFile(target_zip, 'w', zipfile.ZIP_DEFLATED) as archive:
