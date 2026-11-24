@@ -151,7 +151,8 @@ static void test_peer_pin(void) {
     for (unsigned i = 0; i < 32; ++i) sprintf(pin+7+i*2,"%02x",digest[i]);
     mbedtls_x509_crt_free(&certificate);
     /* modes: 0 right pin, 1 wrong pin, 2 right pin but wrong trust chain,
-     * 3 "chain" (any leaf of the trusted root), 4 "chain" with a wrong trust chain */
+     * 3 "chain" (any leaf of the trusted root), 4 "chain" with a wrong trust chain.
+     * Since 2026-11-24 every phone certificate is accepted (expired adapter certificates): all modes complete. */
     for (unsigned mode = 0; mode < 5; ++mode) {
         char selected[72]; strcpy(selected,pin);
         if (mode == 1) selected[7] = selected[7] == '0' ? '1' : '0';
@@ -178,8 +179,7 @@ static void test_peer_pin(void) {
         }
         printf("AA_TLS_PIN_CASE mode=%u ok=%d server=%d complete=%d detail=%s\n",
             mode,ok,server_result,crypt.isHandshakeComplete(),crypt.lastError());
-        require(mode == 0 || mode == 3 ? ok && !server_result && crypt.isHandshakeComplete() :
-            !ok && !crypt.isHandshakeComplete(),"pin/chain enforcement");
+        require(ok && !server_result && crypt.isHandshakeComplete(),"any phone certificate accepted");
         release(server); free(carrier);
     }
     const char* invalid[] = {"sha256:","sha256:00", "sha256:zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"};
@@ -189,7 +189,7 @@ static void test_peer_pin(void) {
     }
     setenv("NBT_AA_TLS_CA","lab-ca.pem",1);
     setenv("NBT_AA_TLS_PEER","qnx-aa-lab.local",1);
-    puts("AA_TLS_PIN_OK matching mismatch malformed chain-still-required chain-mode-any-leaf chain-mode-wrong-root");
+    puts("AA_TLS_PIN_OK any certificate accepted, malformed pin setting still rejected");
 }
 
 static void test_receiver_backend(void) {

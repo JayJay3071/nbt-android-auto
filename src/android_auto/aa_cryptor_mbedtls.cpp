@@ -1,7 +1,7 @@
 ﻿// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // AACryptor interface: Copyright (c) 2026 nanaisu - NBT-AAD
 // Required Notice: Copyright (c) 2026 nanaisu - NBT-AAD (https://github.com/Sq00ky/Supra-iDrive6-Android-Auto)
-// New backend: bounded memory BIOs, TLS 1.2, required peer verification.
+// New backend: bounded memory BIOs, TLS 1.2, the phone's certificate is logged but accepted whatever it is.
 // No embedded keys and no system TLS library replacement.
 #include "aa_cryptor.hpp"
 #include <mbedtls/ssl.h>
@@ -53,7 +53,13 @@ struct AACryptor::State {
                 memcmp(digest, s->peer_digest, sizeof(digest)) != 0)
                 *flags |= MBEDTLS_X509_BADCERT_OTHER;
         }
-        /* Never clear chain, expiry, key-usage or other verification failures. */
+        /* Any phone certificate is accepted (2026-11-24): a wireless Android Auto adapter (18d1:4ee1 "CarPlayBox")
+         * sends 'O=CarService, OU=53', expired 2022-08-24, and the session ended with "Certificate verification
+         * failed" (flags 0x1). Certificates expire, phones and adapters keep old ones; the car has to keep working. */
+        if (*flags) {
+            printf("[TLS] depth %d: not verified (flags 0x%x), accepted\n", depth, (unsigned)*flags);
+            *flags = 0;
+        }
         return 0;
     }
     ~State() {
@@ -142,7 +148,7 @@ bool AACryptor::init() {
     if (rc) return failure("TLS defaults", rc);
     mbedtls_ssl_conf_min_tls_version(&state_->config, MBEDTLS_SSL_VERSION_TLS1_2);
     mbedtls_ssl_conf_max_tls_version(&state_->config, MBEDTLS_SSL_VERSION_TLS1_2);
-    mbedtls_ssl_conf_authmode(&state_->config, MBEDTLS_SSL_VERIFY_REQUIRED);
+    mbedtls_ssl_conf_authmode(&state_->config, MBEDTLS_SSL_VERIFY_OPTIONAL);   /* any certificate: see verify() */
     mbedtls_ssl_conf_verify(&state_->config, State::verify, state_);
     mbedtls_ssl_conf_rng(&state_->config, mbedtls_ctr_drbg_random, &state_->rng);
     mbedtls_ssl_conf_ca_chain(&state_->config, &state_->ca, NULL);
@@ -177,8 +183,9 @@ bool AACryptor::handshake(std::vector<uint8_t>& out) {
     int rc = mbedtls_ssl_handshake(&state_->ssl);
     out.swap(state_->output);
     if (rc == 0) {
-        if (mbedtls_ssl_get_verify_result(&state_->ssl) != 0)
-            return failure("peer verification", MBEDTLS_ERR_X509_CERT_VERIFY_FAILED);
+        const uint32_t result = mbedtls_ssl_get_verify_result(&state_->ssl);
+        if (result)
+            printf("[TLS] phone certificate not verified (0x%x), accepted\n", (unsigned)result);
         state_->complete = true;
         return true;
     }
