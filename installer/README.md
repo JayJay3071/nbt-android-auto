@@ -65,10 +65,11 @@ Das Freischalten verändert die Konfiguration des Geräts. Wie alles hier geschi
 - **Android Auto neu starten** (Knopf auf der Seite) startet nur den Dienst neu, nicht das NBT. Vorher wird ein
   Diagnose-Schnappschuss gespeichert. Den holt **Diagnose-Logs speichern** mit ab.
 - **NBT neu starten** (Knopf auf der Seite) startet nach einer Rückfrage das ganze NBT neu. Dafür braucht die Seite
-  die Adresse des Gateways im Auto. Der Installer sucht sie beim Installieren und speichert sie in der Datei
-  `gateway`. Findet er sie nicht, steht das im Protokollfenster, und die Seite meldet „Gateway nicht erreichbar“.
-  Dann die IP-Adresse des Gateways (zeigen z. B. ISTA oder E-Sys an) als eine Zeile in
-  `/var/opt/hmi/data/rw/NbtAndroidAutoRT/gateway` schreiben.
+  die Adresse des Gateways im Auto. Im Installer gibt es dafür das Feld **Gateway** mit dem Knopf **Suchen**: Der
+  Knopf sucht das Gateway im Auto und trägt die gefundene Adresse ein. Bleibt das Feld leer, sucht der Installer
+  beim Installieren selbst. Findet er nichts, steht das im Protokollfenster, und die Seite meldet „Gateway nicht
+  erreichbar“. Dann die IP-Adresse des Gateways (zeigen z. B. ISTA, E-Sys oder der SSH-Patcher an) von Hand ins
+  Feld schreiben und noch einmal installieren. Eine eingetragene Adresse ersetzt die im Auto gespeicherte.
 
 Es empfiehlt sich, in iDrive den Split-Screen auszuschalten (OPTION → Split-Screen aus): Das Bild nutzt das ganze
 Display.

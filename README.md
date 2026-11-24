@@ -73,7 +73,7 @@ Navigation prompts of Android Auto still come from the phone over its normal Blu
 - **New picture path, one car:** if the picture stays away on your car, the stock player path of earlier versions
   (800x480) is still in the package: create the file `decoder.off` in `/var/opt/hmi/data/rw/NbtAndroidAutoRT` and
   restart the head unit. Please report it.
-- **Restart NBT** needs the address of the car's gateway. The installer looks it up; if it cannot, the page says
+- **Restart NBT** needs the address of the car's gateway. The installer has a Gateway field with a Search button and looks it up itself if the field is empty; without an address the page says
   "Gateway not reachable" ([src/idrive/reboot/README.md](src/idrive/reboot/README.md)).
 - No map picture in the instrument cluster: the 6WB cluster shows pictures only in its top line (turn arrow, shields).
 - Switch iDrive split screen off (OPTION → split screen off): the picture uses the whole display.
