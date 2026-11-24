@@ -7,6 +7,8 @@ in the developer's car since 2026-11-23 (BMW F30, iPhone 15 Pro Max, iOS 17.7.2)
 controller, Siri, the car microphone, calls and the parking assistant. The program is `nbt_carplay` (`src/carplay/`,
 GPLv3); the picture is shown by `nbt_decoder` as for Android Auto ([DECODER.md](DECODER.md)).
 
+Wireless CarPlay: not with wired-to-wireless adapters (they need a USB role switch); see [WIRELESS.md](WIRELESS.md).
+
 ## Use
 
 With `nbt_carplay` installed (the installer ships it) and decoder mode on (the default), plugging in an iPhone starts

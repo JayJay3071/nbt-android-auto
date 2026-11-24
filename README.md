@@ -29,11 +29,13 @@ A fork of [JayJay3071/nbt-android-auto](https://github.com/JayJay3071/nbt-androi
 | **Trip computer widget** | A small box over the picture with trip and car data; long NAV switches pages or hides it |
 | **Parking assistant** | The phone's screen steps aside for park distance control and comes back when it closes |
 | **iDrive page** | *Multimedia → CarPlay / Android Auto*: status, start at boot, picture and decoder settings, widget size, **Restart service**, **Restart system** |
+| **Wireless Android Auto** | With a wired-to-wireless adapter on the USB port (tested: E-Boda AA30) ([docs/WIRELESS.md](docs/WIRELESS.md)) |
 | **Recovers by itself** | Unplug and replug, ignition off and on, service restarts: the session comes back without a reboot |
 
 ## Known limitations
 
-- Wired only: no wireless CarPlay or Android Auto.
+- No wireless CarPlay: wired-to-wireless CarPlay adapters need a USB role switch the NBT cannot do
+  ([docs/WIRELESS.md](docs/WIRELESS.md)). Wireless Android Auto works through an adapter.
 - Phone calls still go over Bluetooth, as before.
 - After changing the picture mode or the decoder, the picture comes back only after a system restart (the iDrive page
   asks for it).
@@ -66,6 +68,7 @@ Click **Save diagnostic logs** in the installer and attach the zip to a
 | Document | Content |
 |---|---|
 | [docs/CARPLAY.md](docs/CARPLAY.md) | Wired CarPlay on the NBT: USB, authentication chip, iAP2, AirPlay |
+| [docs/WIRELESS.md](docs/WIRELESS.md) | Wireless adapters: what works, what does not and why |
 | [docs/DECODER.md](docs/DECODER.md) | Picture path, settings files, hardware decoding, trip computer widget |
 | [docs/FORK-CHANGES.md](docs/FORK-CHANGES.md) | Controller, steering wheel, audio sources, microphone and iDrive page in detail |
 | [docs/ANDROID-AUTO.md](docs/ANDROID-AUTO.md) | Development log of the Android Auto USB and TLS bring-up |

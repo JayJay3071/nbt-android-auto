@@ -115,7 +115,14 @@ The phone's playing / paused state comes from the session: a small NBT-AAD core 
   iDrive started afterwards (Bluetooth, AUX) had no audio until an HMI reboot. The decoder no longer passes `-a0`, and
   saves and restores the options it changes (`nme-options.saved`, cleared at boot).
 - **Reconnect:** after each failed attempt the service resets the phone's USB connection; "Reconnect" is asked for
-  only after 3 resets.
+  only after 3 resets. Not when the device left by itself after the session (gone, normal mode or another address):
+  a wireless Android Auto adapter does that while it connects the phone (2026-11-24, [WIRELESS.md](WIRELESS.md)).
+- **Phone certificate:** any certificate from the phone is accepted, logged in the session log (2026-11-24: a
+  wireless adapter sends one that expired in 2022).
+- **Service log:** native_service writes to `/fs/ram3/nbt-aa-native/native.log` (before: nowhere), also in the
+  installer's diagnostic zip.
+- **Service restarts:** `nbt_decoder` outlives them (its car stream works once per boot); when it has to be started
+  again, iDrive's page asks for a system restart ([DECODER.md](DECODER.md)).
 - **Bluetooth audio while Android Auto runs:** `accessory_window` covers the MTP module `iofs-pfs.so` instead of
   `io-fs-media`, which Bluetooth audio needs.
 - **USB reads:** a session's USB read waits 8 s instead of 2 s (the session's own 5 s silence rule decides), and
