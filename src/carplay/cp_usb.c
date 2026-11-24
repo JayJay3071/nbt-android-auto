@@ -352,6 +352,11 @@ static void ncm_parameters(struct usb* u, struct usbd_device* dev)
             get16le(p + 20), get16le(p + 22), get16le(p + 24), get16le(p + 26));
     } else
         say("usb: no NCM parameters (%d bytes)", n);
+    /* iPhone 17 Air, iOS 27.0.1 (F07, 2026-11-24): without a format chosen it sent blocks "ncmx" / "ncxr" (neither
+     * NTB16 nor NTB32), which ncm_input skipped: no frame ever came in. Linux's cdc_ncm chooses the 16 bit format
+     * (SET_NTB_FORMAT 84, value 0) whenever the device also offers 32 bit; with it the iPhone sends "NCMH". */
+    if (n >= 28 && (get16le(p + 2) & 2))
+        say("usb: NCM 16 bit format: %s", ncm_request(dev, 0, 0x84, 0, u->ncm_ctrl, v, 0) >= 0 ? "set" : "not set");
     if (in_max && in_max < u->ntb_in)
         u->ntb_in = in_max;
     put32le(v, u->ntb_in);

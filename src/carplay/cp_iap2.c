@@ -180,6 +180,17 @@ static int send_identification(void)
     gn = prm_str(g, gn, 1, "Media Playback Remote");
     gn = prm_u8(g, gn, 2, 1);
     at = prm(b, at, 18, g, gn);
+    /* A route guidance display (iOS 27.0.1, F07, 2026-11-24): without one in the identification the iPhone accepts
+     * 5200 but never sends 5201 / 5202. Group 30: 0 identifier, 1 name, 2..5 the longest road / destination /
+     * road-after / description text, 6 how many manoeuvres it keeps. */
+    gn = prm_u16(g, 0, 0, 1);
+    gn = prm_str(g, gn, 1, "Instrument Cluster");
+    gn = prm_u16(g, gn, 2, 64);
+    gn = prm_u16(g, gn, 3, 64);
+    gn = prm_u16(g, gn, 4, 64);
+    gn = prm_u16(g, gn, 5, 64);
+    gn = prm_u16(g, gn, 6, 8);
+    at = prm(b, at, 30, g, gn);
     return csm_send(0x1d01, b, at);
 }
 
@@ -208,7 +219,8 @@ static void start_control(void)
     gn = prm(g, gn, 7, 0, 0);
     at = prm(b, at, 1, g, gn);
     csm_send(0x5000, b, at);
-    csm_send(0x5200, b, 0);
+    at = prm_u16(b, 0, 0, 1);      /* route guidance for the display named in the identification */
+    csm_send(0x5200, b, at);
     at = prm(b, 0, 4, 0, 0);
     at = prm(b, at, 5, 0, 0);
     at = prm(b, at, 6, 0, 0);
