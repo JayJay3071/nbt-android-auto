@@ -5,7 +5,8 @@ Writes the Android Auto package (service + iDrive "Android Auto" entry under Mul
 SSH. The user only enters the head unit's IP address and the root password; nothing is stored.
 
 What it changes on the head unit (and nothing else):
-  /var/opt/hmi/data/rw/NbtAndroidAutoRT/        service binaries, certificates, boot.sh, restart.sh, vid.dpi, logs/,
+  /var/opt/hmi/data/rw/NbtAndroidAutoRT/        service binaries, certificates, boot.sh, restart.sh, iap.sh (sound as
+                                                "iPod over Bluetooth"), mfl.map (skip keys), vid.dpi, logs/, journal/,
                                                 snapshots/ (written by the "restart" button)
   /var/opt/hmi/data/rw/Plugins/NbtAndroidAuto/  HMI plugin (menu entry)
 Every file is written as <name>.tmp, read back and compared byte by byte, and only then renamed into place, so a
@@ -79,13 +80,17 @@ T = {
     'intro': ('Laptop per Ethernet (ENET) mit dem Auto verbinden, Zuendung an, IP und root-Passwort eingeben.',
               'Connect the laptop to the car via Ethernet (ENET), ignition on, enter IP and root password.'),
     'confirm_uninstall': ('Android Auto wirklich vom NBT entfernen?', 'Really remove Android Auto from the NBT?'),
-    'done_install': ('Fertig. Jetzt das iDrive neu starten (Ein/Aus-Knopf ca. 30 s halten). Danach: Multimedia -> '
-                     'Android Auto.',
-                     'Done. Now restart iDrive (hold the power button for about 30 s). Then: Multimedia -> Android '
-                     'Auto.'),
+    'done_install': ('Fertig. Jetzt das iDrive neu starten. Danach: Multimedia -> Android Auto.',
+                     'Done. Now restart iDrive. Then: Multimedia -> Android Auto.'),
     'done_uninstall': ('Entfernt. Nach dem naechsten iDrive-Neustart ist der Menuepunkt weg.',
                        'Removed. The menu entry is gone after the next iDrive restart.'),
     'busy': ('Bitte warten ...', 'Please wait ...'),
+    'sound_hint': ('Ton: Android Auto erscheint unter Multimedia als Apple-Geraet "Android Auto" (Titel, Cover, Skip). '
+                   'Dafuer das Telefon per USB anstecken und danach per Bluetooth verbinden. War Bluetooth schon vorher '
+                   'verbunden: Bluetooth am Telefon einmal aus- und wieder einschalten.',
+                   'Sound: Android Auto shows up under Multimedia as Apple device "Android Auto" (title, cover, skip). '
+                   'Plug the phone in by USB, then connect it by Bluetooth. If Bluetooth was connected before: switch '
+                   'Bluetooth on the phone off and on once.'),
     'no_paramiko': ('Das Python-Paket "paramiko" fehlt: pip install paramiko',
                     'The Python package "paramiko" is missing: pip install paramiko'),
     'error': ('Fehler', 'Error'),
@@ -229,6 +234,10 @@ def install(nbt, log, root=''):
     dpi = root + RT_DIR + '/vid.dpi'
     nbt.run("test -f '%s' || echo 100 > '%s'" % (dpi, dpi))
     nbt.run("rm -f '%s/disabled'" % (root + RT_DIR))
+    if any(e['target'].endswith('/iap.sh') for e in files):
+        # Android Auto sound as "iPod over Bluetooth": on with every install / update (off: touch iap.off on the NBT)
+        nbt.run("rm -f '%s/iap.off'" % (root + RT_DIR))
+        log(tr('sound_hint'))
     nbt.run("echo '%s' > '%s/VERSION'" % (manifest.get('version', '?'), root + RT_DIR))
     _, out, _ = nbt.run("ls -l '%s' '%s'" % (root + RT_DIR, root + PLUGIN_DIR), check=False)
     log(out.decode('utf-8', 'replace').rstrip())
@@ -245,6 +254,9 @@ def uninstall(nbt, log, root=''):
         nbt.run('slay -f -Q -s TERM native_service', check=False)
         nbt.run('slay -f -Q -s TERM nbt_cluster', check=False)     # hides its cluster graphics on exit
         time.sleep(3)
+        # iPod-over-Bluetooth helpers (iap.sh ends them itself when the service is gone; this is the safety net)
+        for name in ('nbt_aa_ipod', 'nbt_ipod_tap', 'nbt_a2i_play'):
+            nbt.run('slay -f -Q -s KILL %s' % name, check=False)
     for directory in (PLUGIN_DIR, RT_DIR):
         nbt.run("rm -r '%s'" % (root + directory), check=False)
         still = nbt.run("test -e '%s'" % (root + directory), check=False)[0] == 0
@@ -261,6 +273,8 @@ def save_logs(nbt, log, target_zip, root=''):
         if code == 0:
             sources += [directory + '/' + name for name in out.decode('utf-8', 'replace').split()]
     sources += ['/fs/ram3/nbt-aa-plugin.log', '/fs/ram3/nbt-aa-boot.log', '/fs/ram3/nbt-aa-state', '/fs/ram3/nbt-cluster.log',
+                '/fs/ram3/nbt-aa-native/iap.log', '/fs/ram3/nbt-aa-native/btipod.log',
+                '/fs/ram3/nbt-aa-native/sound.log', root + RT_DIR + '/iap.off',
                 root + RT_DIR + '/VERSION', root + RT_DIR + '/vid.dpi',
                 root + RT_DIR + '/sessions.log', root + RT_DIR + '/sessions.log.1']
     count = 0

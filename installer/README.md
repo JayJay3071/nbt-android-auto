@@ -27,6 +27,7 @@ Das Freischalten verändert die Konfiguration des Geräts. Wie alles hier geschi
 3. IP-Adresse und Passwort eingeben, dann **Installieren / Aktualisieren** klicken.
 4. Das iDrive neu starten.
 5. Telefon per USB anstecken und **Multimedia → Android Auto** wählen.
+6. Für den Ton das Telefon **danach** per Bluetooth mit dem Auto verbinden (siehe unten).
 
 ## Was Android Auto auf dem NBT kann
 
@@ -35,7 +36,19 @@ Das Freischalten verändert die Konfiguration des Geräts. Wie alles hier geschi
   - **16:9** ist schärfer, rechts daneben bleibt der iDrive-Split-Screen sichtbar.
 
   Der Wechsel gilt ab der nächsten Verbindung des Telefons.
-- **Bedienung** mit dem iDrive-Controller (drehen, drücken, kippen, BACK).
+- **Ton über die Lautsprecher als „iPod über Bluetooth“:** Unter Multimedia erscheint ein Apple-Gerät
+  **„Android Auto“** mit Titel, Interpret, Album, Cover und Länge, auch im Tacho. Weiter und Zurück gehen über iDrive
+  und das Lenkrad.
+  - Das Telefon muss sich per Bluetooth verbinden, **während Android Auto schon läuft**: erst USB anstecken, dann
+    Bluetooth verbinden.
+  - War Bluetooth schon vorher verbunden (z. B. beim Einsteigen), gibt es zunächst nur den normalen Bluetooth-Eintrag
+    ohne Android-Auto-Ton. Dann Bluetooth am Telefon einmal aus- und wieder einschalten.
+  - Ohne Bluetooth-Verbindung gibt es keinen Android-Auto-Ton.
+  - Bisher nur mit einem Auto und einem Telefon (OnePlus 7 Pro) getestet.
+  - Abschalten: auf dem NBT die Datei `/var/opt/hmi/data/rw/NbtAndroidAutoRT/iap.off` anlegen. Ein erneutes
+    „Installieren / Aktualisieren“ schaltet den Ton wieder ein.
+- **Bedienung** mit dem iDrive-Controller (drehen, drücken, kippen, BACK). Die Skip-Tasten am Radio steuern die
+  Android-Auto-Musik.
 - **Navigation im Tacho** (6WB-Kombiinstrument), solange Google Maps eine Route führt:
   - Pfeil, Entfernung mit Balken und Straße,
   - Autobahn- und Bundesstraßenschild,
@@ -55,7 +68,7 @@ ZIP herunter, z. B. für Fehlermeldungen.
 
 | Ort | Inhalt |
 |---|---|
-| `/var/opt/hmi/data/rw/NbtAndroidAutoRT/` | Dienst, Tacho-Navigation, Zertifikate, `boot.sh`, `restart.sh`, `vid.dpi`, `logs/`, `snapshots/` |
+| `/var/opt/hmi/data/rw/NbtAndroidAutoRT/` | Dienst, Tacho-Navigation, Ton (`nbt_aa_wms`, `nbt_ipod_tap`, `nbt_aa_ipod`, `iap.sh`), Tastenbelegung `mfl.map`, Zertifikate, `boot.sh`, `restart.sh`, `vid.dpi`, `logs/`, `journal/`, `snapshots/` |
 | `/var/opt/hmi/data/rw/Plugins/NbtAndroidAuto/` | iDrive-Plugin (Menüeintrag) |
 
 Jede Datei wird erst als `.tmp` geschrieben, zurückgelesen und Byte für Byte verglichen und erst dann umbenannt. Weitere

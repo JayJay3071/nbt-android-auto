@@ -36,6 +36,13 @@ FILES = [
     (PROTO / 'ca.pem', 'rt/ca.pem', RT + '/ca.pem', '600'),
     (REPO / 'scripts' / 'nbt-aa-boot.sh', 'rt/boot.sh', RT + '/boot.sh', '700'),
     (REPO / 'scripts' / 'nbt-aa-restart.sh', 'rt/restart.sh', RT + '/restart.sh', '700'),
+    # Android Auto sound as "iPod over Bluetooth" (2026-11-24): boot.sh switches the mode on when these are present
+    (ENTRY / 'nbt_aa_wms', 'rt/nbt_aa_wms', RT + '/nbt_aa_wms', '700'),
+    (ENTRY / 'nbt_ipod_tap', 'rt/nbt_ipod_tap', RT + '/nbt_ipod_tap', '700'),
+    (ENTRY / 'nbt_aa_ipod', 'rt/nbt_aa_ipod', RT + '/nbt_aa_ipod', '700'),
+    (REPO / 'scripts' / 'nbt-aa-iap.sh', 'rt/iap.sh', RT + '/iap.sh', '700'),
+    # radio panel skip keys -> Android Auto media keys (read by nbt_knob)
+    (REPO / 'config' / 'mfl.map', 'rt/mfl.map', RT + '/mfl.map', '644'),
     (ENTRY / 'NbtAndroidAuto' / 'libNbtAndroidAuto.so', 'plugin/libNbtAndroidAuto.so', PLUGIN + '/libNbtAndroidAuto.so', '755'),
     (ENTRY / 'NbtAndroidAuto' / 'NbtAndroidAuto.xml', 'plugin/NbtAndroidAuto.xml', PLUGIN + '/NbtAndroidAuto.xml', '644'),
     (ENTRY / 'NbtAndroidAuto' / 'NbtAndroidAuto_ALL_Texts.zip', 'plugin/NbtAndroidAuto_ALL_Texts.zip',
@@ -57,8 +64,8 @@ def built_files(built, pem_dir):
             source = pem_dir / leaf
         elif name.startswith('plugin/') and leaf != 'libNbtAndroidAuto.so':
             source = resources / leaf
-        elif leaf in ('boot.sh', 'restart.sh'):
-            pass  # straight from scripts/
+        elif leaf in ('boot.sh', 'restart.sh', 'iap.sh', 'mfl.map'):
+            pass  # straight from scripts/ and config/
         else:
             source = programs / leaf
         result.append((source, name, target, mode))
@@ -89,7 +96,7 @@ def main():
     entries = []
     for source, name, target, mode in files:
         data = pems[name] if name in pems else source.read_bytes()
-        if name.endswith('.sh'):
+        if name.endswith(('.sh', '.map')):
             data = data.replace(b'\r\n', b'\n')     # the car's shell does not accept CR
         destination = OUT / name
         destination.parent.mkdir(parents=True, exist_ok=True)

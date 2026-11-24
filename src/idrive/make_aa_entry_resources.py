@@ -12,7 +12,11 @@ output = Path(sys.argv[1]).resolve()
 output.mkdir(parents=True, exist_ok=True)
 for name in ('NbtAndroidAuto.xml', 'NbtAndroidAuto.manifest'):
     ET.parse(source / name)
-    shutil.copyfile(source / name, output / name)
+    # the HMI wants LF line ends and no BOM (car 2026-11-12); a Windows checkout may add CR
+    data = (source / name).read_bytes().replace(b'\r\n', b'\n')
+    if data.startswith(b'\xef\xbb\xbf'):
+        data = data[3:]
+    (output / name).write_bytes(data)
 # keep every line short: the page shows about 25 characters per line (car 2026-11-08)
 GERMAN = {
     1: 'Android Auto',
