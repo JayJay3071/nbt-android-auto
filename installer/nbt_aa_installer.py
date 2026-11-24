@@ -39,9 +39,12 @@ APP_NAME = 'NBT Android Auto Installer'
 DEFAULT_HOST = '169.254.199.99'
 RT_DIR = '/var/opt/hmi/data/rw/NbtAndroidAutoRT'
 PLUGIN_DIR = '/var/opt/hmi/data/rw/Plugins/NbtAndroidAuto'
+PAYLOAD_OVERRIDE = None     # development: --payload <dir>
 
 
 def payload_dir():
+    if PAYLOAD_OVERRIDE:
+        return Path(PAYLOAD_OVERRIDE)
     base = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
     return base / 'payload'
 
@@ -258,7 +261,8 @@ def save_logs(nbt, log, target_zip, root=''):
         if code == 0:
             sources += [directory + '/' + name for name in out.decode('utf-8', 'replace').split()]
     sources += ['/fs/ram3/nbt-aa-plugin.log', '/fs/ram3/nbt-aa-boot.log', '/fs/ram3/nbt-aa-state', '/fs/ram3/nbt-cluster.log',
-                root + RT_DIR + '/VERSION', root + RT_DIR + '/vid.dpi']
+                root + RT_DIR + '/VERSION', root + RT_DIR + '/vid.dpi',
+                root + RT_DIR + '/sessions.log', root + RT_DIR + '/sessions.log.1']
     count = 0
     with zipfile.ZipFile(target_zip, 'w', zipfile.ZIP_DEFLATED) as archive:
         for path in sources:
@@ -399,10 +403,13 @@ def main():
     parser.add_argument('--port', type=int, default=22)
     parser.add_argument('--user', default='root')
     parser.add_argument('--output', help='logs: target zip file')
+    parser.add_argument('--payload', help=argparse.SUPPRESS)
     # development only: key login and installing below a test directory (e.g. in a QNX build VM)
     parser.add_argument('--key', help=argparse.SUPPRESS)
     parser.add_argument('--root', default='', help=argparse.SUPPRESS)
     args = parser.parse_args()
+    global PAYLOAD_OVERRIDE
+    PAYLOAD_OVERRIDE = args.payload
     if args.cli:
         try:
             run_cli(args)

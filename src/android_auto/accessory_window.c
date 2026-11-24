@@ -6,6 +6,7 @@
  */
 #include <sys/dispatch.h>
 #include <sys/iofunc.h>
+#include <sys/pathmgr.h>
 #include <sys/wait.h>
 #include <sys/select.h>
 #include <sys/stat.h>
@@ -131,6 +132,22 @@ int main(int argc, char** argv) {
         if (geteuid() != 0) { fputs("Vehicle window requires root.\n", stderr); return 2; }
         for (i = 0; i < 6; ++i) if (stat(vehicle_paths[i], &st) != 0 || !S_ISREG(st.st_mode)) return 3;
         if(!strcmp(argv[1],"--owned-window")&&getppid()<=1)return 2;
+        /* Trial 2026-11-14 (Android Auto as an iPod source): when the stand-in driver exists, the stock iPod driver
+         * path is not blocked but points to the stand-in (a link in the path manager, RAM only, removed when this
+         * program ends). The USB launcher then starts the stand-in for an iPhone or MTP phone instead of
+         * io-fs-media and announces the device; the phone is kept away from the stock driver just the same. */
+        if (!stat("/fs/ram3/aatool/stub", &st) && S_ISREG(st.st_mode)) {
+            static const char* const some[] = {
+                "/opt/mm/bin/aoap-switch", "/fs/sda0/opt/mm/bin/aoap-switch",
+                "/opt/mm/bin/devc-serusb-aoap", "/fs/sda0/opt/mm/bin/devc-serusb-aoap",
+                "/fs/sda0/opt/share/bin/io-fs-media"
+            };
+            int r, linked = pathmgr_symlink("/fs/ram3/aatool/stub", "/opt/share/bin/io-fs-media");
+            printf("ACCESSORY_WINDOW_DRIVER_LINK %s errno=%d\n", linked ? "failed" : "set", linked ? errno : 0);
+            r = serve(some, 5, !strcmp(argv[1],"--owned-window")?0:90, -1);
+            if (!linked) pathmgr_unlink("/opt/share/bin/io-fs-media");
+            return r;
+        }
         return serve(vehicle_paths, 6, !strcmp(argv[1],"--owned-window")?0:90, -1);
     }
     if (argc == 1) {

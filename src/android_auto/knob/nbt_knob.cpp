@@ -84,6 +84,116 @@ void onKnob(const nbt::car::CcsEvent& ev, void*) {
     forward(line, (size_t)n);
 }
 
+// Steering wheel keys (MOST FBlock 0x15, observe only; 2026-11-12). Every change of a function's first payload bytes is
+// logged ("[Wheel] 15/02 fkt=513 op=C: 01"), so one drive with the skip keys pressed shows which function they are (the
+// 2026-11-07 trace only has 401 = periodic and 513 = MODE key). The file mfl.map then turns them into Android Auto media
+// keys without a rebuild; one line per key:  <fkt hex> <first payload byte hex> <Android key code>
+//   e.g.  514 01 87     (87 = MEDIA_NEXT, 88 = MEDIA_PREVIOUS, 85 = MEDIA_PLAY_PAUSE)
+// A mapped key is sent as down + up when that value appears, also while the Android Auto page is not on screen (the
+// music goes on then). Nothing is sent to MOST, and iDrive still gets the key as well.
+//
+// Car 2026-11-13: the skip key of the radio panel is 15/0C fkt C07 (02 while pressed, 00 released; 01 presumably the
+// other direction), the thumb wheel of the steering wheel is 15/02 fkt C30 (80 at rest, above / below 80 while turned).
+// Both belong to the stock source ("Musiksammlung"), which then opens its next track and hangs on the amplifier input
+// that nbt_a2i_play holds. So the value may also be a comparison (">80", "<80"), a rule fires once when it starts to
+// match, skip keys are only taken while Android Auto plays (media.state state=2), and one second after a forwarded key
+// the stock player is told to stop again. The file is read again whenever it has changed.
+const char* const kWheelMap = "/var/opt/hmi/data/rw/NbtAndroidAutoRT/mfl.map";
+const char* const kMediaState = "/fs/ram3/nbt-aa-native/media.state";
+struct WheelMap { unsigned fkt, value, key; char cmp; bool active; };
+WheelMap g_wheel_map[16];
+int g_wheel_map_n = 0;
+time_t g_wheel_map_time = 0;
+struct WheelSeen { unsigned fkt; unsigned char data[4]; unsigned len; unsigned logged; };
+WheelSeen g_wheel_seen[24];
+int g_wheel_seen_n = 0;
+
+void loadWheelMap() {
+    struct stat st;
+    if (stat(kWheelMap, &st)) {
+        if (g_wheel_map_n) printf("[Wheel] %s is gone: no key mappings\n", kWheelMap);
+        g_wheel_map_n = 0;
+        g_wheel_map_time = 0;
+        return;
+    }
+    if (st.st_mtime == g_wheel_map_time) return;
+    g_wheel_map_time = st.st_mtime;
+    g_wheel_map_n = 0;
+    FILE* f = fopen(kWheelMap, "r");
+    char line[80];
+    if (!f) return;
+    while (g_wheel_map_n < 16 && fgets(line, sizeof(line), f)) {
+        WheelMap m;
+        char value[16];
+        if (line[0] == '#' || sscanf(line, "%x %15s %u", &m.fkt, value, &m.key) != 3) continue;
+        m.cmp = (value[0] == '<' || value[0] == '>') ? value[0] : '=';
+        m.value = (unsigned)strtoul(value + (m.cmp == '=' ? 0 : 1), NULL, 16);
+        m.active = false;
+        if (m.key == 85 || m.key == 87 || m.key == 88 || m.key == 126 || m.key == 127) g_wheel_map[g_wheel_map_n++] = m;
+    }
+    fclose(f);
+    printf("[Wheel] %d key mapping(s) from %s\n", g_wheel_map_n, kWheelMap);
+}
+
+// Android Auto is playing music right now (media.state from the session: "state=2")
+bool aaPlaying() {
+    char buf[400];
+    int fd = open(kMediaState, O_RDONLY);
+    if (fd < 0) return false;
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return false;
+    buf[n] = 0;
+    return strstr(buf, "\nstate=2\n") != NULL;
+}
+
+void onWheel(const nbt::most::View& m, void*) {
+    WheelSeen* s = 0;
+    for (int i = 0; i < g_wheel_seen_n && !s; ++i)
+        if (g_wheel_seen[i].fkt == m.fkt) s = &g_wheel_seen[i];
+    if (!s) {
+        if (g_wheel_seen_n >= 24) return;
+        s = &g_wheel_seen[g_wheel_seen_n++];
+        s->fkt = m.fkt;
+        s->len = ~0u;
+        s->logged = 0;
+    }
+    const unsigned len = m.len < 4 ? (unsigned)m.len : 4u;
+    if (s->len == len && !memcmp(s->data, m.data, len)) return;   // repeated status: nothing new
+    s->len = len;
+    memcpy(s->data, m.data, len);
+    if (s->logged < 200) {
+        char text[64]; int n = 0;
+        ++s->logged;
+        for (size_t i = 0; i < m.len && i < 12; ++i) n += snprintf(text + n, sizeof(text) - n, " %02x", m.data[i]);
+        text[n] = 0;
+        printf("[Wheel] 15/%02X fkt=%03X op=%X:%s\n", m.inst, m.fkt, m.op, text);
+    }
+    if (!m.len) return;
+    loadWheelMap();
+    for (int i = 0; i < g_wheel_map_n; ++i) {
+        WheelMap& r = g_wheel_map[i];
+        char line[48];
+        if (r.fkt != m.fkt) continue;
+        const unsigned v = m.data[0];
+        const bool match = r.cmp == '<' ? v < r.value : r.cmp == '>' ? v > r.value : v == r.value;
+        const bool fire = match && !r.active;
+        r.active = match;
+        if (!fire) continue;
+        if ((r.key == 87 || r.key == 88) && !aaPlaying()) {
+            printf("[Wheel] key %u not taken: Android Auto is not playing\n", r.key);
+            continue;
+        }
+        int n = snprintf(line, sizeof(line), "K %u 1\nK %u 0\n", r.key, r.key);
+        printf("[Wheel->AA] media key %u\n", r.key);
+        forward(line, (size_t)n);
+        // the stock source got the same key and starts its own next track: stop it again (as nbt_a2i_play does at start)
+        int rc = system("(sleep 1; LD_LIBRARY_PATH=/opt/mm/lib:/opt/sys/lib:/lib:/usr/lib /opt/mm/bin/mmecli -c "
+                        "/dev/mme/multichannel stop >/dev/null 2>&1) &");
+        (void)rc;
+    }
+}
+
 // --trace: observe-only log of EVERY MOST message this client receives (header + first 48 payload bytes), to learn what the
 // HMI sends to VideoApp's VideoConnectionMaster / VideoSink when a stock video page opens. Nothing is ever sent.
 unsigned g_traced = 0;
@@ -179,6 +289,9 @@ int main(int argc, char** argv) {
     static nbt::most::Client most;
     static nbt::car::CcsInput ccs;
     if (!ccs.attach(most, nbt::car::readCcsConfig(), &onKnob, NULL)) return 3;
+    loadWheelMap();
+    if (!most.addRoute(0x15, nbt::most::kAny, nbt::most::kAny, nbt::most::kAny, &onWheel, NULL))
+        printf("[Wheel] no room on the MOST client: steering wheel keys are not observed\n");
     if (trace && !most.setTap(&onTap, NULL)) return 3;
     if (!most.start("NBTPROJ_KNOB")) return 3;
     printf("nbt_knob: observing the iDrive controller, forwarding to %s%s\n", g_fifo, seconds ? "" : " until SIGTERM");

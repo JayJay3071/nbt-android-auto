@@ -41,7 +41,18 @@ static int window_active(void) {
     unsigned i;
     if (geteuid() != 0) return 0;
     for (i = 0; i < 6; ++i) {
-        int fd = open(paths[i], O_RDONLY);
+        int fd;
+        /* iPod trial (2026-11-14): accessory_window may point the stock iPod / file-transfer driver path to our
+         * stand-in driver instead of blocking it; that keeps the stock driver away from the phone just as well. */
+        if (i == 4) {
+            char target[64];
+            int n = readlink(paths[i], target, sizeof(target) - 1);
+            if (n > 0) {
+                target[n] = 0;
+                if (!strcmp(target, "/fs/ram3/aatool/stub")) continue;
+            }
+        }
+        fd = open(paths[i], O_RDONLY);
         if (fd >= 0) { close(fd); return 0; }
         if (errno != EACCES) return 0;
     }

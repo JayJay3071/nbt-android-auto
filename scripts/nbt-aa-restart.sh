@@ -21,7 +21,9 @@ S=$D/restart-`date +%d%H%M%S`.txt
   for f in `ls -t $R/capture-*.log 2>/dev/null | sed 3q`; do echo "--- $f"; tail -60 $f; done
   for f in `ls -t $R/decoder-*.log 2>/dev/null | sed 2q` `ls -t $R/hwvideo-*.log 2>/dev/null | sed 1q` $R/switch.log; do echo "--- $f"; tail -20 $f; done
   echo '--- processes'; pidin arg | grep -i -e nme -e media -e audio -e amp -e nbt -e oneplus -e native -e decode -e hwvideo -e mm
-  echo '--- system log'; sloginfo | tail -400
+  echo '--- session history'; tail -120 $P/sessions.log
+  # without the once-per-second lines of the window manager, which pushed everything else out of the tail (car 2026-11-11)
+  echo '--- system log'; sloginfo | grep -v -e 'wal\]' -e updateColor -e 'WINDOW EXISTS' -e dumpWindowIds -e ICU-CONVERSION | tail -700
 } > $S 2>&1
 n=0
 for f in `ls -t $D/restart-*.txt`; do n=$((n+1)); if test $n -gt 5; then rm -f $f; fi; done

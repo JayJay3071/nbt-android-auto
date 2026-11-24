@@ -1,0 +1,11 @@
+# Radio panel keys -> Android Auto media keys (read by nbt_knob, installed as
+# /var/opt/hmi/data/rw/NbtAndroidAutoRT/mfl.map). One rule per line:
+#   <function hex> <value hex, or >value / <value> <Android key: 87 next, 88 previous, 85 play/pause>
+# A rule fires once when its value appears. Skip keys are only taken while Android Auto is playing.
+# Car 2026-11-13 (BMW F07, NBT): radio panel skip key = FBlock 15 instance 0C function C07 (02 pressed, 00 released;
+# 01 is assumed to be the other direction). Confirmed by the user: "works on the system".
+# The steering wheel thumb wheel (function C30, 80 at rest) is NOT mapped, at the user's request: it scrolls the title
+# list in the instrument cluster and must stay with the stock system; skipping there needs Android Auto as a real
+# media source with title information.
+C07 02 87
+C07 01 88

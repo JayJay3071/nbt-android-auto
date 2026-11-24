@@ -76,7 +76,10 @@ int main(int argc, char** argv)
         if (setrlimit(RLIMIT_CORE, &core) || setpgid(0, 0)) /* no core files, own process group */
             _exit(125);
 
-        /* Common options: -a0 no audio, -i -ic timing info, -vd NmeDeviceScreen -vi <output> render into the stock
+        /* No -a0 ("disable audio track"): the stream has no audio anyway, and the switch is suspected to stay set in the
+         * shared io-nme service - car 2026-11-11: after an Android Auto session every NEW graph of the stock player got
+         * OnSignalAudio(DEVICE_DETACHED) and the media tab stayed silent until the head unit was restarted.
+         * Common options: -i -ic timing info, -vd NmeDeviceScreen -vi <output> render into the stock
          * window. -vf: no frame dropping (car 2026-11-07: the live stream has no usable timestamps, the renderer
          * dropped 992 of 1204 frames and the picture froze). -x/-y/-xx/-yy: window 800x480 at 0,0 (with only -vr the
          * window took the cropped size 800x300: lower part black, picture squashed, car 2026-11-07). -vr crops the
@@ -84,25 +87,25 @@ int main(int argc, char** argv)
 
         if (!strcmp(argv[4], "screen720"))
             /* phone canvas 1280x720 with content rows 0..479 (insets 0,240,0,0) -> crop 667/1000 */
-            execl(argv[2], "NmeCmdLine", "-a0", "-wd", "0", "-wi", "0", "-wm", "0", "-vd", "NmeDeviceScreen", "-vi",
+            execl(argv[2], "NmeCmdLine", "-wd", "0", "-wi", "0", "-wm", "0", "-vd", "NmeDeviceScreen", "-vi",
                   STOCK_VIDEO_OUTPUT,
                   "-vf", "-vr", "0,0,1000,667", "-va", "3", "-x", "800", "-y", "480", "-xx", "0", "-yy", "0",
                   "-i", "-ic", argv[3], (char*)0);
         else if (!strcmp(argv[4], "screencenter"))
             /* whole 800x480 phone canvas 1:1 (no crop); nbt_hwvideo places the window in the middle of the display */
-            execl(argv[2], "NmeCmdLine", "-a0", "-wd", "0", "-wi", "0", "-wm", "0", "-vd", "NmeDeviceScreen", "-vi",
+            execl(argv[2], "NmeCmdLine", "-wd", "0", "-wi", "0", "-wm", "0", "-vd", "NmeDeviceScreen", "-vi",
                   STOCK_VIDEO_OUTPUT,
                   "-vf", "-va", "3", "-x", "800", "-y", "480", "-xx", "0", "-yy", "0",
                   "-i", "-ic", argv[3], (char*)0);
         else if (!strcmp(argv[4], "screen"))
             /* -vr 0,0,1000,625: only the phone's content rows 0..299 of 480 (insets 0,180,0,0) */
-            execl(argv[2], "NmeCmdLine", "-a0", "-wd", "0", "-wi", "0", "-wm", "0", "-vd", "NmeDeviceScreen", "-vi",
+            execl(argv[2], "NmeCmdLine", "-wd", "0", "-wi", "0", "-wm", "0", "-vd", "NmeDeviceScreen", "-vi",
                   STOCK_VIDEO_OUTPUT,
                   "-vf", "-vr", "0,0,1000,625", "-va", "3", "-x", "800", "-y", "480", "-xx", "0", "-yy", "0",
                   "-i", "-ic", argv[3], (char*)0);
         else
             /* no display (-n): decoded frames go to the raw video output argv[4] (old PNG pipeline) */
-            execl(argv[2], "NmeCmdLine", "-n", "-a0", "-wd", "0", "-wi", "0", "-wm", "0", "-i", "-ic", "-dv", argv[4],
+            execl(argv[2], "NmeCmdLine", "-n", "-wd", "0", "-wi", "0", "-wm", "0", "-i", "-ic", "-dv", argv[4],
                   argv[3], (char*)0);
         _exit(127);
     }

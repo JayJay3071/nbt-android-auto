@@ -27,7 +27,9 @@ iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrum
 
 ## Known limitations
 
-- **No Android Auto audio yet.** Music runs over Bluetooth as before, calls work. Plan: [docs/AA-AUDIO-PLAN.md](docs/AA-AUDIO-PLAN.md).
+- **Release 2026.11.10.2 has no Android Auto audio:** music runs over Bluetooth as before, calls work. The repository
+  already contains Android Auto sound through the car speakers, including an "iPod over Bluetooth" mode with titles,
+  cover and skip keys; it runs in the developer's car but is not in an installer yet (see [CHANGELOG.md](CHANGELOG.md)).
 - **800x480 only.** The hardware capture (`dev-nvideocapture`) is limited to WVGA. 720p was tested: not sharper, more
   input lag.
 - The controller has a noticeable delay because of the video buffer.

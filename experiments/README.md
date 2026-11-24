@@ -14,4 +14,5 @@ adapt them before building anything here.
 | `usb-file-overlay/` | A QNX resource manager that pretends to be a video file on the USB stick so the stock player plays the live stream | Worked with a stick, but the car has only one USB port (phone or stick). Abandoned. |
 | `hwvideo-bringup/` | Test scripts used to find the stock hardware video path (Cinemo `NmeDeviceScreen`, VideoApp over MOST) | Led to the current solution (`src/android_auto/knob/nbt_hwvideo.cpp`). |
 | `hello-plugin/` | The first "Hello NBT" menu entry, used to learn the HMI plugin format | Basis of the current plugin (`src/idrive/aa_entry_plugin.cpp`). |
-| `audio/` | Probes for playing sound through the head unit's audio inputs | **Open topic.** Starting point for Android Auto audio, see [docs/AA-AUDIO-PLAN.md](../docs/AA-AUDIO-PLAN.md). |
+| `audio/` | Probes for playing sound through the head unit's audio inputs | Led to `src/android_auto/nbt_a2i_play.c` (sound through the car speakers). |
+| `ipod-usb-trials/` | Android Auto as an iPod in the USB snap-in (2026-11-14..23): driver stand-ins, USB reset/hub tools, message and devctl probes, a WAV-over-HTTP source | Replaced by the "iPod over Bluetooth" mode (`nbt_ipod_tap`, `nbt_aa_ipod`, `nbt_aa_wms`). `scripts/Restore-NbtAaInstall.ps1 -WithIpod` still installs the old tools. |

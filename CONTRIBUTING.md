@@ -14,8 +14,10 @@ Questions or suggestions that do not fit an issue: **androidauto.nbt@proton.me**
 
 ## Where help is needed
 
-1. **Android Auto audio.** Today music goes over Bluetooth. The plan and current findings are in
-   [docs/AA-AUDIO-PLAN.md](docs/AA-AUDIO-PLAN.md) (audio source switching over MOST, like the video path).
+1. **Android Auto audio on more cars.** Media sound through the car speakers and the "iPod over Bluetooth" mode work in
+   the developer's car (see CHANGELOG, unreleased). Open: navigation prompts, connecting without the Bluetooth
+   reconnect, tests on other cars. Background: [docs/AA-AUDIO-PLAN.md](docs/AA-AUDIO-PLAN.md) and the handoffs of
+   2026-11-12 and 2026-11-24 in `docs/history/`.
 2. **Build automation.** `scripts/build_all.py` builds everything in the VM (see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md));
    a GitHub Actions job that at least builds the installer from a release payload would still help.
 3. **Other cars and NBT software levels**, and possibly NBT Evo (different DSI library).

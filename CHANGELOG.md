@@ -2,6 +2,32 @@
 
 Versions are named after the build date of the installer payload.
 
+## Unreleased (in the repository, not yet in an installer release)
+
+Running in the developer's car (BMW F07 2014, OnePlus 7 Pro); built from this repository the programs are identical to
+the ones on the car (checked 2026-11-24 with `scripts/build_all.py`). The installer does not contain these parts yet.
+
+- **Android Auto sound through the car speakers, without Bluetooth audio from the phone:**
+  - `nbt_a2i_play` plays the Android Auto media sound into the head unit's amplifier (A2I); 8 channels, the stock
+    music player is paused while it plays (`sound.args`, `sound.nostop`).
+  - **"iPod over Bluetooth" mode** (2026-11-24): the phone appears in iDrive as an Apple device "Android Auto" with
+    title, artist, album, cover and length, also in the instrument cluster; skip works from iDrive and the steering
+    wheel. Parts: `nbt_ipod_tap` (filter in front of the Bluetooth audio driver), `nbt_aa_ipod` (Apple driver stand-in),
+    `nbt_aa_wms` (own SBC sound device), started by `scripts/nbt-aa-iap.sh`. The phone has to connect by Bluetooth
+    while the service is already running (otherwise switch Bluetooth off and on once). Off: `touch $P/iap.off`.
+  - Fixed: the music collection / media tab lost its sound because our video player ran with `-a0` in the shared
+    media engine.
+- **Fewer picture stalls and restarts:** video flow control and a frame-rate limit (NBT-AAD patch 0003): the phone never
+  sends faster than the stock player shows; `fifo_http` waits longer for a slow player; a stalled player only restarts
+  the video chain, not the session.
+- **Keys:** radio panel skip keys control Android Auto media (`config/mfl.map`); media keys declared to the phone.
+- **Menu entry:** more reliable focus handling (one hold event per level, fallback to the next level), accidental
+  presses right after the page appears are ignored.
+- **Diagnostics:** every service run keeps its logs in `$P/journal/` (newest 60), `$P/sessions.log` records why each
+  session ended; `scripts/car-journal-collect.sh` fetches them in one go.
+- Build: NBT-AAD patches numbered `patches/000N-*.patch`; `scripts/build_all.py` builds the new programs too.
+- Past trials (iPod in the snap-in over USB, probes) moved to `experiments/ipod-usb-trials/`.
+
 ## 2026.11.10.2
 
 Tested on the car (BMW F07 2014, OnePlus 7 Pro), including install with the installer.

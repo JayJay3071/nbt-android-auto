@@ -350,6 +350,90 @@ static void hmi_visible(void)
     (void)r;
 }
 
+/* ---- session history ------------------------------------------------------------------------------------------------- */
+
+/* Appends why a session (or its decoder) ended to a file that survives restarts and reboots: the tail of the session log
+ * without the per-frame lines, the decoder statistics and what the stock media service logged about our stream.
+ * Car 2026-11-11: the reason for a drop-out was lost again, the snapshot of the restart button only keeps the last
+ * three session logs and 400 system log lines. The installer's "save diagnostic logs" fetches the file. */
+#define HISTORY_FILE "/var/opt/hmi/data/rw/NbtAndroidAutoRT/sessions.log"
+
+static void history(const char* what, unsigned session, const char* decoder_log, long seconds)
+{
+    char cmd[900];
+    struct stat st;
+    int r;
+    if (!stat(HISTORY_FILE, &st) && st.st_size > 300000)
+        rename(HISTORY_FILE, HISTORY_FILE ".1");
+    snprintf(cmd, sizeof(cmd),
+             "{ echo \"=== `date` %s session %u after %ld s\";"
+             " grep -v -e 'Frame RX' -e ' Data: ' -e 'Streaming Media' -e '^.NAV' capture-%u.log | tail -25;"
+             " echo '--- decoder'; tail -12 %s;"
+             " echo '--- media service'; sloginfo | grep -e io-nme -e a2i | grep -v -e AVRCP -e 'no PTS' -e 'NmeGraph video' | tail -40; }"
+             " >> " HISTORY_FILE " 2>&1",
+             what, session, seconds, session, decoder_log);
+    r = system(cmd);
+    (void)r;
+}
+
+/* ---- decoder restart inside a running session ---------------------------------------------------------------------- */
+
+/* Hardware video mode only. The stock player gives up when its input stalls ("stream inactive"), and fifo_http ends when
+ * the player does not read for 10 s (2 s until 2026-11-12) or does not come back after closing. Until 2026-11-11 either one ended the whole Android Auto session; the phone then
+ * refused to reconnect until it was replugged ("connects, then drops again at once"). Now only the video chain is
+ * started again; the session (oneplus_native) notices that nobody reads the FIFO and asks the phone for a new key frame.
+ * viewport: 0 = none, 1 = centred, 2 = left edge (iDrive stays visible). Returns 1 when the new player is connected. */
+static int restart_video_chain(Child* http, Child* decoder, Child* hwv, const char* decoder_mode, int viewport,
+                               const char* decoder_log, const char* hwvideo_log)
+{
+    long long limit;
+    int r;
+    end(hwv);
+    if (viewport)
+        hmi_visible();
+    end(http);
+    limit = ms() + 3000;
+    while (alive(decoder) && ms() < limit)
+        usleep(20000);
+    end(decoder);
+    r = system("slay -f -Q -s TERM NmeCmdLine >/dev/null 2>&1");
+    usleep(300000);
+    r = system("slay -f -Q -s KILL NmeCmdLine >/dev/null 2>&1");
+    (void)r;
+    unlink("http.ready");
+    /* Throw away what is left in the FIFO: the cut-off end of the last picture. Car 2026-11-11: the restarted player got
+     * that first, then showed nothing at all ("discard surface with no PTS", 0 frames in 47 s). */
+    {
+        int fd = open("annexb.fifo", O_RDONLY | O_NONBLOCK);
+        if (fd >= 0) {
+            drain(fd);
+            close(fd);
+        }
+    }
+    {
+        char* args[] = {"./fifo_http", "annexb.fifo", "http.ready", 0};
+        *http = spawn(args, 0, 0);
+    }
+    {
+        char* args[] = {"./decode_runner", "0", RUNTIME_DIR "/NmeCmdLine", "http://127.0.0.1:18765/live.h264",
+                        (char*)decoder_mode, 0};
+        *decoder = spawn(args, 0, decoder_log);
+    }
+    limit = ms() + 10000;
+    while (!stopping && access("http.ready", F_OK) && alive(http) && alive(decoder) && ms() < limit)
+        usleep(100000);
+    if (stopping || access("http.ready", F_OK) || !alive(http) || !alive(decoder))
+        return 0;
+    {
+        char* args[] = {"./nbt_hwvideo", "--rows", "480", viewport ? "--viewport" : 0,
+                        viewport == 2 ? "0,0,800,480" : "240,0,800,480", viewport == 2 ? "--keep-hmi" : 0, 0};
+        setenv("LD_LIBRARY_PATH", SYSTEM_LIBRARY_PATH, 1);
+        *hwv = spawn(args, 0, hwvideo_log);
+        setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
+    }
+    return 1;
+}
+
 /* ---- main ------------------------------------------------------------------------------------------------------------ */
 
 int main(int argc, char** argv)
@@ -361,6 +445,7 @@ int main(int argc, char** argv)
     Child capture = {0, 0}; /* oneplus_native --capture-video: the Android Auto session */
     Child knob = {0, 0};    /* nbt_knob: iDrive controller -> input.fifo */
     Child hwv = {0, 0};     /* nbt_hwvideo: shows the video window in front of iDrive */
+    Child sound = {0, 0};   /* nbt_a2i_play: Android Auto media sound -> media input of the amplifier router */
     (void)argv;
     int guard = -1, lock = -1, bus, device, type, attempts = 0;
     int live = 0, wal = 0, gate = 0, hw = 0, res720 = 0, center = 0, ana = 0, right = 0; /* mode switches */
@@ -420,6 +505,51 @@ int main(int argc, char** argv)
     setenv("NBT_VID_INSETS", "0,180,0,0", 0);
     /* pad each H.264 access unit to 8 KB with a filler NAL so the decoder's byte buffers fill quickly (input lag) */
     setenv("NBT_AA_PAD", "8192", 0);
+    /* access unit delimiter behind every picture (input lag, see aa_video_capture.cpp); off with the file aud.off */
+    if (!access("/var/opt/hmi/data/rw/NbtAndroidAutoRT/aud.off", F_OK))
+        setenv("NBT_AA_AUD", "0", 1);
+    /* SPS frame rate stays off (car 2026-11-12: ~10 s delay); sps.off kept for the binaries that had it on */
+    if (!access("/var/opt/hmi/data/rw/NbtAndroidAutoRT/sps.off", F_OK))
+        setenv("NBT_AA_SPS_FPS", "0", 1);
+    /* Video frame rate limit (aa_session.cpp, paced video acks): the stock player shows about 25 pictures/s, the
+     * phone sends 30 while the map moves and the player fell behind until it was restarted (every ~65 s, car
+     * 2026-11-12). Default 20/s; the file video.fps holds another number (0 = no limit). */
+    {
+        char fps[16] = "20";
+        FILE* f = fopen("/var/opt/hmi/data/rw/NbtAndroidAutoRT/video.fps", "r");
+        if (f) {
+            if (!fgets(fps, sizeof(fps), f))
+                strcpy(fps, "20");
+            fclose(f);
+            fps[strcspn(fps, "\r\n ")] = 0;
+        }
+        setenv("NBT_AA_VIDEO_FPS", fps, 1);
+    }
+    /* Flow control (2026-11-12): a picture is acked to the phone only after it went to the player (aa_video_capture.cpp,
+     * AASession::setVideoAckGate), and fifo_http waits 10 s for a player that does not read instead of 2 s. Off with
+     * the file video.gate.off. Optional test values: video.pad (bytes each picture is padded to, default 8192) and
+     * http.stall (milliseconds fifo_http waits). */
+    setenv("NBT_AA_VIDEO_GATE", access("/var/opt/hmi/data/rw/NbtAndroidAutoRT/video.gate.off", F_OK) ? "1" : "0", 1);
+    {
+        static const char* const files[2][2] = {{"/var/opt/hmi/data/rw/NbtAndroidAutoRT/video.pad", "NBT_AA_PAD"},
+                                                {"/var/opt/hmi/data/rw/NbtAndroidAutoRT/http.stall", "NBT_HTTP_STALL_MS"}};
+        int i;
+        for (i = 0; i < 2; ++i) {
+            char value[16];
+            FILE* f = fopen(files[i][0], "r");
+            if (!f)
+                continue;
+            if (fgets(value, sizeof(value), f)) {
+                value[strcspn(value, "\r\n ")] = 0;
+                if (value[0] >= '0' && value[0] <= '9')
+                    setenv(files[i][1], value, 1);
+            }
+            fclose(f);
+        }
+    }
+    /* Media keys (skip from the steering wheel): declared to the phone unless the file mediakeys.off exists */
+    if (access("/var/opt/hmi/data/rw/NbtAndroidAutoRT/mediakeys.off", F_OK))
+        setenv("NBT_SDR_MEDIA_KEYS", "1", 1);
     setenv("NBT_CAR_YEAR", "2014", 1);
     setenv("NBT_HU_MODEL", "HU_NBT", 1);
     setenv("NBT_SDR_DROP", "2,4,9", 1); /* services not offered to the phone (see NBT-AAD sdr_builder) */
@@ -531,6 +661,33 @@ int main(int argc, char** argv)
         setenv("LD_LIBRARY_PATH", SYSTEM_LIBRARY_PATH, 1);
         knob = spawn(args, 0, "knob.log");
         setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
+    }
+    /* Optional media sound over USB (nbt_a2i_play present, 2026-11-11): the media audio sink (9) is offered to the phone,
+     * the session writes its 48 kHz PCM into audio.fifo and nbt_a2i_play plays it through the head unit's media input.
+     * Without the program the phone keeps playing over Bluetooth as before. */
+    if (!access("nbt_a2i_play", X_OK) && (!mkfifo("audio.fifo", 0600) || errno == EEXIST)) {
+        /* optional sound.args: "<endpoint> <channels>" instead of the program's default */
+        static char sargs[80];
+        char* sv[4];
+        char* args[] = {"./nbt_a2i_play", "audio.fifo", 0, 0, 0};
+        FILE* f = fopen("sound.args", "r");
+        if (f) {
+            if (fgets(sargs, sizeof(sargs), f)) {
+                size_t n = strlen(sargs);
+                while (n && (sargs[n - 1] == '\n' || sargs[n - 1] == '\r'))
+                    sargs[--n] = 0;
+                if (split(sargs, sv, 3) == 2) {
+                    args[2] = sv[0];
+                    args[3] = sv[1];
+                }
+            }
+            fclose(f);
+        }
+        setenv("LD_LIBRARY_PATH", SYSTEM_LIBRARY_PATH, 1);
+        sound = spawn(args, 0, "sound.log");
+        setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
+        setenv("NBT_AA_AUDIO_FIFO", RUNTIME_DIR "/audio.fifo", 1);
+        setenv("NBT_SDR_DROP", "2,4", 1);
     }
 
     /* ---- one Android Auto session per loop pass ---- */
@@ -659,12 +816,46 @@ int main(int argc, char** argv)
             }
             report("running", session);
             {
-                long long began = ms();
-                while (!stopping && alive(&capture) && alive(&http) &&
-                       (live || (alive(&decoder) && (hw || alive(&frames))))) {
+                long long began = ms(), chain_since = ms();
+                int chain_restarts = 0;
+                char decname[48], hwname[48];
+                snprintf(decname, sizeof(decname), "decoder-%u.log", session);
+                while (!stopping && alive(&capture)) {
+                    const int chain_ok = alive(&http) && (live || (alive(&decoder) && (hw || alive(&frames))));
+                    if (!chain_ok) {
+                        /* a chain that ran for 30 s was a working one: start counting again. Only a decoder that dies
+                         * five times in a row within 30 s each ends the session. Car 2026-11-12: with 120 s the
+                         * restarts every ~65 s during navigation (player falling behind) were never reset, and the
+                         * fifth one ended a 2-hour session (16:52) and a 20-minute one (17:13); the phone then needed
+                         * replugging. */
+                        if (ms() - chain_since >= 30000)
+                            chain_restarts = 0;
+                        if (!hw || live || chain_restarts >= 5)
+                            break;
+                        ++chain_restarts;
+                        history("decoder ended in", session, decname, (long)((ms() - began) / 1000));
+                        report("starting_decoder", session);
+                        snprintf(decname, sizeof(decname), "decoder-%u-r%d.log", session, chain_restarts);
+                        snprintf(hwname, sizeof(hwname), "hwvideo-%u-r%d.log", session, chain_restarts);
+                        if (!restart_video_chain(&http, &decoder, &hwv,
+                                                 (center || ana) ? "screencenter" : res720 ? "screen720" : "screen",
+                                                 !center ? 0 : right ? 2 : 1, decname, hwname))
+                            break;
+                        /* the new player is connected: the session starts its stream again with config + key frame */
+                        kill(capture.pid, SIGUSR1);
+                        chain_since = ms();
+                        report("running", session);
+                    }
+                    /* the player opened a new connection to fifo_http (its own reconnect after 5 s without data): the
+                     * stream has to start again with config + key frame, as after a chain restart */
+                    if (!access("http.resync", F_OK)) {
+                        unlink("http.resync");
+                        kill(capture.pid, SIGUSR1);
+                    }
                     usleep(200000);
                     keep_reported(session);
                 }
+                history("end of", session, decname, (long)((ms() - began) / 1000));
                 /* a session that ran for a minute was a good one: its end is not a failed attempt (review 2026-11-09:
                  * the counter was only reset by unplugging, so the third normal session end of a drive showed
                  * "replug the phone") */
@@ -717,8 +908,10 @@ done:
     end(&decoder);
     end(&frames);
     end(&knob);
+    end(&sound);
     end(&lease);
     unlink("input.fifo");
+    unlink("audio.fifo");
     if (guard >= 0) {
         drain(guard);
         close(guard);

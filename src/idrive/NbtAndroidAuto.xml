@@ -34,6 +34,13 @@
       <!-- second way into the hold states (car 2026-11-09: iDrive ignored 52 after the page had been left from level 18;
            the plugin alternates 52 / 54 while one is ignored) -->
       <focusEvent id="54" target="13"/>
+      <!-- one event per hold level (car 2026-11-11): the plugin falls back level by level when iDrive ignores one -->
+      <focusEvent id="55" target="19"/>
+      <focusEvent id="56" target="18"/>
+      <focusEvent id="57" target="17"/>
+      <focusEvent id="58" target="16"/>
+      <focusEvent id="59" target="15"/>
+      <focusEvent id="60" target="14"/>
     </events>
     <hmiStates>
       <hmiState id="10" textModel="3" text="Android Auto">

@@ -37,11 +37,13 @@ int main(int argc, char **argv)
     a2i_cfg cfg;
     int beeps, rc, primed = 0, i;
     unsigned long long pos = 0, total;
-    uint32_t cookie = 0x05555555u;
+    uint32_t cookie = 0x05555555u; int nch = 2;
     if (argc < 3) { fprintf(stderr, "usage: %s ENDPOINT BEEPS [legacy|factory]\n", argv[0]); return 2; }
     beeps = atoi(argv[2]);
     if (beeps < 1 || beeps > 9) return 2;
     if (argc > 3 && !strcmp(argv[3], "factory")) cookie = 0x0ABABABAu;
+    if (argc > 4) nch = atoi(argv[4]);  /* channels of the endpoint (input_multich_0), sound on the first two */
+    if (nch < 1 || nch > 8) return 2;
     alarm(15);
     lib = dlopen("/opt/sys/lib/liba2i_client.so", RTLD_NOW);
     if (!lib) { printf("dlopen: %s\n", dlerror()); return 3; }
@@ -55,7 +57,7 @@ int main(int argc, char **argv)
     if (!a_open || !a_start || !a_notify || !a_close || !a_getbuf || !a_write) { printf("symbols missing\n"); return 3; }
     memset(&cfg, 0, sizeof(cfg));
     cfg.magic = 0x02000000; cfg.direction = 0; cfg.field_08 = 1; cfg.mode = 2; cfg.buffer_size = 0x400;
-    cfg.channels = 2; cfg.bytes_per_sample = 2; cfg.sample_rate = 48000; cfg.endpoint_name = argv[1];
+    cfg.channels = nch; cfg.bytes_per_sample = 2; cfg.sample_rate = 48000; cfg.endpoint_name = argv[1];
     cfg.channel_type = 1; cfg.sample_bits = 0; cfg.field_34 = cookie; cfg.timeout_ms = 2000;
     rc = a_open(&h, &cfg);
     printf("A2I_Client_Open('%s', cookie 0x%08X) rc=%d %s\n", argv[1], cookie, rc, rc && a_err ? a_err(rc) : "");
@@ -70,12 +72,13 @@ int main(int argc, char **argv)
         if (rc || !buf || !size) { usleep(2000); continue; }
         {
             int16_t *s = (int16_t *)buf;
-            size_t n = size / 4;
+            size_t n = size / (2 * nch);
+            memset(buf, 0, size);
             for (i = 0; i < (int)n; i++, pos++) {
                 double t = (double)pos / 48000.0 - 0.5;
                 int on = t >= 0 && (int)(t / 0.55) < beeps && fmod(t, 0.55) < 0.25;
                 int16_t v = on ? (int16_t)(9000 * sin(2 * M_PI * 880.0 * (double)pos / 48000.0)) : 0;
-                s[2 * i] = v; s[2 * i + 1] = v;
+                s[nch * i] = v; if (nch > 1) s[nch * i + 1] = v;
             }
         }
         rc = a_write(h, buf, size, 0);

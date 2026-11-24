@@ -64,7 +64,12 @@ const unsigned kEntryState=10, kHoldState=13, kEvHold=52, kFocus=1, kVisible=11,
 // focus handler stores the mode, restarts the service and sends focus event 53 back to page 10
 const unsigned kMode169State=30, kModeWideState=31, kEvEntry=53, kModel169=6, kModelWide=7;
 const unsigned kRestartState=32;                     // "Android Auto neu starten" -> inert page 32, back to 10
-const unsigned kEvHoldAlt=54;                        // focus event to hold state 13 (fallback when 52 is ignored)
+// Focus events into the hold states, deepest first: level 7 (state 20) .. level 0 (state 13). Car 2026-11-11: once the
+// page had been left from a middle level (BACK twice, then MENU), iDrive ignored event 52 (-> state 20) for the rest of
+// the drive, while 54 (-> state 13) kept working. The plugin alternated 52 / 54 and waited 5 s + 10 s after each ignored
+// 52: picture hidden for seconds, and the split screen kept the focus after a tilt right. Now an ignored event is
+// noticed after 0.7 s and the next shallower level is used from then on (kHoldEvent[maxLevel]).
+const unsigned kHoldEvent[8]={54,60,59,58,57,56,55,52};
 // text ids in NbtAndroidAuto_ALL_Texts.zip (make_aa_entry_resources.py)
 enum { kTxtConnectUsb=2, kTxtNoPhone=3, kTxtStarting=4, kTxtRunning=5, kTxtReplug=6, kTxtUnsupported=7,
        kTxtServiceDown=8, kTxtSeveral=9, kTxt169=11, kTxtWide=12, kTxt169On=16, kTxtWideOn=17 };
@@ -202,6 +207,13 @@ public:
     BackToEntry():app(0) {}
     void run() { if(app){plog("mode chosen -> back to page 10");app->triggerEvent(kEvEntry);} }
 };
+// 0.7 s after a hold event sent from the entry page: still on the entry page -> the event was ignored
+class Quick : public bmw::Runnable {
+public:
+    Entry* e; bool pending;
+    Quick():e(0),pending(false) {}
+    void run();
+};
 class Entry : public bmw::Runnable {
 public:
     bmw::PluginApp* app;
@@ -210,11 +222,19 @@ public:
     unsigned shownText; int shownMode; long window; unsigned holds, ignoredHolds; long lastSideHold, lastAutoHold; long long lastSideHoldMs, lastHoldMs, lastFocusMs;
     Checker checker;
     Verifier verifier;
+    Quick quick;
+    unsigned maxLevel;   // deepest hold level iDrive still accepts a focus event for (7 = state 20)
+    long long entrySinceMs;   // when the entry page last got the focus
+    // Car 2026-11-11: BACK / tilt left in Android Auto shows the entry page for a moment before iDrive is put back on a
+    // hold state. A push meant for the phone then pressed "Android Auto neu starten" (or a picture mode, which restarts
+    // too): the session ended and the phone had to be replugged - the "crash" of that evening. While Android Auto runs,
+    // a button pressed within 4 s after the entry page appeared is not carried out.
+    bool accidental() { readStatus(&running); return running&&now_ms()-entrySinceMs<4000; }
     BackToEntry back;
     HoldSlot slots[kHoldCount];
     Entry():app(0),stopping(false),polling(false),entryFocused(false),running(false),focusMask(0),visibleMask(0),
-            shownText(0),shownMode(0),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0) {
-        checker.e=this; verifier.e=this;
+            shownText(0),shownMode(0),window(0),holds(0),ignoredHolds(0),lastSideHold(0),lastAutoHold(0),lastSideHoldMs(-100000),lastHoldMs(-100000),lastFocusMs(0),maxLevel(7),entrySinceMs(0) {
+        checker.e=this; verifier.e=this; quick.e=this;
         for(unsigned i=0;i<kHoldCount;++i){slots[i].e=this;slots[i].idx=i;}
     }
     bool holdFocused() const { return focusMask!=0; }
@@ -228,19 +248,22 @@ public:
         // each sent the event, 50 ms apart and in the middle of iDrive's page transition; in the log of 2026-11-09 the
         // first ignored event was exactly such a pair. One event per second at most.
         const long long tm=now_ms();
-        if(tm-lastHoldMs<1000){plog("hold skipped (one was just sent)");return;}
+        // too early: look again when the pause is over (a skipped hold used to leave the entry page up for 10 s)
+        if(tm-lastHoldMs<400){plog("hold postponed (one was just sent)");check((unsigned)(420-(tm-lastHoldMs)));return;}
         lastHoldMs=tm;lastAutoHold=now_s();
         long t=now_s();
         if(t-window>=60){window=t;holds=0;}
-        if(++holds>10){plog("hold refused by loop guard (10/min)");touch(kHidden);return;}
+        // at level 0 every BACK / tilt left needs one event, so the guard is wider than the old 10 per minute
+        if(++holds>40){plog("hold refused by loop guard (40/min)");touch(kHidden);return;}
         // car 2026-11-09: iDrive sometimes ignores 52 for the rest of the drive (entry page shown, picture hidden): after
         // an ignored attempt the next one uses 54 (to hold state 13), then 52 again, ...
-        const unsigned ev=ignoredHolds%2?kEvHoldAlt:kEvHold;
+        const unsigned ev=kHoldEvent[maxLevel];
         plog(why,(int)holds);
         plog("  focus event",(int)ev);
         plog("  ms since the last focus change",(int)(tm-lastFocusMs>100000?100000:tm-lastFocusMs));
         app->triggerEvent(ev);
         verify();
+        if(!quick.pending&&!stopping){quick.pending=true;app->post(&quick,700);}
     }
     // HMI thread, every 500 ms while our page has focus: status text; a slow retry (every 10 s) when the entry page shows
     // while Android Auto runs and the last hold attempt did not take
@@ -255,7 +278,7 @@ public:
             app->updateModel(kModel169,a);app->updateModel(kModelWide,b);shownMode=mode;
         }
         long t=now_s();
-        if(running&&entryFocused&&!holdFocused()&&t-lastAutoHold>=10){lastAutoHold=t;hold("hold (entry page, retry)");}
+        if(running&&entryFocused&&!holdFocused()&&t-lastAutoHold>=3){lastAutoHold=t;hold("hold (entry page, retry)");}
         app->post(this,500);
     }
     void startPolling(unsigned delay) { if(!polling&&!stopping){polling=true;app->post(this,delay);} }
@@ -263,6 +286,7 @@ public:
         Entry* e=static_cast<Entry*>(self);
         bool focused=false;p.readBool(focused);
         e->entryFocused=focused;e->lastFocusMs=now_ms();
+        if(focused)e->entrySinceMs=e->lastFocusMs;
         plog("entry focus",focused);
         if(focused&&!e->stopping){
             unlink(kLeave);                    // the driver came back on purpose
@@ -278,7 +302,11 @@ public:
     static bool modeFocus(Entry* e,const bmw::Parcel& p,bool split) {
         bool focused=false;p.readBool(focused);
         plog(split?"mode page 16:9 focus":"mode page widescreen focus",focused);
-        if(focused&&!e->stopping){setMode(split);e->shownMode=0;e->app->post(&e->back,400);}
+        if(focused&&!e->stopping){
+            if(e->accidental())plog("picture mode button ignored (pressed right after BACK)");
+            else{setMode(split);e->shownMode=0;}
+            e->app->post(&e->back,400);
+        }
         return true;
     }
     static bool restartFocus(void* self,const bmw::Parcel& p) {
@@ -286,6 +314,7 @@ public:
         bool focused=false;p.readBool(focused);
         plog("restart page focus",focused);
         if(focused&&!e->stopping){
+            if(e->accidental()){plog("restart button ignored (pressed right after BACK)");e->app->post(&e->back,400);return true;}
             restartService(0);
             e->holds=0;e->window=now_s();e->lastSideHoldMs=-100000;   // fresh loop guard for the new session
             e->app->post(&e->back,400);
@@ -327,6 +356,16 @@ void Checker::run() {
     plog("check: page left");
     touch(kHidden);                                        // the page was left: hide the picture
 }
+void Quick::run() {
+    pending=false;
+    if(!e||e->stopping||!e->app||e->holdFocused())return;
+    readStatus(&e->running);
+    if(!e->running||!e->entryFocused)return;               // left the page, or the focus is in a side panel
+    if(e->maxLevel>0){--e->maxLevel;plog("hold event ignored -> next level",(int)e->maxLevel);}
+    else plog("hold event ignored at level 0");
+    e->lastHoldMs=-100000;
+    e->hold("hold (retry after an ignored event)");
+}
 void Verifier::run() {
     pending=false;
     if(!e||e->stopping||!e->app||e->holdFocused())return;
@@ -339,7 +378,7 @@ bool created=false;
 bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& p,const bmw::Bundle& c) {
     if(created)return 0;
     bmw::PluginApp* app=new bmw::PluginApp(d,bmw::BasicString<char>(name),p,c);
-    entry.app=app;entry.stopping=false;entry.polling=false;entry.checker.e=&entry;entry.checker.pending=false;entry.verifier.e=&entry;entry.verifier.pending=false;
+    entry.app=app;entry.stopping=false;entry.polling=false;entry.checker.e=&entry;entry.checker.pending=false;entry.verifier.e=&entry;entry.verifier.pending=false;entry.quick.e=&entry;entry.quick.pending=false;entry.maxLevel=7;
     entry.focusMask=entry.visibleMask=0;
     bmw::ActionDelegate onEntry={&entry,&Entry::entryFocus};
     app->addHandler(kEntryState,kFocus,onEntry);
@@ -370,7 +409,7 @@ void destroy(bmw::IPluginApp* p) {
     if(!created)return;
     entry.stopping=true;
     touch(kHidden);
-    entry.checker.e=0;entry.verifier.e=0;entry.back.app=0;
+    entry.checker.e=0;entry.verifier.e=0;entry.quick.e=0;entry.back.app=0;
     delete reinterpret_cast<bmw::PluginApp*>(p);   // native handler drops the queued runnable (entry is static)
     entry.app=0;
     created=false;
