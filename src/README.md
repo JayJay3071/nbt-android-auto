@@ -11,11 +11,11 @@ boot.sh (scripts/nbt-aa-boot.sh, started by the HMI plugin 15 s after the HMI)
  ├─ native_service ............ supervisor: finds the phone, starts one session after the other
  │   ├─ accessory_window ...... keeps the stock USB stack away from the phone (whole service life)
  │   ├─ nbt_knob .............. iDrive controller (MOST, observe-only) ──▶ input.fifo
+ │   ├─ nbt_decoder ........... annexb.fifo ▶ the head unit's video interface, 1280x480 (started once, kept)
  │   └─ per session:
  │       ├─ oneplus_native --switch-aa      phone ▶ Android Open Accessory mode
- │       ├─ fifo_http                       annexb.fifo ▶ http://127.0.0.1:18765
- │       ├─ decode_runner ▶ NmeCmdLine      stock Cinemo player draws into the stock video window
- │       ├─ nbt_hwvideo                     VideoApp (MOST) shows that window in front of iDrive
+ │       ├─ nbt_carplay                     an iPhone instead: the whole CarPlay session, same FIFOs and state files
+ │       ├─ (with decoder.off: fifo_http, decode_runner ▶ NmeCmdLine and nbt_hwvideo, the stock player path)
  │       └─ oneplus_native --capture-video  the Android Auto session:
  │             USB ▶ TLS/protocol (NBT-AAD core) ▶ H.264 ▶ annexb.fifo
  │             input.fifo ▶ key events ▶ phone
@@ -26,7 +26,8 @@ boot.sh (scripts/nbt-aa-boot.sh, started by the HMI plugin 15 s after the HMI)
  │   ├─ nbt_ipod_tap .......... in front of the Bluetooth audio driver: phone counts as Apple device, sound = nbt_aa_wms
  │   └─ nbt_aa_ipod ........... Apple driver stand-in: titles, cover, length, skip keys (from media.state)
  └─ nbt_cluster ............... nav.state ▶ instrument cluster (MOST HUDTerminal): arrow, distance, street, shields
-libNbtAndroidAuto.so (HMI plugin) ▶ menu entry, status page (reads /fs/ram3/nbt-aa-state), picture mode, restart button
+libNbtAndroidAuto.so (HMI plugin) ▶ menu entry, status page (reads /fs/ram3/nbt-aa-state), decoder and restart buttons
+ └─ nbt_reset ................. "Restart NBT": diagnostic reset of the head unit through the car's gateway
 ```
 
 Runtime directory: `/fs/ram3/nbt-aa-native` (RAM). Installed package: `/var/opt/hmi/data/rw/NbtAndroidAutoRT` and
@@ -38,8 +39,11 @@ Runtime directory: `/fs/ram3/nbt-aa-native` (RAM). Installed package: `/var/opt/
 |---|---|---|
 | `native_service` | `android_auto/nbt_native_service.c` | Start here: the file header explains the whole session flow and the mode files. |
 | `oneplus_native` | `android_auto/oneplus_aoa.c` (main, USB/AOA), `android_auto/tls_usb_probe.cpp` (TLS over USB), `android_auto/aa_video_capture.cpp` (session glue: video queue, controller input, navigation), `android_auto/aa_cryptor_mbedtls.cpp` + the NBT-AAD core | Built with `-DNBT_AA_TLS_HANDSHAKE -DNBT_AA_CAPTURE`. |
-| `fifo_http` | `android_auto/nbt_fifo_http.c` | |
-| `decode_runner` | `android_auto/nbt_decode_runner.c` | Explains the NmeCmdLine options and why decoding stays in software. |
+| `nbt_decoder` | `android_auto/decoder/nbt_decoder.c`, `decoder/nbt_hwdec.h`, FFmpeg 2.8.22 | GPLv3, from valinet's fork. Background: [docs/DECODER.md](../docs/DECODER.md). |
+| `nbt_carplay` | `carplay/` | GPLv3, from valinet's fork. Background: [docs/CARPLAY.md](../docs/CARPLAY.md). |
+| `nbt_reset` | `idrive/reboot/nbt_reset.c` | GPLv3, from valinet's fork. [idrive/reboot/README.md](idrive/reboot/README.md). |
+| `fifo_http` | `android_auto/nbt_fifo_http.c` | Stock player path only (`decoder.off`). |
+| `decode_runner` | `android_auto/nbt_decode_runner.c` | Stock player path only. Explains the NmeCmdLine options and why decoding stays in software there. |
 | `accessory_window` | `android_auto/accessory_window.c` | Adapted from NBT-AAD. |
 | `nbt_knob` | `android_auto/knob/nbt_knob.cpp` + `knob/ref/` | Radio panel keys for media: `config/mfl.map`. |
 | `nbt_a2i_play` | `android_auto/nbt_a2i_play.c` | Media sound into the amplifier (`sound.args`, `sound.nostop`). |
@@ -47,7 +51,7 @@ Runtime directory: `/fs/ram3/nbt-aa-native` (RAM). Installed package: `/var/opt/
 | `nbt_ipod_tap` | `android_auto/nbt_ipod_tap.c` | Filter in front of `/fs/avrcp0` (iPod mode). |
 | `nbt_aa_ipod` | `android_auto/nbt_aa_ipod.c` | Takes `/fs/btipod`: track info and skip keys (iPod mode). |
 | `nbt_bt_inject` | `android_auto/nbt_bt_inject.c` | Older alternative: titles on the phone's normal Bluetooth entry (when the iPod mode is off). |
-| `nbt_hwvideo` | `android_auto/knob/nbt_hwvideo.cpp` + `knob/ref/` | Background: [docs/HW-VIDEO-PATH.md](../docs/HW-VIDEO-PATH.md). |
+| `nbt_hwvideo` | `android_auto/knob/nbt_hwvideo.cpp` + `knob/ref/` | Stock player path only. Background: [docs/HW-VIDEO-PATH.md](../docs/HW-VIDEO-PATH.md). |
 | `nbt_cluster` | `android_auto/knob/nbt_cluster.cpp` + `knob/ref/` | Background: [docs/CLUSTER-HUDTERMINAL.md](../docs/CLUSTER-HUDTERMINAL.md). |
 | `libNbtAndroidAuto.so` | `idrive/aa_entry_plugin.cpp`, `idrive/nbt_image_abi.hpp`, `idrive/NbtAndroidAuto.xml`, `idrive/NbtAndroidAuto.manifest`, `idrive/make_aa_entry_resources.py` | Links against two libraries from the head unit (see DEVELOPMENT.md). |
 

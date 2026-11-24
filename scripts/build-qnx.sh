@@ -65,6 +65,21 @@ $CXX -Iref nbt_knob.cpp ref/dsi_client.cpp ref/most/client.cpp ref/car/ccs_input
 $CXX -Iref nbt_hwvideo.cpp ref/dsi_client.cpp ref/most/client.cpp -o $OUT/nbt_hwvideo
 $CXX -Iref nbt_cluster.cpp ref/dsi_client.cpp ref/most/client.cpp -o $OUT/nbt_cluster -lm
 
+echo "== nbt_decoder (1280-wide picture: FFmpeg 2.8.22 H.264 decoder + the car's video interface; GPLv3, valinet)"
+cd $W
+if test ! -f ffmpeg-config/KEY; then
+  echo "SKIPPED: no FFmpeg sources (build_all.py could not get them)"
+elif sh build-ffmpeg-qnx.sh > ffmpeg.log 2>&1; then
+  cat ffmpeg.log
+  if ! $CC -O2 -Wall -Wextra -Wc,-std=gnu99 -I$W/ffmpeg-lib/include -I$W/ffmpeg $A/decoder/nbt_decoder.c \
+      $W/ffmpeg-lib/libavcodec.a $W/ffmpeg-lib/libavutil.a -lm -o $OUT/nbt_decoder; then
+    echo "SKIPPED: nbt_decoder did not compile (see above)"
+  fi
+else
+  cat ffmpeg.log
+  echo "SKIPPED: FFmpeg build failed (see above)"
+fi
+
 echo "== HMI plugin libNbtAndroidAuto.so"
 cd $W/src/idrive
 if test -f $HMI_LIBS/libAppFramework.A.so -a -f $HMI_LIBS/libCoreFramework.A.so; then
@@ -73,6 +88,40 @@ if test -f $HMI_LIBS/libAppFramework.A.so -a -f $HMI_LIBS/libCoreFramework.A.so;
 else
   echo "SKIPPED: no libAppFramework.A.so / libCoreFramework.A.so in $HMI_LIBS (copy them from your NBT)"
 fi
+
+echo "== nbt_carplay (wired CarPlay, GPLv3, valinet; lwIP, Monocypher, Mbed TLS; docs/CARPLAY.md)"
+if test ! -d $W/lwip/src -o ! -d $W/monocypher/src; then
+  echo "SKIPPED: no lwIP / Monocypher sources (build_all.py could not get them)"
+else
+  mkdir -p $W/carplay-obj
+  LW=$W/lwip/src
+  CPINC="-I$W/src/carplay -I$W/src/carplay/lwip_port -I$LW/include -I$W/monocypher/src -I$W/monocypher/src/optional $TLSINC"
+  ok=1
+  # third-party code without warnings; ours with
+  for c in $LW/core/init.c $LW/core/def.c $LW/core/inet_chksum.c $LW/core/ip.c $LW/core/mem.c $LW/core/memp.c \
+           $LW/core/netif.c $LW/core/pbuf.c $LW/core/sys.c $LW/core/tcp.c $LW/core/tcp_in.c $LW/core/tcp_out.c \
+           $LW/core/timeouts.c $LW/core/udp.c $LW/core/ipv6/ethip6.c $LW/core/ipv6/icmp6.c $LW/core/ipv6/inet6.c \
+           $LW/core/ipv6/ip6.c $LW/core/ipv6/ip6_addr.c $LW/core/ipv6/ip6_frag.c $LW/core/ipv6/mld6.c \
+           $LW/core/ipv6/nd6.c $LW/api/api_lib.c $LW/api/api_msg.c $LW/api/err.c $LW/api/netbuf.c $LW/api/sockets.c \
+           $LW/api/tcpip.c $LW/netif/ethernet.c $W/monocypher/src/monocypher.c \
+           $W/monocypher/src/optional/monocypher-ed25519.c; do
+    $CC -O2 -w -Wc,-std=gnu99 $CPINC -c $c -o $W/carplay-obj/`basename $c .c`.o || ok=0
+  done
+  cd $W/src/carplay
+  for c in nbt_carplay cp_util cp_acp cp_usb cp_lockdown cp_iap2 cp_ncm cp_net_lwip cp_bplist cp_crypto cp_airplay \
+           cp_screen cp_audio cp_mic cp_input lwip_port/sys_arch; do
+    $CC -O2 -Wall -Wextra -Wc,-std=gnu99 $CPINC -c $c.c -o $W/carplay-obj/cp-`basename $c`.o || ok=0
+  done
+  if test $ok = 1 && $CC $W/carplay-obj/*.o $TLSLIBS -lusbdi -o $OUT/nbt_carplay; then
+    :
+  else
+    echo "SKIPPED: nbt_carplay did not compile (see above)"
+  fi
+fi
+
+echo "== nbt_reset (NBT neu starten on the Android Auto page; GPLv3, valinet)"
+cd $W/src/idrive/reboot
+$CC -O2 -Wall -Wextra nbt_reset.c -lsocket -o $OUT/nbt_reset
 
 cd $W
 echo "== built"

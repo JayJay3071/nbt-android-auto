@@ -45,7 +45,8 @@ Questions or suggestions that do not fit an issue: **androidauto.nbt@proton.me**
   plugin), Python 3 for tools, PowerShell 5.1 compatible scripts. Shell scripts for the car use plain `sh` with LF line
   endings.
 - By contributing you agree that your contribution is licensed under the project's
-  [PolyForm Noncommercial License 1.0.0](LICENSE).
+  [PolyForm Noncommercial License 1.0.0](LICENSE). Changes to the GPLv3 parts (`nbt_decoder`, `src/carplay/`,
+  `nbt_reset`; listed in [NOTICE.md](NOTICE.md)) are licensed under the GNU GPL version 3 like those files.
 
 ## Never commit
 

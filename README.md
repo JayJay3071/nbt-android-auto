@@ -1,11 +1,13 @@
 # NBT Android Auto
 
-Wired Android Auto for the **original BMW NBT head unit** (CIC successor, 2013–2016, QNX 6.5 on x86), with no extra
-hardware. The phone's picture runs through the NBT's own hardware video path in full screen, you control it with the
-iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrument cluster.
+Wired Android Auto and wired Apple CarPlay for the **original BMW NBT head unit** (CIC successor, 2013–2016, QNX 6.5
+on x86), with no extra hardware. The phone's picture fills the display with every pixel, you control it with the
+iDrive controller, the music shows with title and cover like a built-in source, and turn-by-turn guidance shows up in
+the instrument cluster.
 
-> **Status: community prototype.** It works daily in the developer's car (BMW F07, 2014, OnePlus 7 Pro). It has not
-> been tested on other cars, other NBT software levels (I-Stufen) or NBT Evo. Read the [disclaimer](#disclaimer) first.
+> **Status: community prototype.** It works in the developer's car (BMW F07, 2014, OnePlus 7 Pro, iPhone 17 Air). It
+> has not been tested on other cars, other NBT software levels (I-Stufen) or NBT Evo. CarPlay and the new picture path
+> are new in 2026.11.24.2. Read the [disclaimer](#disclaimer) first.
 
 🎬 **Sneak peek:** [see it running in the car (Instagram video)](https://www.instagram.com/reel/DfkW1wYsB__/)
 
@@ -14,35 +16,71 @@ iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrum
 ## Features
 
 - **Android Auto over USB**: any Android phone, no phone-specific configuration.
-- **Hardware video**: 800x480 in full screen through the stock Cinemo/VideoApp path, about 23 fps at about 27 % CPU.
-  Two picture modes: **wide** (full width) and **16:9** (sharper, iDrive split screen stays visible on the right).
+- **Apple CarPlay over USB** (since 2026.11.24.2): plug in an iPhone; the NBT's own USB port and Apple chip are used, no
+  adapter. Siri and calls use the car's microphone. Details and limits: [docs/CARPLAY.md](docs/CARPLAY.md).
+- **Sharp picture** (since 2026.11.24.2): 1280x480, every display pixel is a phone pixel, 30 pictures a second, decoded by the
+  car's own H.264 decoder. A **Decoder** button on the page switches between hardware and software decoding.
+  Details: [docs/DECODER.md](docs/DECODER.md).
 - **iDrive controller**: turn = rotate, tilt = D-pad, press = OK, BACK = back. MENU / MEDIA / NAV / COM / OPTION leave
-  Android Auto, which keeps running in the background.
-- **Menu entry** *Multimedia → Android Auto*: shows the status, starts the service 15 s after the HMI boots and brings a
-  running session to the front.
-- **Sound through the car speakers** (since 2026.11.24): Android Auto music appears under Multimedia as an Apple
-  device "Android Auto" with title, artist, album, cover and length, also in the instrument cluster; skip works from
-  iDrive, the steering wheel and the radio panel keys. Needs the phone connected by Bluetooth as well (see below).
-- **Navigation in the instrument cluster** (6WB cluster) while Google Maps guides a route: arrow, distance bar, street
-  name, motorway/road shields and lanes (lanes not yet confirmed with a real phone). BMW navigation takes priority when it guides itself.
-- **Restart Android Auto** button on the Android Auto page restarts only the service (not the NBT) and saves a
-  diagnostic snapshot first.
+  the phone's picture, which keeps running in the background.
+- **Menu entry** *Multimedia → Android Auto / CarPlay*: shows the status, starts the service 15 s after the HMI boots
+  and brings a running session to the front.
+- **Sound with title and cover**: the phone's music appears under Multimedia like a built-in source, with title,
+  artist, album, cover and progress, also in the instrument cluster; skip works from iDrive, the steering wheel and
+  the radio panel keys. Works for Android Auto and CarPlay; the phone has to be connected by Bluetooth as well
+  (see [Sound](#sound)).
+- **Navigation in the instrument cluster** (6WB cluster) while Google Maps or Apple Maps guides a route: arrow,
+  distance bar, street name; with Android Auto also motorway/road shields and lanes (lanes not yet confirmed with a
+  real phone). BMW navigation takes priority when it guides itself.
+- **Restart buttons** on the page: **Restart Android Auto** restarts only the service and saves a diagnostic snapshot
+  first; **Restart NBT** restarts the whole head unit after a confirmation.
+
+## Sound
+
+The phone's sound does not need an AUX cable or the phone's own Bluetooth music entry. It plays through an Apple
+entry that this project adds under Multimedia, so iDrive shows what is playing and the skip keys work:
+
+![Title, artist, album, cover and skip keys in iDrive](docs/images/now-playing-title-cover.jpg)
+
+**Android Auto:** plug the phone in by USB, then connect it by Bluetooth. If Bluetooth was connected before (for
+example when you got in), switch Bluetooth on the phone off and on once.
+
+**CarPlay:** the iPhone is paired by Bluetooth too, but with **only "Audio" enabled**:
+
+1. Pair the iPhone with the car: Settings → Connections → Bluetooth → Add new device.
+
+   ![The iPhone in the car's Bluetooth list](docs/images/carplay-bluetooth-devices.jpg)
+2. Select the iPhone, press OPTION and choose **Configure device**.
+
+   ![OPTION menu: Configure device](docs/images/carplay-bluetooth-configure.jpg)
+3. Enable only **Audio**; Telephone 1 and Telephone 2 stay off. Calls and Siri then stay in CarPlay and use the car's
+   microphone.
+
+   ![Only Audio is enabled for the iPhone](docs/images/carplay-bluetooth-audio-only.jpg)
+4. On the iPhone, pick **CarPlay** as the audio output.
+
+Navigation prompts of Android Auto still come from the phone over its normal Bluetooth connection.
 
 ## Known limitations
 
-- **Sound needs Bluetooth (since 2026.11.24):** Android Auto media sound plays through the car speakers as an Apple
-  device "Android Auto" (title, cover, skip keys). The phone has to connect by Bluetooth while Android Auto is already
-  running (USB first, then Bluetooth; if it was connected before, switch Bluetooth off and on once). Tested with one
-  phone only. Navigation prompts still come from the phone over its normal Bluetooth connection.
-- **800x480 only.** The hardware capture (`dev-nvideocapture`) is limited to WVGA. 720p was tested: not sharper, more
-  input lag.
-- The controller has a noticeable delay because of the video buffer.
+- **Sound needs Bluetooth:** see [Sound](#sound). The phone has to connect by Bluetooth while the service is already
+  running (USB first, then Bluetooth). Tested with one Android phone and one iPhone.
+- **One kind of phone per start of the head unit:** after an Android phone, an iPhone only works after a restart of
+  the head unit, and the other way round. The page then shows "Restart the NBT first"; **Restart NBT** is below it.
+- **Decoder change needs a restart of the head unit** (the Decoder button says so).
+- **CarPlay loads the head unit heavily** (about 98 % CPU on the developer's car): iDrive can feel slower while it
+  runs. CarPlay turn hints in the cluster: only start, left and right were seen so far.
+- **New picture path, one car:** if the picture stays away on your car, the stock player path of earlier versions
+  (800x480) is still in the package: create the file `decoder.off` in `/var/opt/hmi/data/rw/NbtAndroidAutoRT` and
+  restart the head unit. Please report it.
+- **Restart NBT** needs the address of the car's gateway. The installer looks it up; if it cannot, the page says
+  "Gateway not reachable" ([src/idrive/reboot/README.md](src/idrive/reboot/README.md)).
 - No map picture in the instrument cluster: the 6WB cluster shows pictures only in its top line (turn arrow, shields).
-- In wide mode, switch iDrive split screen off (OPTION → split screen off), otherwise tilting right twice opens it.
+- Switch iDrive split screen off (OPTION → split screen off): the picture uses the whole display.
 - **Wired only.** Wireless Android Auto is not built in. One user reports that an aftermarket wireless Android Auto
   adapter on the car's USB port works in an F11, with occasional disconnects
   ([#3](https://github.com/JayJay3071/nbt-android-auto/issues/3)); I have not tested this myself.
-- Tested with one car and one phone only.
+- Tested with one car, one Android phone and one iPhone only.
 
 What changed between versions: [CHANGELOG.md](CHANGELOG.md).
 
@@ -74,7 +112,8 @@ Unlocking SSH changes the head unit's configuration. As with everything here, yo
    with the `payload/` folder from the release next to it.
 2. Connect the ENET cable, ignition on, enter IP address and root password, click **Install / Update**.
 3. Restart the iDrive.
-4. Plug in the phone and choose **Multimedia → Android Auto**.
+4. Plug in the phone and choose **Multimedia → Android Auto / CarPlay**. An iPhone asks "Trust this computer?" the
+   first time.
 
 The installer writes only two folders (`/var/opt/hmi/data/rw/NbtAndroidAutoRT/` and
 `/var/opt/hmi/data/rw/Plugins/NbtAndroidAuto/`), verifies every file byte by byte and can uninstall them again. It
@@ -93,19 +132,19 @@ phone model.
 ## How it works (short)
 
 ```
-Phone ──USB/AOA──▶ oneplus_native (Android Auto protocol, TLS, H.264)
-                     │ annexb.fifo
-                     ▼
-                   fifo_http ──HTTP──▶ decode_runner ──▶ io-nme / Cinemo NmeDeviceScreen (stock hardware video)
-                                                         ▲
-nbt_hwvideo ── MOST/DSI (VideoApp D7/D8) ────────────────┘   switches the stock video layer to our stream
-nbt_knob    ── watches iDrive controller events (MOST, CCS) ──▶ input.fifo ──▶ Android Auto keys
+Android phone ──USB/AOA──▶ oneplus_native (Android Auto protocol, TLS) ──┐ H.264
+iPhone ──USB (NCM, iAP2, AirPlay)──▶ nbt_carplay ────────────────────────┤ annexb.fifo
+                                                                         ▼
+                              nbt_decoder ──▶ the head unit's NVIDIA video interface (1280x480, own window)
+nbt_knob    ── watches iDrive controller events (MOST, CCS) ──▶ input.fifo ──▶ keys for the phone
+nbt_aa_wms, nbt_ipod_tap, nbt_aa_ipod ── the phone's sound, titles and cover as an Apple entry under Multimedia
 nbt_cluster ── navigation state from the phone ──▶ instrument cluster (HUDTerminal)
-NbtAndroidAuto (HMI plugin) ── menu entry, status page, autostart via boot.sh
+NbtAndroidAuto (HMI plugin) ── menu entry, status page, buttons, autostart via boot.sh
 ```
 
-More: [docs/HW-VIDEO-PATH.md](docs/HW-VIDEO-PATH.md), [docs/CLUSTER-HUDTERMINAL.md](docs/CLUSTER-HUDTERMINAL.md),
-[docs/ANDROID-AUTO.md](docs/ANDROID-AUTO.md). Older experiments (PNG pipeline, WAL sprites, first hello-world plugin)
+More: [docs/DECODER.md](docs/DECODER.md), [docs/CARPLAY.md](docs/CARPLAY.md),
+[docs/HW-VIDEO-PATH.md](docs/HW-VIDEO-PATH.md) (the stock player path of earlier versions),
+[docs/CLUSTER-HUDTERMINAL.md](docs/CLUSTER-HUDTERMINAL.md), [docs/ANDROID-AUTO.md](docs/ANDROID-AUTO.md). Older experiments (PNG pipeline, WAL sprites, first hello-world plugin)
 are kept in [docs/history/](docs/history/) for reference.
 
 ## Repository layout
@@ -114,7 +153,9 @@ are kept in [docs/history/](docs/history/) for reference.
 |---|---|
 | `src/android_auto/` | Android Auto side: USB/AOA, TLS, video capture, service, decoder runner, test programs |
 | `src/android_auto/knob/` | iDrive controller (`nbt_knob`), hardware video switch (`nbt_hwvideo`), cluster guidance (`nbt_cluster`) |
-| `src/idrive/` | HMI plugin (menu entry and Android Auto page) and its resources |
+| `src/android_auto/decoder/` | `nbt_decoder`: the 1280-wide picture (GPLv3, from valinet's fork) |
+| `src/carplay/` | `nbt_carplay`: wired CarPlay (GPLv3, from valinet's fork) |
+| `src/idrive/` | HMI plugin (menu entry and page) and its resources; `reboot/` = `nbt_reset` (GPLv3, from valinet's fork) |
 | `installer/` | Installer app (Python/Tk, Windows/macOS/Linux) and payload builder |
 | `scripts/` | Build, test and diagnostic scripts (VM and car) |
 | `tools/` | SSH session helper for development on the car |
@@ -142,8 +183,14 @@ The same address is also the place to reach me with questions or suggestions.
 Parts of the Android Auto core and the controller code come from **NBT-AAD** by nanaisu
 ([Sq00ky/Supra-iDrive6-Android-Auto](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto)). Thank you!
 
+The 1280-wide picture (`nbt_decoder`), wired CarPlay (`nbt_carplay`) and the head unit reset (`nbt_reset`) are the work
+of **Valentin Radu** ([valinet/nbt-android-auto](https://github.com/valinet/nbt-android-auto)), as are several findings
+this version uses (the focus event limit of iDrive, the longer USB read wait). Thank you!
+
 This project is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE): free for private and other
-noncommercial use, **no commercial use** (for example selling it pre-installed). Third-party notices are listed in
+noncommercial use, **no commercial use** (for example selling it pre-installed). The three programs from valinet's fork
+are licensed under the [GNU General Public License version 3](LICENSE-GPL-3.0.txt); they are separate programs and
+their source is in this repository. Which file is under which license, and the third-party notices, are listed in
 [NOTICE.md](NOTICE.md).
 
 Required Notice: Copyright (c) 2026 nanaisu - NBT-AAD (https://github.com/Sq00ky/Supra-iDrive6-Android-Auto)
@@ -163,8 +210,9 @@ traffic laws.
 
 ## Deutsch
 
-**NBT Android Auto** bringt kabelgebundenes Android Auto auf das **originale BMW NBT** (QNX, x86), ohne Zusatzhardware:
-Vollbild über den Hardware-Videoweg, Bedienung mit dem iDrive-Controller, Google-Maps-Abbiegehinweise im Tacho.
+**NBT Android Auto** bringt kabelgebundenes Android Auto und kabelgebundenes Apple CarPlay auf das **originale BMW
+NBT** (QNX, x86), ohne Zusatzhardware: scharfes Vollbild mit 1280 Pixeln Breite, Bedienung mit dem iDrive-Controller,
+Musik mit Titel und Cover, Abbiegehinweise im Tacho.
 So sieht es im Auto aus: [Video auf Instagram](https://www.instagram.com/reel/DfkW1wYsB__/).
 
 - **Voraussetzungen:** originales NBT (kein NBT Evo), SSH-Root-Zugang mit Passwort, ENET-Kabel.
@@ -174,10 +222,16 @@ So sieht es im Auto aus: [Video auf Instagram](https://www.instagram.com/reel/Df
   [Forum-Thread](https://www.supramkv.com/threads/ssh-access-guide-supra-nbtevo-headunit.24190/).
 - **Installation:** Installer aus den [Releases](../../releases) laden und der Anleitung in
   [installer/README.md](installer/README.md) folgen.
-- **Ton (seit 2026.11.24):** Android-Auto-Musik über die Lautsprecher als Apple-Gerät „Android Auto“ mit Titel, Cover
-  und Skip. Dafür muss das Telefon zusätzlich per Bluetooth verbunden sein (erst USB, dann Bluetooth).
-- **Einschränkungen:** 800x480, Navi-Ansagen weiter über das Telefon per Bluetooth, getestet mit einem Auto (F07, 2014)
-  und einem Telefon.
+- **Neu in 2026.11.24.2:** CarPlay (iPhone per USB, Siri und Anrufe über das Mikrofon des Autos), scharfes Bild über den
+  Hardware-Decoder des Autos, Knöpfe „Android Auto neu starten“ und „NBT neu starten“. Decoder, CarPlay und der
+  Neustart stammen von Valentin Radu ([valinet](https://github.com/valinet/nbt-android-auto)).
+- **Ton:** Die Musik des Telefons läuft über die Lautsprecher und erscheint unter Multimedia mit Titel, Cover und Skip.
+  Dafür muss das Telefon zusätzlich per Bluetooth verbunden sein (erst USB, dann Bluetooth). Beim **iPhone** im Auto
+  unter Einstellungen → Verbindungen → Bluetooth → OPTION → „Gerät einrichten“ **nur „Audio“** aktivieren (Telefon 1
+  und 2 aus) und am iPhone CarPlay als Tonausgabe wählen. Bilder dazu: [Sound](#sound).
+- **Einschränkungen:** pro NBT-Start nur eine Art Telefon (Android oder iPhone, sonst „NBT neu starten“), CarPlay
+  lastet das NBT stark aus, Navi-Ansagen von Android Auto weiter über das Telefon per Bluetooth, getestet mit einem
+  Auto (F07, 2014), einem Android-Telefon und einem iPhone.
 - **Nutzung auf eigene Gefahr**, keine Gewähr. Lizenz: PolyForm Noncommercial 1.0.0, also keine kommerzielle Nutzung.
 - Mitmachen ist ausdrücklich erwünscht: [CONTRIBUTING.md](CONTRIBUTING.md). Issues und Pull Requests gern auf Deutsch
   oder Englisch.

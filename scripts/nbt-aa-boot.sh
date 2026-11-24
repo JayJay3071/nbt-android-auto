@@ -60,6 +60,30 @@ if test -e $P/res720; then touch $R/res720; echo 'res720 on'; fi
 rm -f $R/wal.args $R/shadow.path
 # the plugin page exists: the phone is only switched after the page was opened once
 if test -e /fs/ram3/nbt-aa-hidden -o -e /fs/ram3/nbt-aa-request; then touch $R/gate.mode; fi
+# Decoder picture path (2026-11-24): nbt_decoder (valinet's decoder, GPLv3) shows the phone's 1280x720 picture sharp on the
+# whole 1280x480 display at 30 pictures/s, instead of the stock player's 800 pixels stretched. Used when it is installed.
+#   touch $P/decoder.off   the old picture path again (from the next start of the head unit)
+#   touch $P/decoder.hw    the car's own H.264 decoder instead of FFmpeg on the CPU (valinet's test path)
+#   $P/decoder.args        one line of extra arguments for nbt_decoder
+# The picture modes (16:9 / widescreen) do not apply to it: always the whole display.
+# A running nbt_decoder outlives service restarts (its car stream works once per boot, see native_service): its
+# program file stays then, a new one in the package runs after the next start of the head unit.
+rm -f $R/decoder.mode $R/decoder.hw $R/decoder.args
+test -e $R/decoder.pid || rm -f $R/nbt_decoder
+if test -f $P/nbt_decoder -a ! -e $P/decoder.off; then
+  test -e $R/decoder.pid || { cp $P/nbt_decoder $R/nbt_decoder && chmod 700 $R/nbt_decoder; }
+  test -x $R/nbt_decoder && touch $R/decoder.mode
+  test -e $P/decoder.hw && touch $R/decoder.hw
+  test -f $P/decoder.args && cp $P/decoder.args $R/decoder.args
+  echo "picture: nbt_decoder (1280x720 sharp`test -e $R/decoder.hw && echo ', hardware decoding'`)"
+fi
+# CarPlay (valinet's nbt_carplay): with it installed, an iPhone gets CarPlay through the same decoder and window.
+# touch $P/carplay.off = Apple devices are left alone as before; $P/carplay.args = one line of extra arguments.
+rm -f $R/nbt_carplay $R/carplay.args
+if test -f $P/nbt_carplay -a ! -e $P/carplay.off -a -e $R/decoder.mode; then
+  cp $P/nbt_carplay $R/nbt_carplay && chmod 700 $R/nbt_carplay && echo 'CarPlay: nbt_carplay'
+  test -f $P/carplay.args && cp $P/carplay.args $R/carplay.args
+fi
 DPI=140
 if test -f $P/vid.dpi; then DPI=`sed 1q $P/vid.dpi`; fi
 # picture mode (car-tested 2026-11-08), one flag file in $P, none = classic 800x300 stretched to the whole display:
@@ -159,6 +183,12 @@ fi
       q=`sloginfo 2>/dev/null | grep 'NmeGraph video' | tail -1`
       if test -n "$q"; then echo "`date +%T` $q" >> $L/nme-queue.txt; fi
       tail -300 $R/knob.log > $L/knob-tail.log 2>/dev/null
+      # decoder picture path: what nbt_decoder logged last (statistics every 5 s) and what the service did with it
+      for f in `ls $R/carplay-*.log 2>/dev/null`; do tail -400 $f > $L/${f##*/}; done
+      if test -e $R/nbt_decoder.log; then
+        tail -200 $R/nbt_decoder.log > $L/nbt_decoder-tail.log
+        cp $R/decoder.notes $L/ 2>/dev/null
+      fi
       # steering wheel keys seen by nbt_knob (to find the skip keys)
       grep -e '^.Wheel' $R/knob.log 2>/dev/null | tail -200 > /fs/ram3/nbt-aa-cap.tmp
       cmp -s /fs/ram3/nbt-aa-cap.tmp $L/wheel.txt || cp /fs/ram3/nbt-aa-cap.tmp $L/wheel.txt

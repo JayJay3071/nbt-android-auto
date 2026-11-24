@@ -43,7 +43,9 @@
 #define IN_RATE 48000
 #define RING (IN_RATE * 2)        /* stereo frames, 2 s */
 #define TARGET (IN_RATE / 5)       /* jitter buffer: 200 ms */
-#define MAXFILL (IN_RATE)          /* more than 1 s queued (should not happen): back to TARGET */
+/* more than 0.6 s queued: back to TARGET. Was 1 s; the user heard seconds of delay after skipping quickly (2026-11-24:
+ * every skip brings a burst, and 0.5 % speed correction takes minutes to play a second away). */
+#define MAXFILL (3 * TARGET)
 #define KEEPFILL TARGET
 #define FRAMES_PER_PACKET 8
 #define SAMPLES_PER_FRAME 128 /* 16 blocks x 8 subbands */
@@ -54,8 +56,11 @@ static volatile sig_atomic_t g_stop;
 static const char* g_fifo;
 /* 48 kHz = the session's own rate, no resampling (offline check: 65 dB; with the cubic resampling to 44.1 kHz 44 dB).
  * --rate 44100 if the head unit's player should refuse 48 kHz SBC (the phone used 44.1 kHz). */
-static int g_bitpool = 53, g_rate = 48000;
-static unsigned long long g_packets, g_silent_packets, g_read_packets, g_underruns;
+/* Car 2026-11-24: the head unit's player takes the stream as 44.1 kHz whatever the frames say (io-nme: "NmeAVRCP
+ * SBC:HI:DRI:1691:44.1:stereo" while it received 44415 bytes/s = 48 kHz frames): it played 8 % too slowly and the sound
+ * fell behind by seconds within a minute. So 44.1 kHz is the default now; --rate 48000 is the old behaviour. */
+static int g_bitpool = 53, g_rate = 44100;
+static unsigned long long g_packets, g_silent_packets, g_read_packets, g_underruns, g_trims;
 static volatile int g_buffering = 1; /* waiting until the jitter buffer holds TARGET */
 static FILE* g_selftest; /* --selftest <file>: encode a test tone as fast as possible into a file, then end */
 
@@ -118,6 +123,7 @@ static void* reader(void* arg)
         if (g_fill > MAXFILL) {
             g_head = (g_head + g_fill - KEEPFILL) % RING;
             g_fill = KEEPFILL;
+            ++g_trims;
         }
         pthread_mutex_unlock(&g_ring_lock);
         carry = total - frames * 4;
@@ -596,7 +602,8 @@ int main(int argc, char** argv)
     while (!g_stop) {
         sleep(1);
         if (++seconds % 60 == 0)
-            note("packets made %llu (silent %llu), read %llu, ran dry %llu times", g_packets, g_silent_packets, g_read_packets, g_underruns);
+            note("packets made %llu (silent %llu), read %llu, ran dry %llu times, cut back %llu times, %u ms queued", g_packets, g_silent_packets,
+                 g_read_packets, g_underruns, g_trims, (unsigned)(g_fill * 1000 / IN_RATE));
     }
     note("stopped");
     return 0;

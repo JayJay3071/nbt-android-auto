@@ -136,15 +136,17 @@ static int await_completion(struct completion* c, unsigned milliseconds) {
     pthread_mutex_unlock(&c->mutex);
     return done;
 }
-static int bulk_transfer(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigned char* buffer,
-                         unsigned size, int input, _Uint32t* status, _Uint32t* actual) {
+/* timeout_ms: usbd_io timeout of the transfer; the completion is awaited 1 s longer (2000 everywhere, except the
+ * session's bulk IN reads, see capture_transfer) */
+static int bulk_transfer_t(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigned char* buffer,
+                           unsigned size, int input, _Uint32t* status, _Uint32t* actual, unsigned timeout_ms) {
     struct completion c;
     int rc;
     memset(&c, 0, sizeof(c));
     pthread_mutex_init(&c.mutex, NULL); pthread_cond_init(&c.condition, NULL);
     rc = usbd_setup_bulk(urb, input ? URB_DIR_IN | URB_SHORT_XFER_OK : URB_DIR_OUT, buffer, size);
-    if (rc == EOK) rc = usbd_io(urb, pipe, completed, &c, 2000);
-    if (rc == EOK && !await_completion(&c, 3000)) {
+    if (rc == EOK) rc = usbd_io(urb, pipe, completed, &c, timeout_ms);
+    if (rc == EOK && !await_completion(&c, timeout_ms + 1000)) {
         puts("AA_BULK_CALLBACK_TIMEOUT_ABORTING_NO_RETRY");
         usbd_abort_pipe(pipe);
         if (!await_completion(&c, 1000)) {
@@ -157,6 +159,10 @@ static int bulk_transfer(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigned 
     *status = c.status; *actual = c.actual;
     pthread_cond_destroy(&c.condition); pthread_mutex_destroy(&c.mutex);
     return rc;
+}
+static int bulk_transfer(struct usbd_urb* urb, struct usbd_pipe* pipe, unsigned char* buffer,
+                         unsigned size, int input, _Uint32t* status, _Uint32t* actual) {
+    return bulk_transfer_t(urb, pipe, buffer, size, input, status, actual, 2000);
 }
 static void* signal_test_completion(void* context) {
     struct completion* c = (struct completion*)context;
@@ -176,8 +182,15 @@ static int capture_transfer(void* context,int input,unsigned char* data,unsigned
     _Uint32t status,actual;int rc;
     if(input<0 || input>1 || !*size || *size>65536)return 0;
     if(!input)memcpy(c->dma[0],data,*size);
-    rc=bulk_transfer(c->urb[input],c->pipe[input],c->dma[input],*size,input,&status,&actual);
-    if(rc!=EOK || (status&USBD_URB_STATUS_MASK)!=USBD_STATUS_CMP || actual>*size)return 0;
+    /* Session reads (as in valinet's fork, his car 2026-11-17: a session ended with "Phone closed socket or read error"
+     * after 94 s of normal streaming): a bulk IN read gave up after 2 s without data, which ended the reader and the
+     * session, while the session itself allows 5 s of silence (NBT_RX_TIMEOUT_S). Now 8 s per IN read, so the session's
+     * own rule decides, and a failure is logged with its USB status: a real USB drop can be told from a pause. */
+    rc=bulk_transfer_t(c->urb[input],c->pipe[input],c->dma[input],*size,input,&status,&actual,input?8000:2000);
+    if(rc!=EOK || (status&USBD_URB_STATUS_MASK)!=USBD_STATUS_CMP || actual>*size){
+        printf("AA_USB_%s_FAILED rc=%d status=%08x bytes=%u\n",input?"IN":"OUT",rc,(unsigned)status,(unsigned)actual);
+        return 0;
+    }
     if(input)memcpy(data,c->dma[1],actual);
     *size=actual;return 1;
 }

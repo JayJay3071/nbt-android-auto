@@ -30,7 +30,10 @@ import urllib.request
 from pathlib import Path
 
 from aa_session_overlay import harden_session
+from carplay_deps import add_carplay_deps
+from ffmpeg_qnx import add_ffmpeg
 from mbedtls_legacy_time import patch_x509
+from mbedtls_empty_name import patch_x509_empty_name
 
 ROOT = Path(__file__).resolve().parents[1]
 NBT_AAD_REVISION = "41975f269b065dbdbc77af9f568387cd22b9ed27"
@@ -44,7 +47,7 @@ MBEDTLS_DISABLED = ["MBEDTLS_AESNI_C", "MBEDTLS_HAVE_ASM", "MBEDTLS_PADLOCK_C"]
 PROGRAMS = {"oneplus_native": "rt", "native_service": "rt", "decode_runner": "rt", "fifo_http": "rt",
             "accessory_window": "rt", "nbt_knob": "rt", "nbt_hwvideo": "rt", "nbt_cluster": "rt",
             "nbt_a2i_play": "rt", "nbt_aa_wms": "rt", "nbt_ipod_tap": "rt", "nbt_aa_ipod": "rt", "nbt_bt_inject": "rt",
-            "libNbtAndroidAuto.so": "plugin"}
+            "libNbtAndroidAuto.so": "plugin", "nbt_decoder": "rt", "nbt_reset": "rt", "nbt_carplay": "rt"}
 
 
 def git(*args, cwd=None):
@@ -88,7 +91,7 @@ def add_mbedtls(archive):
                 continue
             data = source.extractfile(item).read()
             if item.name == top + "/library/x509.c":
-                data = patch_x509(data.decode()).encode()
+                data = patch_x509_empty_name(patch_x509(data.decode())).encode()   # empty name: CarPlay pair record
             if item.name.endswith("/include/mbedtls/mbedtls_config.h"):
                 config = data.decode()
                 for option in MBEDTLS_DISABLED:
@@ -131,7 +134,7 @@ def add_nbt_aad(archive, checkout):
 
 
 def add_repo_sources(archive):
-    for folder in ("src/android_auto", "src/idrive"):
+    for folder in ("src/android_auto", "src/idrive", "src/carplay"):
         for path in sorted((ROOT / folder).rglob("*")):
             if path.is_file() and path.suffix in (".c", ".cpp", ".h", ".hpp"):
                 archive.add(path.relative_to(ROOT).as_posix(), text(path))
@@ -183,6 +186,14 @@ def main():
     add_mbedtls(archive)
     add_nbt_aad(archive, args.nbt_aad.resolve())
     add_repo_sources(archive)
+    try:
+        add_ffmpeg(archive)   # FFmpeg for nbt_decoder; without it the other programs are still built
+    except (OSError, subprocess.CalledProcessError, SystemExit) as error:
+        print("FFmpeg not available, nbt_decoder is skipped:", error)
+    try:
+        add_carplay_deps(archive)   # lwIP and Monocypher for nbt_carplay; without them it is skipped
+    except (OSError, subprocess.CalledProcessError, SystemExit) as error:
+        print("lwIP / Monocypher not available, nbt_carplay is skipped:", error)
     if args.compare:
         add_expected(archive, args.compare.resolve())
     archive.close()

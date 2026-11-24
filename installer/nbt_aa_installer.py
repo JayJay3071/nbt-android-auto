@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """NBT Android Auto installer.
 
-Writes the Android Auto package (service + iDrive "Android Auto" entry under Multimedia) to a BMW NBT head unit over
-SSH. The user only enters the head unit's IP address and the root password; nothing is stored.
+Writes the Android Auto / CarPlay package (service + iDrive "Android Auto / CarPlay" entry under Multimedia) to a BMW
+NBT head unit over SSH. The user only enters the head unit's IP address and the root password; nothing is stored.
 
 What it changes on the head unit (and nothing else):
   /var/opt/hmi/data/rw/NbtAndroidAutoRT/        service binaries, certificates, boot.sh, restart.sh, iap.sh (sound as
-                                                "iPod over Bluetooth"), mfl.map (skip keys), vid.dpi, logs/, journal/,
-                                                snapshots/ (written by the "restart" button)
+                                                "iPod over Bluetooth"), mfl.map (skip keys), vid.dpi, decoder.hw
+                                                (hardware decoding, first install only), gateway (the car's gateway
+                                                address for "Restart NBT", if found), logs/, journal/, snapshots/
+                                                (written by the "restart" button), carplay/ (iPhone pairing)
   /var/opt/hmi/data/rw/Plugins/NbtAndroidAuto/  HMI plugin (menu entry)
 Every file is written as <name>.tmp, read back and compared byte by byte, and only then renamed into place, so a
 running HMI never sees a half-written file. Uninstall removes exactly these two directories.
@@ -25,6 +27,7 @@ import locale
 import os
 import queue
 import socket
+import struct
 import sys
 import threading
 import time
@@ -80,8 +83,8 @@ T = {
     'intro': ('Laptop per Ethernet (ENET) mit dem Auto verbinden, Zuendung an, IP und root-Passwort eingeben.',
               'Connect the laptop to the car via Ethernet (ENET), ignition on, enter IP and root password.'),
     'confirm_uninstall': ('Android Auto wirklich vom NBT entfernen?', 'Really remove Android Auto from the NBT?'),
-    'done_install': ('Fertig. Jetzt das iDrive neu starten. Danach: Multimedia -> Android Auto.',
-                     'Done. Now restart iDrive. Then: Multimedia -> Android Auto.'),
+    'done_install': ('Fertig. Jetzt das iDrive neu starten. Danach: Multimedia -> Android Auto / CarPlay.',
+                     'Done. Now restart iDrive. Then: Multimedia -> Android Auto / CarPlay.'),
     'done_uninstall': ('Entfernt. Nach dem naechsten iDrive-Neustart ist der Menuepunkt weg.',
                        'Removed. The menu entry is gone after the next iDrive restart.'),
     'busy': ('Bitte warten ...', 'Please wait ...'),
@@ -91,6 +94,22 @@ T = {
                    'Sound: Android Auto shows up under Multimedia as Apple device "Android Auto" (title, cover, skip). '
                    'Plug the phone in by USB, then connect it by Bluetooth. If Bluetooth was connected before: switch '
                    'Bluetooth on the phone off and on once.'),
+    'carplay_hint': ('CarPlay: iPhone per USB anstecken ("Vertrauen" bestaetigen). Fuer den Ton das iPhone zusaetzlich per '
+                     'Bluetooth koppeln und im Auto nur "Audio" aktivieren (Telefon 1 / Telefon 2 aus); der Ton laeuft '
+                     'dann ueber denselben Apple-Eintrag "Android Auto".',
+                     'CarPlay: plug the iPhone in by USB (confirm "Trust"). For sound, also pair the iPhone by Bluetooth '
+                     'and enable only "Audio" for it in the car (Telephone 1 / Telephone 2 off); the sound then plays '
+                     'through the same Apple entry "Android Auto".'),
+    'decoder_hint': ('Bild: 1280 Pixel breit ueber den Hardware-Decoder des Autos. Umschalten auf Software: Knopf '
+                     '"Decoder" auf der Seite, gilt nach einem NBT-Neustart.',
+                     'Picture: 1280 pixels wide through the hardware decoder of the car. Switch to software: "Decoder" '
+                     'button on the page, applies after an NBT restart.'),
+    'gateway_found': ('Gateway des Autos gefunden und gespeichert (fuer "NBT neu starten"): %s',
+                      'Found and stored the gateway of the car (for "Restart NBT"): %s'),
+    'gateway_missing': ('Gateway des Autos nicht gefunden: "NBT neu starten" auf der Seite geht erst, wenn seine '
+                        'IP-Adresse als eine Zeile in %s/gateway steht.',
+                        'The gateway of the car was not found: "Restart NBT" on the page only works once its IP '
+                        'address is in %s/gateway (one line).'),
     'no_paramiko': ('Das Python-Paket "paramiko" fehlt: pip install paramiko',
                     'The Python package "paramiko" is missing: pip install paramiko'),
     'error': ('Fehler', 'Error'),
@@ -220,11 +239,43 @@ def preflight(nbt, log, root):
         raise InstallError('The HMI data directory is read-only.')
 
 
+def find_gateway(nbt_host, timeout=3.0):
+    """IP address of the car's gateway (ZGW), or None: HSFZ vehicle identification, a UDP broadcast to port 6811 on
+    the ENET link. The page's "Restart NBT" sends its reset through the gateway, and the head unit cannot find it
+    itself (it has no route to the broadcast address), so the installer asks from the laptop."""
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        probe.connect((nbt_host, 9))            # no packet is sent: only picks the interface towards the car
+        local = probe.getsockname()[0]
+        probe.close()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    except OSError:
+        return None
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.bind((local, 0))
+        sock.sendto(struct.pack('>IH', 0, 0x0011),
+                    ('169.254.255.255' if local.startswith('169.254.') else '255.255.255.255', 6811))
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            sock.settimeout(max(0.1, deadline - time.monotonic()))
+            data, sender = sock.recvfrom(512)
+            # the answer: u32 length, u16 control, then "DIAGADR..BMWMAC..BMWVIN.."
+            if len(data) >= 6 and b'DIAGADR' in data and sender[0] != nbt_host:
+                return sender[0]
+    except OSError:                             # timeout, no route, blocked by a firewall
+        pass
+    finally:
+        sock.close()
+    return None
+
+
 def install(nbt, log, root=''):
     manifest = load_manifest()
     log('Package %s, %d files' % (manifest.get('version', '?'), len(manifest['files'])))
     preflight(nbt, log, root)
     nbt.run("chmod 700 '%s'" % (root + RT_DIR))
+    had_decoder = nbt.run("test -f '%s/nbt_decoder'" % (root + RT_DIR), check=False)[0] == 0
     # the manifest of the plugin goes last: the HMI must never see a half package
     files = sorted(manifest['files'], key=lambda e: e['target'].endswith('.manifest'))
     for entry in files:
@@ -238,6 +289,24 @@ def install(nbt, log, root=''):
         # Android Auto sound as "iPod over Bluetooth": on with every install / update (off: touch iap.off on the NBT)
         nbt.run("rm -f '%s/iap.off'" % (root + RT_DIR))
         log(tr('sound_hint'))
+    if any(e['target'].endswith('/nbt_decoder') for e in files):
+        if not had_decoder:
+            # The first install of the 1280-wide picture path decodes with the car's own H.264 decoder (fluid on the
+            # developer's car; the CPU path loads the head unit fully). Later installs keep what the "Decoder" button
+            # on the page chose. nbt_decoder falls back to the CPU by itself if the car refuses the decoder.
+            nbt.run("touch '%s/decoder.hw'" % (root + RT_DIR))
+        log(tr('decoder_hint'))
+    if any(e['target'].endswith('/nbt_carplay') for e in files):
+        log(tr('carplay_hint'))
+    if any(e['target'].endswith('/nbt_reset') for e in files) and not root:
+        gateway_file = RT_DIR + '/gateway'
+        if nbt.run("test -s '%s'" % gateway_file, check=False)[0] != 0:
+            gateway = find_gateway(nbt.client.get_transport().getpeername()[0])
+            if gateway:
+                nbt.put((gateway + '\n').encode('ascii'), gateway_file, '644')
+                log(tr('gateway_found') % gateway)
+            else:
+                log(tr('gateway_missing') % RT_DIR)
     nbt.run("echo '%s' > '%s/VERSION'" % (manifest.get('version', '?'), root + RT_DIR))
     _, out, _ = nbt.run("ls -l '%s' '%s'" % (root + RT_DIR, root + PLUGIN_DIR), check=False)
     log(out.decode('utf-8', 'replace').rstrip())
@@ -275,6 +344,7 @@ def save_logs(nbt, log, target_zip, root=''):
     sources += ['/fs/ram3/nbt-aa-plugin.log', '/fs/ram3/nbt-aa-boot.log', '/fs/ram3/nbt-aa-state', '/fs/ram3/nbt-cluster.log',
                 '/fs/ram3/nbt-aa-native/iap.log', '/fs/ram3/nbt-aa-native/btipod.log',
                 '/fs/ram3/nbt-aa-native/sound.log', root + RT_DIR + '/iap.off',
+                '/fs/ram3/nbt-aa-native/decoder.notes', '/fs/ram3/nbt-reboot.log', root + RT_DIR + '/gateway',
                 root + RT_DIR + '/VERSION', root + RT_DIR + '/vid.dpi',
                 root + RT_DIR + '/sessions.log', root + RT_DIR + '/sessions.log.1']
     count = 0

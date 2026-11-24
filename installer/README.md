@@ -1,7 +1,7 @@
 # NBT Android Auto Installer
 
-Installiert Android Auto auf einem originalen BMW NBT (QNX). Danach gibt es unter **Multimedia** den Eintrag
-**Android Auto**. Der Installer braucht nur SSH-Zugang zum NBT: IP-Adresse und root-Passwort.
+Installiert Android Auto und CarPlay auf einem originalen BMW NBT (QNX). Danach gibt es unter **Multimedia** den
+Eintrag **Android Auto / CarPlay**. Der Installer braucht nur SSH-Zugang zum NBT: IP-Adresse und root-Passwort.
 Das Passwort wird nirgends gespeichert.
 
 ## Vorher: SSH-Zugang freischalten
@@ -26,40 +26,52 @@ Das Freischalten verändert die Konfiguration des Geräts. Wie alles hier geschi
    - macOS: `NBT-AndroidAuto-Installer.app`. Beim ersten Start mit Rechtsklick → Öffnen, weil die App nicht signiert ist.
 3. IP-Adresse und Passwort eingeben, dann **Installieren / Aktualisieren** klicken.
 4. Das iDrive neu starten.
-5. Telefon per USB anstecken und **Multimedia → Android Auto** wählen.
+5. Telefon per USB anstecken und **Multimedia → Android Auto / CarPlay** wählen. Ein iPhone fragt beim ersten Mal
+   „Diesem Computer vertrauen?“.
 6. Für den Ton das Telefon **danach** per Bluetooth mit dem Auto verbinden (siehe unten).
 
-## Was Android Auto auf dem NBT kann
+## Was das Paket auf dem NBT kann
 
-- **Bildmodus** auf der Android-Auto-Seite:
-  - **Breitbild** (Standard) nutzt die ganze Breite.
-  - **16:9** ist schärfer, rechts daneben bleibt der iDrive-Split-Screen sichtbar.
-
-  Der Wechsel gilt ab der nächsten Verbindung des Telefons.
+- **Android Auto** mit jedem Android-Telefon und **CarPlay** mit dem iPhone, beides über das USB-Kabel.
+  Pro Start des NBT geht nur eine Art Telefon: Nach einem Android-Telefon läuft ein iPhone erst nach einem Neustart
+  des NBT und umgekehrt. Die Seite zeigt dann „Erst NBT neu starten“.
+- **Scharfes Bild:** 1280x480, jeder Bildpunkt des Displays kommt vom Telefon. Der Knopf **Decoder** auf der Seite
+  schaltet zwischen Hardware (Decoder des Autos, Standard nach der ersten Installation) und Software um. Der Wechsel
+  gilt nach einem Neustart des NBT.
+  - Bleibt das Bild auf deinem Auto aus: auf dem NBT die Datei `/var/opt/hmi/data/rw/NbtAndroidAutoRT/decoder.off`
+    anlegen und das NBT neu starten. Dann läuft der Bildweg der früheren Versionen (800x480). Bitte melden.
 - **Ton über die Lautsprecher als „iPod über Bluetooth“:** Unter Multimedia erscheint ein Apple-Gerät
   **„Android Auto“** mit Titel, Interpret, Album, Cover und Länge, auch im Tacho. Weiter und Zurück gehen über iDrive
-  und das Lenkrad.
+  und das Lenkrad. Das gilt für Android Auto und für CarPlay.
+  - **iPhone (CarPlay):** das iPhone per Bluetooth mit dem Auto koppeln. Dann unter Einstellungen → Verbindungen →
+    Bluetooth das iPhone wählen, OPTION drücken, **Gerät einrichten**, und **nur „Audio“** aktivieren (Telefon 1 und
+    Telefon 2 aus). Am iPhone als Tonausgabe **CarPlay** wählen. Anrufe und Siri laufen dann über CarPlay und das
+    Mikrofon des Autos. Bilder dazu stehen im [README](../README.md#sound).
   - Das Telefon muss sich per Bluetooth verbinden, **während Android Auto schon läuft**: erst USB anstecken, dann
     Bluetooth verbinden.
   - War Bluetooth schon vorher verbunden (z. B. beim Einsteigen), gibt es zunächst nur den normalen Bluetooth-Eintrag
     ohne Android-Auto-Ton. Dann Bluetooth am Telefon einmal aus- und wieder einschalten.
   - Ohne Bluetooth-Verbindung gibt es keinen Android-Auto-Ton.
-  - Bisher nur mit einem Auto und einem Telefon (OnePlus 7 Pro) getestet.
+  - Bisher nur mit einem Auto, einem Android-Telefon (OnePlus 7 Pro) und einem iPhone (iPhone 17 Air) getestet.
   - Abschalten: auf dem NBT die Datei `/var/opt/hmi/data/rw/NbtAndroidAutoRT/iap.off` anlegen. Ein erneutes
     „Installieren / Aktualisieren“ schaltet den Ton wieder ein.
 - **Bedienung** mit dem iDrive-Controller (drehen, drücken, kippen, BACK). Die Skip-Tasten am Radio steuern die
   Android-Auto-Musik.
-- **Navigation im Tacho** (6WB-Kombiinstrument), solange Google Maps eine Route führt:
+- **Navigation im Tacho** (6WB-Kombiinstrument), solange Google Maps oder Apple Karten eine Route führt:
   - Pfeil, Entfernung mit Balken und Straße,
-  - Autobahn- und Bundesstraßenschild,
-  - Fahrspuren.
+  - bei Android Auto zusätzlich Autobahn- und Bundesstraßenschild und Fahrspuren.
 
   Sobald die BMW-Navigation selbst führt, hat sie Vorrang.
-- **Android Auto neu starten** (Knopf auf der Android-Auto-Seite) startet nur den Android-Auto-Dienst neu, nicht das
-  NBT. Vorher wird ein Diagnose-Schnappschuss gespeichert. Den holt **Diagnose-Logs speichern** mit ab.
+- **Android Auto neu starten** (Knopf auf der Seite) startet nur den Dienst neu, nicht das NBT. Vorher wird ein
+  Diagnose-Schnappschuss gespeichert. Den holt **Diagnose-Logs speichern** mit ab.
+- **NBT neu starten** (Knopf auf der Seite) startet nach einer Rückfrage das ganze NBT neu. Dafür braucht die Seite
+  die Adresse des Gateways im Auto. Der Installer sucht sie beim Installieren und speichert sie in der Datei
+  `gateway`. Findet er sie nicht, steht das im Protokollfenster, und die Seite meldet „Gateway nicht erreichbar“.
+  Dann die IP-Adresse des Gateways (zeigen z. B. ISTA oder E-Sys an) als eine Zeile in
+  `/var/opt/hmi/data/rw/NbtAndroidAutoRT/gateway` schreiben.
 
-Im **Breitbild**-Modus empfiehlt es sich, in iDrive den Split-Screen auszuschalten (OPTION → Split-Screen aus). Sonst
-öffnet zweimal schnell nach rechts kippen das Seitenfenster.
+Es empfiehlt sich, in iDrive den Split-Screen auszuschalten (OPTION → Split-Screen aus): Das Bild nutzt das ganze
+Display.
 
 **Deinstallieren** entfernt genau die beiden installierten Ordner. **Diagnose-Logs speichern** lädt die Protokolle als
 ZIP herunter, z. B. für Fehlermeldungen.
@@ -68,7 +80,7 @@ ZIP herunter, z. B. für Fehlermeldungen.
 
 | Ort | Inhalt |
 |---|---|
-| `/var/opt/hmi/data/rw/NbtAndroidAutoRT/` | Dienst, Tacho-Navigation, Ton (`nbt_aa_wms`, `nbt_ipod_tap`, `nbt_aa_ipod`, `iap.sh`), Tastenbelegung `mfl.map`, Zertifikate, `boot.sh`, `restart.sh`, `vid.dpi`, `logs/`, `journal/`, `snapshots/` |
+| `/var/opt/hmi/data/rw/NbtAndroidAutoRT/` | Dienst, Bild (`nbt_decoder`), CarPlay (`nbt_carplay`, Kopplung in `carplay/`), Neustart (`nbt_reset`, `gateway`), Tacho-Navigation, Ton (`nbt_aa_wms`, `nbt_ipod_tap`, `nbt_aa_ipod`, `iap.sh`), Tastenbelegung `mfl.map`, Zertifikate, `boot.sh`, `restart.sh`, `vid.dpi`, `decoder.hw`, `logs/`, `journal/`, `snapshots/` |
 | `/var/opt/hmi/data/rw/Plugins/NbtAndroidAuto/` | iDrive-Plugin (Menüeintrag) |
 
 Jede Datei wird erst als `.tmp` geschrieben, zurückgelesen und Byte für Byte verglichen und erst dann umbenannt. Weitere

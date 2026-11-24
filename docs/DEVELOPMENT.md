@@ -101,6 +101,9 @@ What `build_all.py` puts together (on your PC) and `scripts/build-qnx.sh` compil
 | `libNbtAndroidAuto.so` | C++ shared library without exceptions/RTTI, linked against the two HMI libraries |
 | `nbt_a2i_play`, `nbt_aa_wms` (`-lm`), `nbt_ipod_tap`, `nbt_aa_ipod` | C, `-O2` (sound and iPod mode) |
 | `nbt_bt_inject` | C, no optimisation (as built for the car) |
+| `nbt_decoder` (GPLv3) | `decoder/nbt_decoder.c` + FFmpeg `n2.8.22` (H.264 decoder only): the tag is cloned into `.local/` once, its assembly is built on your PC with yasm 1.3.0, the C files in the VM (`scripts/ffmpeg_qnx.py`, `scripts/build-ffmpeg-qnx.sh`). The FFmpeg libraries are kept in the VM for later runs. Without FFmpeg or yasm it is skipped |
+| `nbt_carplay` (GPLv3) | `src/carplay/` + lwIP 2.2.1 and Monocypher 4.0.2 (cloned into `.local/` once by `scripts/carplay_deps.py`) + Mbed TLS with `scripts/mbedtls_empty_name.py`, `-lusbdi`. Without those sources it is skipped |
+| `nbt_reset` (GPLv3) | `idrive/reboot/nbt_reset.c`, `-lsocket` |
 
 **Verified on 2026-11-24** against the programs in the developer's car: all 14 programs that are on the car are
 byte-identical (`oneplus_native` apart from the symbol table), except `nbt_hwvideo` (see below).

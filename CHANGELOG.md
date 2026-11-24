@@ -2,6 +2,55 @@
 
 Versions are named after the build date of the installer payload.
 
+## 2026.11.24.2 (pre-release)
+
+Wired CarPlay, a picture that uses every pixel of the display, and restart buttons. Most of the new parts come from
+[valinet's fork](https://github.com/valinet/nbt-android-auto) (Valentin Radu): the decoder `nbt_decoder`, the CarPlay
+program `nbt_carplay` and the reset tool `nbt_reset`, all GPLv3 (see [NOTICE.md](NOTICE.md)). Thank you!
+
+Tested in the developer's car (BMW F07 2014, OnePlus 7 Pro, iPhone 17 Air with iOS 27). The parts ran there as beta
+builds; the programs of this release were rebuilt with the changes marked "not yet tested on a car" below. The
+installer of this version was tested in the QNX VM (install, update, logs, uninstall in a test folder), not yet on a
+car.
+
+- **Wired CarPlay** ([docs/CARPLAY.md](docs/CARPLAY.md)): plug in an iPhone and choose
+  *Multimedia → Android Auto / CarPlay*. Picture, iDrive controller, sound, Siri and calls with the car microphone,
+  Apple Maps turn hints in the instrument cluster. No adapter: the NBT's own USB port and Apple chip are used.
+  - **Sound like Android Auto's:** the CarPlay sound plays through the same Apple entry under Multimedia, with title,
+    artist, album, cover and progress, also in the instrument cluster; skip works from iDrive, the steering wheel and
+    the radio panel keys. For this the iPhone is paired by Bluetooth with **only "Audio"** enabled (Telephone 1 / 2
+    off) and CarPlay is picked as the audio output on the iPhone.
+  - Changes for this car and iOS 27: 16-bit NCM network format, sound into this project's sound path, titles and
+    cover from iAP2, route guidance for the cluster.
+- **Sharp picture, 1280 pixels wide** ([docs/DECODER.md](docs/DECODER.md)): `nbt_decoder` hands the phone's H.264 to the
+  head unit's video interface directly. Every display pixel is a phone pixel (before: 800 pixels stretched to 1280),
+  the phone's own 30 pictures a second, and the controller reacts faster. The picture always uses the whole display;
+  the two picture modes are gone from the page.
+  - **Decoder button** on the page: hardware (the car's own H.264 decoder, default after a first install) or software
+    (CPU). Applies after a restart of the head unit.
+  - The stock player path is still there: `touch decoder.off` in the package folder.
+  - The car stream runs at 60 so that repeated pictures do not block the hand-over (was a `decoder.args` setting on
+    the test car, now the default).
+- **Restart NBT** button on the page (`nbt_reset`): restarts the whole head unit with a diagnostic reset through the
+  car's gateway, after a confirmation. The installer looks up the gateway address and stores it (not yet tested on a
+  car; without it the page says "Gateway not reachable").
+- **One kind of phone per start of the head unit** (not yet tested on a car): changing between an Android phone and an
+  iPhone in the same start ended the decoder and then the head unit on the test car. The service now refuses the
+  second kind and the page says "Restart the NBT first".
+- **USB pauses:** a session's USB reads wait 8 s instead of 2 s. Before, a read that gave up after 2 s ended the
+  session before the service's own rule (5 s of silence) could apply. Failed transfers are logged
+  (`AA_USB_IN_FAILED` / `AA_USB_OUT_FAILED`). Same idea as in valinet's fork; suggested by a user by mail.
+- **Sound delay fixed:** the sound device now delivers 44.1 kHz. The head unit's player treated the 48 kHz stream as
+  44.1 kHz, played 8 % too slow and fell behind by seconds.
+- **Menu entry:** renamed to "Android Auto / CarPlay". iDrive performs each focus event only about ten times per
+  start, which very likely is why the entry stopped opening Android Auto after a while on long drives; the page now
+  has a pool of 400 events. Every id in the page file is unique (a doubled id made a button dead).
+- **Installer:** ships `nbt_decoder`, `nbt_carplay` and `nbt_reset`, switches hardware decoding on with the first
+  install, stores the gateway address, and the diagnostic logs include the decoder and CarPlay logs.
+- Removed from the fork's decoder: the trip computer box over the picture (not yet tested on a car without it).
+
+Known limits: see [README.md](README.md#known-limitations).
+
 ## 2026.11.24 (pre-release)
 
 The programs run in the developer's car (BMW F07 2014, OnePlus 7 Pro); built from this repository they are identical

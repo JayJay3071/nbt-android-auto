@@ -41,6 +41,11 @@ FILES = [
     (ENTRY / 'nbt_ipod_tap', 'rt/nbt_ipod_tap', RT + '/nbt_ipod_tap', '700'),
     (ENTRY / 'nbt_aa_ipod', 'rt/nbt_aa_ipod', RT + '/nbt_aa_ipod', '700'),
     (REPO / 'scripts' / 'nbt-aa-iap.sh', 'rt/iap.sh', RT + '/iap.sh', '700'),
+    # 1280-wide picture (nbt_decoder), wired CarPlay (nbt_carplay) and "Restart NBT" on the page (nbt_reset): the three
+    # GPLv3 programs from valinet's fork, see NOTICE.md. boot.sh uses nbt_decoder / nbt_carplay when they are present.
+    (ENTRY / 'nbt_decoder', 'rt/nbt_decoder', RT + '/nbt_decoder', '700'),
+    (ENTRY / 'nbt_carplay', 'rt/nbt_carplay', RT + '/nbt_carplay', '700'),
+    (ENTRY / 'nbt_reset', 'rt/nbt_reset', RT + '/nbt_reset', '700'),
     # radio panel skip keys -> Android Auto media keys (read by nbt_knob)
     (REPO / 'config' / 'mfl.map', 'rt/mfl.map', RT + '/mfl.map', '644'),
     (ENTRY / 'NbtAndroidAuto' / 'libNbtAndroidAuto.so', 'plugin/libNbtAndroidAuto.so', PLUGIN + '/libNbtAndroidAuto.so', '755'),
