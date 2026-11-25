@@ -10,10 +10,16 @@ hardware decoding and the sharp full-width picture, the CarPlay program `nbt_car
 microphone, the reset tool `nbt_reset`, and the way the service and the page use them. He also allowed this project
 to ship them in its releases. Thank you, Valentin!
 
-Tested in the developer's car (BMW F07 2014, OnePlus 7 Pro, iPhone 17 Air with iOS 27). The parts ran there as beta
-builds; the programs of this release were rebuilt with the changes marked "not yet tested on a car" below. The
-installer of this version was tested in the QNX VM (install, update, logs, uninstall in a test folder), not yet on a
-car.
+Everything in this release was tested in the developer's car (BMW F07 2014, OnePlus 7 Pro, iPhone 17 Air with
+iOS 27), except three small things that were added afterwards and the installer:
+
+- the lock against changing between an Android phone and an iPhone in one start of the head unit, with its text on
+  the page;
+- `nbt_decoder` rebuilt without the fork's trip computer box (decoding checked in the QNX VM);
+- the frame rates as built-in defaults (the same values ran on the car, there set by two files).
+
+The installer of this version was tested in the QNX VM (install, update, logs, uninstall in a test folder), not yet on
+a car; its gateway search only against a stand-in.
 
 - **Wired CarPlay** ([docs/CARPLAY.md](docs/CARPLAY.md)): plug in an iPhone and choose
   *Multimedia → Android Auto / CarPlay*. Picture, iDrive controller, sound, Siri and calls with the car microphone,
