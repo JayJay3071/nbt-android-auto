@@ -144,13 +144,16 @@ Pin the NBT host key in `.local/nbt_known_hosts` first. The NBT shell lacks many
 
 ### Safety rules (learned the hard way)
 
+- **NEVER run `/sbin/shutdown` on the head unit**, including through scripts or automation. It causes a boot lock that
+  can only be cleared by disconnecting the vehicle battery. A diagnostic reset must go through the vehicle's ZGW
+  (central gateway); see the [NBT reset guide](../src/idrive/reboot/README.md).
 - **Never stop or restart stock processes** such as `io-nme` or `HmiMain3D`. Stop only your own processes, with SIGTERM.
 - **Do not revive the WAL sprite overlay** (`experiments/wal-overlay/`): unpaced sprite uploads deadlocked the
   `WalServer` and crashed the NVIDIA driver, which restarted the head unit.
 - **No standalone EGL experiments** on the car; one crashed it. Never copy VM-only libraries to the car.
 - Write files as `.tmp`, compare, then rename. Do not blindly repeat a command whose result is unknown.
 - Test new things in RAM (`/fs/ram3/...`) first; it is gone after a restart.
-- If the head unit hangs: hold the power button for about 30 s to restart the iDrive.
+- For an ordinary hang (not the `/sbin/shutdown` boot lock), hold the power button for about 30 s to restart iDrive.
 
 ## Open topics
 
