@@ -1,0 +1,33 @@
+Additional Permission for Binary Releases
+
+I, Valentin Radu <valentin.radu@valinet.ro>, copyright holder 
+of the files listed below (the "Contributions"), licensed under 
+GPL-3.0-only, grant JayJay3071 the following additional permission:
+
+1. You may compile the Contributions together with [nbt-android-auto](https://github.com/JayJay3071/nbt-android-auto) 
+   and distribute the resulting binary releases of
+   nbt-android-auto under the PolyForm Noncommercial License 1.0.0,
+   without the GPL-3.0 conditions applying to those binaries.
+
+2. Recipients of those binary releases receive a license to them
+   from me under the PolyForm Noncommercial License 1.0.0.
+
+3. Conditions. Every binary release must include:
+   a) the Required Notice below;
+   b) the full text of this permission;
+   c) a link to [https://github.com/JayJay3071/nbt-android-auto], where the Contributions are
+      available in source form under GPL-3.0-only.
+   If the software has an About screen, credits screen, or
+   similar user-visible information, items a) through c) must be
+   reproduced there in full, unmodified.
+
+4. This permission does not allow:
+   a) distributing the Contributions in source form under any
+      license other than GPL-3.0-only;
+   b) granting commercial licenses to, or relicensing, the
+      Contributions under any other terms;
+   c) transferring or sublicensing this permission.
+
+Required Notice: Copyright (c) 2026 Valentin Radu <valentin.radu@valinet.ro>
+
+Covered files: everything file labeled GPL-3.0-only in the repository.

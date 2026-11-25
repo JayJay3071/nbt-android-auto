@@ -1,4 +1,7 @@
 /* nbt_decoder: Android Auto's picture through the car's own video path (2026-11-19).
+ * SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (C) 2026 Valentin Radu
+ * (license and the author's additional permissions: NOTICE.md, "GPLv3 parts by Valentin Radu")
  *
  * The phone's H.264 (Annex B, from native_service's FIFO) is decoded on the CPU with FFmpeg 2.8 (H.264 only, with its
  * SIMD assembly, scripts/ffmpeg_qnx.py) and handed to libnmsdk's INvVideo, which converts every picture into its own

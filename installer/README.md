@@ -104,3 +104,16 @@ Der Ordner `payload/` muss neben dem Skript liegen.
 - `installer/build_windows.ps1` baut die Windows-.exe. `installer/build_mac.sh` baut die App auf einem Mac.
 - Für Tests in einer QNX-VM gibt es versteckte Optionen: `--key <ssh-key>` und `--root <testverzeichnis>`. Damit wird
   unterhalb eines Testordners installiert statt im System.
+
+## Credits und Lizenzen
+
+Der Knopf **Credits / Lizenzen** im Installer zeigt, von wem welcher Teil stammt:
+
+- Scharfes Bild mit Hardware-Decoder (`nbt_decoder`), CarPlay (`nbt_carplay`) und NBT-Neustart (`nbt_reset`) stammen
+  von **Valentin Radu** ([valinet](https://github.com/valinet/nbt-android-auto)). Er hat diesem Projekt erlaubt, seine
+  Programme in den Releases mitzuliefern. Der volle Text seiner Erlaubnis liegt als
+  `PERMISSION-valinet-binary-releases.txt` im Paket und wird mit auf das NBT geschrieben.
+- Der Android-Auto-Kern und der Controller-Code stammen aus **NBT-AAD** von nanaisu.
+
+Die fertigen Dateien eines Release stehen unter der PolyForm Noncommercial License 1.0.0: keine kommerzielle Nutzung.
+Der Quelltext liegt auf <https://github.com/JayJay3071/nbt-android-auto>, Einzelheiten in `NOTICE.md`.

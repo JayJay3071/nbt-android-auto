@@ -44,9 +44,11 @@ Questions or suggestions that do not fit an issue: **androidauto.nbt@proton.me**
 - Code style: follow the surrounding code. C/C++ for QNX 6.5 (gcc 4.4, `-std=gnu++0x`, no exceptions/RTTI in the
   plugin), Python 3 for tools, PowerShell 5.1 compatible scripts. Shell scripts for the car use plain `sh` with LF line
   endings.
-- By contributing you agree that your contribution is licensed under the project's
-  [PolyForm Noncommercial License 1.0.0](LICENSE). Changes to the GPLv3 parts (`nbt_decoder`, `src/carplay/`,
-  `nbt_reset`; listed in [NOTICE.md](NOTICE.md)) are licensed under the GNU GPL version 3 like those files.
+- By contributing you agree that your contribution is licensed like the file it changes ([NOTICE.md](NOTICE.md)
+  lists which is which): GPL-3.0-only with the project's additional permission for the project's own code and for new
+  files, GPL-3.0-only for Valentin Radu's parts (`nbt_decoder`, `src/carplay/`, `nbt_reset`), and the PolyForm
+  Noncommercial License 1.0.0 for the NBT-AAD-based files. You also agree that the project may include your
+  contribution in its noncommercial binary releases.
 
 ## Never commit
 

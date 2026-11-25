@@ -82,6 +82,7 @@ T = {
     'install': ('Installieren / Aktualisieren', 'Install / Update'),
     'uninstall': ('Deinstallieren', 'Uninstall'),
     'logs': ('Diagnose-Logs speichern', 'Save diagnostic logs'),
+    'credits': ('Credits / Lizenzen', 'Credits / licenses'),
     'intro': ('Laptop per Ethernet (ENET) mit dem Auto verbinden, Zuendung an, IP und root-Passwort eingeben.',
               'Connect the laptop to the car via Ethernet (ENET), ignition on, enter IP and root password.'),
     'confirm_uninstall': ('Android Auto wirklich vom NBT entfernen?', 'Really remove Android Auto from the NBT?'),
@@ -132,6 +133,28 @@ T = {
 
 def tr(key):
     return T[key][0 if GERMAN else 1]
+
+
+# Who wrote what. Valentin Radu's permission for binary releases wants his notice, the full text of the permission and
+# the link to the source wherever the software shows such information: at the start and under "Credits".
+SOURCE_URL = 'https://github.com/JayJay3071/nbt-android-auto'
+CREDITS = ('Sharp picture and hardware decoding (nbt_decoder), CarPlay (nbt_carplay) and the head unit reset '
+           '(nbt_reset): Copyright (c) 2026 Valentin Radu <valentin.radu@valinet.ro>, '
+           'https://github.com/valinet/nbt-android-auto\n'
+           'Android Auto core and controller code: NBT-AAD, Copyright (c) 2026 nanaisu, '
+           'https://github.com/Sq00ky/Supra-iDrive6-Android-Auto\n'
+           'Source of everything, licenses: ' + SOURCE_URL)
+
+
+def credits_text():
+    """CREDITS plus the full text of Valentin Radu's permission from the payload."""
+    path = payload_dir() / 'rt' / 'PERMISSION-valinet-binary-releases.txt'
+    try:
+        permission = path.read_text(encoding='utf-8')
+    except OSError:
+        permission = '(PERMISSION-valinet-binary-releases.txt is missing in the payload; see %s)' % SOURCE_URL
+    return ('%s\n\nRequired Notice: Copyright (c) 2026 Valentin Radu <valentin.radu@valinet.ro>\n\n%s\n'
+            'Source: %s (his programs in source form under GPL-3.0-only)' % (CREDITS, permission, SOURCE_URL))
 
 
 class InstallError(Exception):
@@ -392,6 +415,9 @@ def checked_gateway(text):
 
 # --------------------------------------------------------------------------------------------------------------------
 def run_cli(args):
+    if args.cli == 'credits':
+        print(credits_text())
+        return
     if paramiko is None:
         sys.exit(tr('no_paramiko'))
     password = None if args.key else getpass.getpass('%s %s@%s: ' % (tr('password'), args.user, args.host))
@@ -529,7 +555,7 @@ def run_gui(args):
             start('logs', target)
 
     for column, (key, command) in enumerate([('install', lambda: start('install')), ('uninstall', do_uninstall),
-                                             ('logs', do_logs)]):
+                                             ('logs', do_logs), ('credits', lambda: log(credits_text()))]):
         button = ttk.Button(buttons, text=tr(key), command=command)
         button.grid(row=0, column=column, padx=(0, 8))
         widgets.append(button)
@@ -538,6 +564,7 @@ def run_gui(args):
         log('Package: %s (%d files)' % (manifest.get('version', '?'), len(manifest['files'])))
     except Exception as exc:
         log('%s: payload: %s' % (tr('error'), exc))
+    log(CREDITS)
     if paramiko is None:
         log(tr('no_paramiko'))
     pump()
@@ -546,7 +573,7 @@ def run_gui(args):
 
 def main():
     parser = argparse.ArgumentParser(description=APP_NAME)
-    parser.add_argument('--cli', choices=['install', 'uninstall', 'logs'], help='run without a window')
+    parser.add_argument('--cli', choices=['install', 'uninstall', 'logs', 'credits'], help='run without a window')
     parser.add_argument('--host', default=DEFAULT_HOST)
     parser.add_argument('--port', type=int, default=22)
     parser.add_argument('--user', default='root')

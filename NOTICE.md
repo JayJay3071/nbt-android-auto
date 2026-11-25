@@ -2,11 +2,85 @@
 
 ## This project
 
-NBT Android Auto is licensed under the PolyForm Noncommercial License 1.0.0 (see [LICENSE](LICENSE),
-`SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0`), except the files listed under [GPLv3 parts](#gplv3-parts),
-which are licensed under the GNU General Public License version 3.
+Copyright (C) 2026 JayJay3071 and the NBT Android Auto contributors
 
-Required Notice: Copyright (c) 2026 the NBT Android Auto contributors
+The code written for this project is licensed under the GNU General Public License version 3 (see
+[LICENSE-GPL-3.0.txt](LICENSE-GPL-3.0.txt), `SPDX-License-Identifier: GPL-3.0-only`), with the additional permission
+below. That is every file of this repository that is not named in one of the sections [NBT-AAD](#nbt-aad),
+[Files with code from valinet's fork under PolyForm Noncommercial](#files-with-code-from-valinets-fork-under-polyform-noncommercial),
+[GPLv3 parts by Valentin Radu](#gplv3-parts-by-valentin-radu) or as third-party software further down. Until version
+2026.11.24 the whole project was under the PolyForm Noncommercial License 1.0.0; the versions published then keep it.
+
+    This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
+    License as published by the Free Software Foundation, version 3.
+
+    This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied
+    warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+    details.
+
+Additional permission under GNU GPL version 3 section 7: If you modify this program, or any covered work, by linking
+or combining it with (a) NBT-AAD (<https://github.com/Sq00ky/Supra-iDrive6-Android-Auto>) or the files of this
+repository that are under the PolyForm Noncommercial License 1.0.0, or (b) the libraries of the BMW NBT head unit (its
+operating system, its HMI framework and its multimedia and window libraries, and the libraries they use), containing
+parts covered by the terms of their own licenses, the licensors of this program grant you additional permission to
+convey the resulting work. Corresponding Source for a non-source form of such a combination shall not include the
+source code for the parts of the head unit's libraries. The parts under the PolyForm Noncommercial License keep that
+license, so a work that contains them may only be used and conveyed for noncommercial purposes.
+
+## Binary releases
+
+The installer and the payload of a release contain programs built from all parts of this repository. They are
+distributed under the PolyForm Noncommercial License 1.0.0 (see
+[LICENSE-PolyForm-Noncommercial-1.0.0.md](LICENSE-PolyForm-Noncommercial-1.0.0.md)): free for private and other
+noncommercial use, no commercial use. The NBT-AAD parts require that; this project's own code is included by its
+copyright holder; Valentin Radu's programs are included under his permission, granted on 2026-11-24
+(<https://github.com/JayJay3071/nbt-android-auto/issues/8#issuecomment-7147670516>), reproduced here in full and unmodified, and also kept as
+[PERMISSION-valinet-binary-releases.txt](PERMISSION-valinet-binary-releases.txt):
+
+```
+Additional Permission for Binary Releases
+
+I, Valentin Radu <valentin.radu@valinet.ro>, copyright holder 
+of the files listed below (the "Contributions"), licensed under 
+GPL-3.0-only, grant JayJay3071 the following additional permission:
+
+1. You may compile the Contributions together with [nbt-android-auto](https://github.com/JayJay3071/nbt-android-auto) 
+   and distribute the resulting binary releases of
+   nbt-android-auto under the PolyForm Noncommercial License 1.0.0,
+   without the GPL-3.0 conditions applying to those binaries.
+
+2. Recipients of those binary releases receive a license to them
+   from me under the PolyForm Noncommercial License 1.0.0.
+
+3. Conditions. Every binary release must include:
+   a) the Required Notice below;
+   b) the full text of this permission;
+   c) a link to [https://github.com/JayJay3071/nbt-android-auto], where the Contributions are
+      available in source form under GPL-3.0-only.
+   If the software has an About screen, credits screen, or
+   similar user-visible information, items a) through c) must be
+   reproduced there in full, unmodified.
+
+4. This permission does not allow:
+   a) distributing the Contributions in source form under any
+      license other than GPL-3.0-only;
+   b) granting commercial licenses to, or relicensing, the
+      Contributions under any other terms;
+   c) transferring or sublicensing this permission.
+
+Required Notice: Copyright (c) 2026 Valentin Radu <valentin.radu@valinet.ro>
+
+Covered files: everything file labeled GPL-3.0-only in the repository.
+```
+
+The source of every release is this repository, <https://github.com/JayJay3071/nbt-android-auto>, at the tag of the
+release; `scripts/build_all.py` builds the programs from it.
+
+Required Notice: Copyright (c) 2026 Valentin Radu <valentin.radu@valinet.ro>
+
+Required Notice: Copyright (c) 2026 nanaisu - NBT-AAD (https://github.com/Sq00ky/Supra-iDrive6-Android-Auto)
+
+Required Notice: Copyright (c) 2026 JayJay3071 and the NBT Android Auto contributors
 
 ## NBT-AAD
 
@@ -24,26 +98,41 @@ Parts of this project are taken from or based on NBT-AAD by nanaisu,
 
 Required Notice: Copyright (c) 2026 nanaisu - NBT-AAD (https://github.com/Sq00ky/Supra-iDrive6-Android-Auto)
 
-The license text is also kept next to the code in [src/android_auto/LICENSE.NBT-AAD.md](src/android_auto/LICENSE.NBT-AAD.md).
+The license text is in [LICENSE-PolyForm-Noncommercial-1.0.0.md](LICENSE-PolyForm-Noncommercial-1.0.0.md) and also
+kept next to the code in [src/android_auto/LICENSE.NBT-AAD.md](src/android_auto/LICENSE.NBT-AAD.md).
 
-## GPLv3 parts
+## Files with code from valinet's fork under PolyForm Noncommercial
+
+These files of this project contain parts taken from their versions in valinet's fork
+(<https://github.com/valinet/nbt-android-auto>), which he published under the PolyForm Noncommercial License 1.0.0
+(decoder mode and CarPlay mode of the service, the page with its buttons and its pool of focus events, the start and
+build steps for his programs). They are under the PolyForm Noncommercial License 1.0.0:
+
+- `src/android_auto/nbt_native_service.c`
+- `src/idrive/aa_entry_plugin.cpp`, `src/idrive/NbtAndroidAuto.xml`, `src/idrive/make_aa_entry_resources.py`,
+  `src/idrive/reboot/README.md`
+- `scripts/nbt-aa-boot.sh`, `scripts/build-qnx.sh`, `scripts/build_all.py`
+
+Required Notice: Copyright (c) 2026 JayJay3071 and Valentin Radu
+
+## GPLv3 parts by Valentin Radu
 
 Three programs come from valinet's fork of this project (<https://github.com/valinet/nbt-android-auto>),
-Copyright (C) 2026 Valentin Radu. They are licensed under the GNU General Public License version 3 (see
-[LICENSE-GPL-3.0.txt](LICENSE-GPL-3.0.txt), `SPDX-License-Identifier: GPL-3.0-only`), with the additional permission
-below. Each is a separate program: it is started by this project's service or page and exchanges data with the other
-programs through files and FIFOs only; it contains no code from NBT-AAD or from the PolyForm-licensed parts of this
-project, and they contain none of its code. Their complete source is in this repository, and
-`scripts/build_all.py` builds the binaries of a release from it.
+Copyright (C) 2026 Valentin Radu <valentin.radu@valinet.ro>. They are licensed under the GNU General Public License
+version 3 (see [LICENSE-GPL-3.0.txt](LICENSE-GPL-3.0.txt), `SPDX-License-Identifier: GPL-3.0-only`), with the two
+additional permissions of their author: the one for the head unit's libraries at the end of this section, and the one
+for this project's binary releases under [Binary releases](#binary-releases). Their complete source is in this
+repository, and `scripts/build_all.py` builds the binaries of a release from it.
 
-- `nbt_decoder` (the 1280-wide picture): `src/android_auto/decoder/nbt_decoder.c`,
-  `src/android_auto/decoder/nbt_hwdec.h`, `src/android_auto/decoder/ffmpeg/objects.txt` and `sources.txt`, and the
-  FFmpeg build scripts `scripts/ffmpeg_qnx.py` and `scripts/build-ffmpeg-qnx.sh`
+- `nbt_decoder` (the 1280-wide picture, with decoding by the car's own H.264 decoder):
+  `src/android_auto/decoder/nbt_decoder.c`, `src/android_auto/decoder/nbt_hwdec.h`,
+  `src/android_auto/decoder/ffmpeg/objects.txt` and `sources.txt`, and the FFmpeg build scripts
+  `scripts/ffmpeg_qnx.py` and `scripts/build-ffmpeg-qnx.sh`
 - `nbt_carplay` (wired CarPlay): everything in `src/carplay/`, `docs/CARPLAY.md`, `scripts/carplay_deps.py` and
   `scripts/mbedtls_empty_name.py`
 - `nbt_reset` (restart of the head unit): `src/idrive/reboot/nbt_reset.c`
 
-Changes made in this project (2026-11-24, by the NBT Android Auto contributors, under the same license):
+Changes made in this project (2026-11-24, by JayJay3071, under the same license, GPL-3.0-only):
 `nbt_decoder.c`: placeholder stream (`--dummy`), the marker file `decoder.picture`, the trip computer box
 (`--panel`, `nbt_panel_font.h`) removed; `src/carplay/`: 16-bit NCM format for iOS 27 (`cp_usb.c`), the sound into
 this project's sound FIFO (`cp_audio.c`), titles, cover and route guidance from iAP2 (`cp_iap2.c`). The list is also
@@ -54,9 +143,6 @@ generated by FFmpeg's configure and stay under FFmpeg's license (LGPL 2.1 or lat
 `vdpau/vdpau_x11.h` stay under libvdpau's MIT license (see [FFmpeg](#ffmpeg)). What `nbt_decoder` and `nbt_carplay`
 are linked against is listed under [FFmpeg](#ffmpeg), [lwIP and Monocypher](#lwip-and-monocypher) and
 [Mbed TLS](#mbed-tls).
-
-The decoder-mode and CarPlay-mode code in `src/android_auto/nbt_native_service.c`, the page in `src/idrive/` and
-`scripts/nbt-aa-boot.sh` follow that fork's PolyForm-licensed versions of the same files.
 
     Copyright (C) 2026 Valentin Radu
 

@@ -8,4 +8,4 @@
 ## Checklist
 - [ ] No passwords, keys, head-unit libraries or private logs in the diff
 - [ ] Docs updated if behaviour or setup changed
-- [ ] I agree that this contribution is licensed under PolyForm Noncommercial 1.0.0
+- [ ] I agree that this contribution is licensed like the files it changes (see CONTRIBUTING.md: GPL-3.0-only for the project's own code, PolyForm Noncommercial 1.0.0 for the NBT-AAD-based files)

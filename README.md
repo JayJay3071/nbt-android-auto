@@ -9,6 +9,9 @@ the instrument cluster.
 > has not been tested on other cars, other NBT software levels (I-Stufen) or NBT Evo. CarPlay and the new picture path
 > are new in 2026.11.24.2. Read the [disclaimer](#disclaimer) first.
 
+**Thanks to Valentin Radu ([valinet](https://github.com/valinet/nbt-android-auto)):** the sharp picture, hardware
+decoding, CarPlay and the head unit reset are his work, see [Credits](#credits).
+
 🎬 **Sneak peek:** [see it running in the car (Instagram video)](https://www.instagram.com/reel/DfkW1wYsB__/)
 
 🇩🇪 **Deutsch:** Kurzfassung [weiter unten](#deutsch), Installationsanleitung in [installer/README.md](installer/README.md).
@@ -178,20 +181,50 @@ built from this repository with one command in a QNX 6.5.0 VM (`scripts/build_al
 If this project is useful to you, donations are very welcome via **PayPal** to **androidauto.nbt@proton.me**.
 The same address is also the place to reach me with questions or suggestions.
 
-## Credits and license
+## What's next
 
-Parts of the Android Auto core and the controller code come from **NBT-AAD** by nanaisu
-([Sq00ky/Supra-iDrive6-Android-Auto](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto)). Thank you!
+- **Android Auto: calls, the assistant and the car's microphone through the car**, as CarPlay already does it. Today
+  calls run over the phone's normal Bluetooth connection, and the assistant (Gemini) does not work.
+- **CarPlay: better turn hints in the instrument cluster** (more manoeuvre types, roundabouts, lanes).
+- **Navigation prompts through the car speakers**, for Android Auto and CarPlay.
+- **Sound without Bluetooth**, keeping the page with title, cover and skip keys.
+- **USB drop-outs** on some cars and phones ([#9](https://github.com/JayJay3071/nbt-android-auto/issues/9)).
 
-The 1280-wide picture (`nbt_decoder`), wired CarPlay (`nbt_carplay`) and the head unit reset (`nbt_reset`) are the work
-of **Valentin Radu** ([valinet/nbt-android-auto](https://github.com/valinet/nbt-android-auto)), as are several findings
-this version uses (the focus event limit of iDrive, the longer USB read wait). Thank you!
+## Credits
 
-This project is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE): free for private and other
-noncommercial use, **no commercial use** (for example selling it pre-installed). The three programs from valinet's fork
-are licensed under the [GNU General Public License version 3](LICENSE-GPL-3.0.txt); they are separate programs and
-their source is in this repository. Which file is under which license, and the third-party notices, are listed in
-[NOTICE.md](NOTICE.md).
+- **Valentin Radu** ([valinet/nbt-android-auto](https://github.com/valinet/nbt-android-auto)) wrote most of what is
+  new since 2026.11.24.2:
+  - `nbt_decoder`: the picture through the head unit's NVIDIA video interface, the sharp full-width mode and decoding
+    by the car's own H.264 decoder;
+  - `nbt_carplay`: wired CarPlay through the NBT's own USB port and Apple chip, with Siri, calls and the car's
+    microphone;
+  - `nbt_reset`: the restart of the head unit from the page;
+  - how the service keeps the decoder running, the page's buttons, and findings this project uses: iDrive performs
+    each focus event only about ten times per start, every id in a page file has to be unique, and a longer wait on
+    USB reads.
+
+  He also gave this project the permission to ship his programs in its releases. Thank you, Valentin!
+- **NBT-AAD** by nanaisu and its contributors
+  ([Sq00ky/Supra-iDrive6-Android-Auto](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto)): the Android Auto
+  protocol core and the controller code come from there. Without NBT-AAD this project would not exist. Thank you!
+- Everyone who tests, reports and explains things in the issues.
+
+## License
+
+- **The code written for this project** is licensed under the [GNU General Public License version 3](LICENSE-GPL-3.0.txt)
+  (`GPL-3.0-only`), with a permission to combine it with NBT-AAD and the head unit's libraries.
+- **Valentin Radu's programs** (`nbt_decoder`, `nbt_carplay`, `nbt_reset`) are GPL-3.0-only as well.
+- **The NBT-AAD parts** and a few files with code from valinet's fork are under the
+  [PolyForm Noncommercial License 1.0.0](LICENSE-PolyForm-Noncommercial-1.0.0.md).
+- **Releases (installer and payload)** contain NBT-AAD code and are distributed under the PolyForm Noncommercial
+  License: free for private and other noncommercial use, **no commercial use** (for example selling it or selling it
+  pre-installed). Valentin Radu's programs are in them under his
+  [permission for binary releases](PERMISSION-valinet-binary-releases.txt).
+
+Which file is under which license, and the third-party notices: [NOTICE.md](NOTICE.md), overview in
+[LICENSE.md](LICENSE.md).
+
+Required Notice: Copyright (c) 2026 Valentin Radu <valentin.radu@valinet.ro>
 
 Required Notice: Copyright (c) 2026 nanaisu - NBT-AAD (https://github.com/Sq00ky/Supra-iDrive6-Android-Auto)
 
@@ -232,7 +265,11 @@ So sieht es im Auto aus: [Video auf Instagram](https://www.instagram.com/reel/Df
 - **Einschränkungen:** pro NBT-Start nur eine Art Telefon (Android oder iPhone, sonst „NBT neu starten“), CarPlay
   lastet das NBT stark aus, Navi-Ansagen von Android Auto weiter über das Telefon per Bluetooth, getestet mit einem
   Auto (F07, 2014), einem Android-Telefon und einem iPhone.
-- **Nutzung auf eigene Gefahr**, keine Gewähr. Lizenz: PolyForm Noncommercial 1.0.0, also keine kommerzielle Nutzung.
+- **Nutzung auf eigene Gefahr**, keine Gewähr.
+- **Lizenz:** Der eigene Code des Projekts steht unter GPLv3, ebenso die Programme von Valentin Radu. Die Teile aus
+  NBT-AAD und die fertigen Releases stehen unter PolyForm Noncommercial 1.0.0, also keine kommerzielle Nutzung.
+- **Als Nächstes:** Telefon, Assistent und Mikrofon bei Android Auto über das Auto (wie bei CarPlay), bessere
+  Abbiegehinweise bei CarPlay, Navi-Ansagen über die Lautsprecher, Ton ohne Bluetooth.
 - Mitmachen ist ausdrücklich erwünscht: [CONTRIBUTING.md](CONTRIBUTING.md). Issues und Pull Requests gern auf Deutsch
   oder Englisch.
 - **Spenden und Kontakt:** Wer das Projekt unterstützen möchte, kann gern per **PayPal** an

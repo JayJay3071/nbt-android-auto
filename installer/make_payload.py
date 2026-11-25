@@ -46,6 +46,10 @@ FILES = [
     (ENTRY / 'nbt_decoder', 'rt/nbt_decoder', RT + '/nbt_decoder', '700'),
     (ENTRY / 'nbt_carplay', 'rt/nbt_carplay', RT + '/nbt_carplay', '700'),
     (ENTRY / 'nbt_reset', 'rt/nbt_reset', RT + '/nbt_reset', '700'),
+    # Valentin Radu's permission for binary releases: its conditions want the full text in every binary release, so it
+    # goes into the payload and onto the head unit next to his programs (the installer shows it under "Credits")
+    (REPO / 'PERMISSION-valinet-binary-releases.txt', 'rt/PERMISSION-valinet-binary-releases.txt',
+     RT + '/PERMISSION-valinet-binary-releases.txt', '644'),
     # radio panel skip keys -> Android Auto media keys (read by nbt_knob)
     (REPO / 'config' / 'mfl.map', 'rt/mfl.map', RT + '/mfl.map', '644'),
     (ENTRY / 'NbtAndroidAuto' / 'libNbtAndroidAuto.so', 'plugin/libNbtAndroidAuto.so', PLUGIN + '/libNbtAndroidAuto.so', '755'),
@@ -69,7 +73,7 @@ def built_files(built, pem_dir):
             source = pem_dir / leaf
         elif name.startswith('plugin/') and leaf != 'libNbtAndroidAuto.so':
             source = resources / leaf
-        elif leaf in ('boot.sh', 'restart.sh', 'iap.sh', 'mfl.map'):
+        elif leaf in ('boot.sh', 'restart.sh', 'iap.sh', 'mfl.map', 'PERMISSION-valinet-binary-releases.txt'):
             pass  # straight from scripts/ and config/
         else:
             source = programs / leaf
@@ -101,7 +105,7 @@ def main():
     entries = []
     for source, name, target, mode in files:
         data = pems[name] if name in pems else source.read_bytes()
-        if name.endswith(('.sh', '.map')):
+        if name.endswith(('.sh', '.map', '.txt')):
             data = data.replace(b'\r\n', b'\n')     # the car's shell does not accept CR
         destination = OUT / name
         destination.parent.mkdir(parents=True, exist_ok=True)

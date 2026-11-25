@@ -4,9 +4,11 @@ Versions are named after the build date of the installer payload.
 
 ## 2026.11.24.2 (pre-release)
 
-Wired CarPlay, a picture that uses every pixel of the display, and restart buttons. Most of the new parts come from
-[valinet's fork](https://github.com/valinet/nbt-android-auto) (Valentin Radu): the decoder `nbt_decoder`, the CarPlay
-program `nbt_carplay` and the reset tool `nbt_reset`, all GPLv3 (see [NOTICE.md](NOTICE.md)). Thank you!
+Wired CarPlay, a picture that uses every pixel of the display, and restart buttons. Most of what is new is the work
+of **Valentin Radu** ([valinet's fork](https://github.com/valinet/nbt-android-auto)): the decoder `nbt_decoder` with
+hardware decoding and the sharp full-width picture, the CarPlay program `nbt_carplay` with Siri, calls and the car's
+microphone, the reset tool `nbt_reset`, and the way the service and the page use them. He also allowed this project
+to ship them in its releases. Thank you, Valentin!
 
 Tested in the developer's car (BMW F07 2014, OnePlus 7 Pro, iPhone 17 Air with iOS 27). The parts ran there as beta
 builds; the programs of this release were rebuilt with the changes marked "not yet tested on a car" below. The
@@ -48,6 +50,12 @@ car.
 - **Installer:** ships `nbt_decoder`, `nbt_carplay` and `nbt_reset`, switches hardware decoding on with the first
   install, stores the gateway address, and the diagnostic logs include the decoder and CarPlay logs.
 - Removed from the fork's decoder: the trip computer box over the picture (not yet tested on a car without it).
+
+- **Licenses:** the code written for this project is now under the GNU GPL version 3 (`GPL-3.0-only`, was PolyForm
+  Noncommercial), with a permission to combine it with NBT-AAD and the head unit's libraries. The NBT-AAD parts stay
+  PolyForm Noncommercial, and so do the binary releases: no commercial use. Valentin Radu's programs are GPL-3.0-only
+  in source and part of the binary releases under his permission of 2026-11-24. Everything is listed in
+  [NOTICE.md](NOTICE.md) and [LICENSE.md](LICENSE.md).
 
 Known limits: see [README.md](README.md#known-limitations).
 

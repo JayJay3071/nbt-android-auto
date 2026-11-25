@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 Valentin Radu
 """FFmpeg 2.8.22 (H.264 decoder only) for our decoder program nbt_decoder, built in the QNX 6.5.0 VM.
 
 With FFmpeg's VDPAU interface (hwaccel h264_vdpau): FFmpeg parses the stream and keeps the reference pictures,

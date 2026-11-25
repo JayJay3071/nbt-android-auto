@@ -1,4 +1,7 @@
 /* nbt_reset - reboot the NBT head unit from the head unit itself.
+ * SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (C) 2026 Valentin Radu
+ * (license and the author's additional permissions: NOTICE.md, "GPLv3 parts by Valentin Radu")
  * Sends UDS 11 01 (hardReset) to ECU 0x63 (head unit) through the gateway's HSFZ port 6801, the same request as
  * nbt_reset.py on the laptop and Tool32's STEUERGERAETE_RESET.
  *   nbt_reset            find the gateway with the HSFZ 6811 broadcast, then reset
