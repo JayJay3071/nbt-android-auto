@@ -119,6 +119,11 @@ The stock NBT does not accept SSH logins, so SSH has to be unlocked (patched) on
 
 Unlocking SSH changes the head unit's configuration. As with everything here, you do it at your own risk.
 
+If you type commands on the head unit yourself: do not run `/sbin/shutdown` there. On one car it left the head unit
+unable to start until the car battery was disconnected. To restart the head unit, use *Restart NBT* on the page (see
+[src/idrive/reboot/README.md](src/idrive/reboot/README.md)). The installer and this project's programs never run that
+command.
+
 ## Install
 
 1. Download the installer from [Releases](../../releases): `NBT-AndroidAuto-Installer.exe` (Windows) or the macOS app.
