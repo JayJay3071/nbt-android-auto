@@ -71,8 +71,14 @@ Navigation prompts of Android Auto still come from the phone over its normal Blu
 - **One kind of phone per start of the head unit:** after an Android phone, an iPhone only works after a restart of
   the head unit, and the other way round. The page then shows "Restart the NBT first"; **Restart NBT** is below it.
 - **Decoder change needs a restart of the head unit** (the Decoder button says so).
-- **CarPlay loads the head unit heavily** (about 98 % CPU on the developer's car): iDrive can feel slower while it
-  runs. CarPlay turn hints in the cluster: only start, left and right were seen so far.
+- **CPU load: not measured properly yet.** This page and the notes of 2026.11.24.2 said that CarPlay loads the head
+  unit to about 98 % CPU. That figure does not hold: it was one short sample (`aps show` without `-v`) taken during
+  testing, right after the CarPlay program had been restarted and while its picture was not even shown. Valentin Radu
+  measures about 38 % on his car with CarPlay (`aps show -v`, averaged). What is known: iDrive felt slower with CarPlay
+  on the developer's car, and this project's sound path costs more than his. Its sound device encodes the sound all
+  the time (about a tenth of one CPU core) and the head unit's own player decodes it again, which is the price for
+  title, cover and skip keys in iDrive. Proper figures, with and without sound, will follow.
+- CarPlay turn hints in the cluster: only start, left and right were seen so far.
 - **New picture path, one car:** if the picture stays away on your car, the stock player path of earlier versions
   (800x480) is still in the package: create the file `decoder.off` in `/var/opt/hmi/data/rw/NbtAndroidAutoRT` and
   restart the head unit. Please report it.
@@ -262,9 +268,11 @@ So sieht es im Auto aus: [Video auf Instagram](https://www.instagram.com/reel/Df
   Dafür muss das Telefon zusätzlich per Bluetooth verbunden sein (erst USB, dann Bluetooth). Beim **iPhone** im Auto
   unter Einstellungen → Verbindungen → Bluetooth → OPTION → „Gerät einrichten“ **nur „Audio“** aktivieren (Telefon 1
   und 2 aus) und am iPhone CarPlay als Tonausgabe wählen. Bilder dazu: [Sound](#sound).
-- **Einschränkungen:** pro NBT-Start nur eine Art Telefon (Android oder iPhone, sonst „NBT neu starten“), CarPlay
-  lastet das NBT stark aus, Navi-Ansagen von Android Auto weiter über das Telefon per Bluetooth, getestet mit einem
-  Auto (F07, 2014), einem Android-Telefon und einem iPhone.
+- **Einschränkungen:** pro NBT-Start nur eine Art Telefon (Android oder iPhone, sonst „NBT neu starten“),
+  Navi-Ansagen von Android Auto weiter über das Telefon per Bluetooth, getestet mit einem Auto (F07, 2014), einem
+  Android-Telefon und einem iPhone.
+- **CPU-Last:** noch nicht sauber gemessen. Die frühere Angabe „etwa 98 % bei CarPlay“ war eine einzelne
+  Kurzmessung in einem Sondermoment und gilt nicht. Der Ton mit Titel und Cover kostet zusätzliche Rechenzeit.
 - **Nutzung auf eigene Gefahr**, keine Gewähr.
 - **Lizenz:** Der eigene Code des Projekts steht unter GPLv3, ebenso die Programme von Valentin Radu. Die Teile aus
   NBT-AAD und die fertigen Releases stehen unter PolyForm Noncommercial 1.0.0, also keine kommerzielle Nutzung.

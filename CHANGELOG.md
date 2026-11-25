@@ -7,6 +7,9 @@ Versions are named after the build date of the installer payload.
 - **Licenses:** the eight files with parts from valinet's fork (the service, the page, the start and build scripts)
   are now GPL-3.0-only too; Valentin Radu agreed on 2026-11-25. In 2026.11.24.2 they were still under the PolyForm
   Noncommercial License. See [NOTICE.md](NOTICE.md).
+- **Correction:** the "about 98 % CPU with CarPlay" in the README and in docs/CARPLAY.md of 2026.11.24.2 was one short
+  sample taken during testing and does not hold. The load has not been measured properly yet; see the README's known
+  limitations.
 
 ## 2026.11.24.2 (pre-release)
 

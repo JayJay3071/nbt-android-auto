@@ -47,7 +47,10 @@ service is already running: USB first, then Bluetooth (otherwise switch Bluetoot
 
 - An Android phone and an iPhone cannot be used in the same start of the head unit: the page shows "Restart the NBT
   first" for the second one ([DECODER.md](DECODER.md)).
-- The head unit is close to its CPU limit with CarPlay (98 % on the developer's car), iDrive can feel slower.
+- CPU load: not measured properly yet. The "98 %" named here before was one short sample taken during testing
+  (right after a restart of `nbt_carplay`, picture not shown) and does not hold; the fork's author measures about
+  38 % on his car. iDrive felt slower with CarPlay on the developer's car, and the sound path of this project (SBC
+  sound device plus the head unit's own player) costs more than the fork's direct path into the amplifier.
 - A caller is only heard while the Apple entry is the active sound source.
 
 The rest of this document is the fork's description; where it names the sound path (`input_stereo_1`), the list above
