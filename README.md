@@ -214,7 +214,7 @@ The same address is also the place to reach me with questions or suggestions.
 - **The code written for this project** is licensed under the [GNU General Public License version 3](LICENSE-GPL-3.0.txt)
   (`GPL-3.0-only`), with a permission to combine it with NBT-AAD and the head unit's libraries.
 - **Valentin Radu's programs** (`nbt_decoder`, `nbt_carplay`, `nbt_reset`) are GPL-3.0-only as well.
-- **The NBT-AAD parts** and a few files with code from valinet's fork are under the
+- **The NBT-AAD parts** are under the
   [PolyForm Noncommercial License 1.0.0](LICENSE-PolyForm-Noncommercial-1.0.0.md).
 - **Releases (installer and payload)** contain NBT-AAD code and are distributed under the PolyForm Noncommercial
   License: free for private and other noncommercial use, **no commercial use** (for example selling it or selling it

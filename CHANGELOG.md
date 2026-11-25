@@ -2,6 +2,12 @@
 
 Versions are named after the build date of the installer payload.
 
+## After 2026.11.24.2 (not released yet)
+
+- **Licenses:** the eight files with parts from valinet's fork (the service, the page, the start and build scripts)
+  are now GPL-3.0-only too; Valentin Radu agreed on 2026-11-25. In 2026.11.24.2 they were still under the PolyForm
+  Noncommercial License. See [NOTICE.md](NOTICE.md).
+
 ## 2026.11.24.2 (pre-release)
 
 Wired CarPlay, a picture that uses every pixel of the display, and restart buttons. Most of what is new is the work

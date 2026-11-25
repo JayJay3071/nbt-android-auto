@@ -7,9 +7,10 @@ Copyright (C) 2026 JayJay3071 and the NBT Android Auto contributors
 The code written for this project is licensed under the GNU General Public License version 3 (see
 [LICENSE-GPL-3.0.txt](LICENSE-GPL-3.0.txt), `SPDX-License-Identifier: GPL-3.0-only`), with the additional permission
 below. That is every file of this repository that is not named in one of the sections [NBT-AAD](#nbt-aad),
-[Files with code from valinet's fork under PolyForm Noncommercial](#files-with-code-from-valinets-fork-under-polyform-noncommercial),
-[GPLv3 parts by Valentin Radu](#gplv3-parts-by-valentin-radu) or as third-party software further down. Until version
-2026.11.24 the whole project was under the PolyForm Noncommercial License 1.0.0; the versions published then keep it.
+[GPLv3 parts by Valentin Radu](#gplv3-parts-by-valentin-radu) or as third-party software further down; for a few of
+them part of the code is Valentin Radu's, see [Files with parts from valinet's fork](#files-with-parts-from-valinets-fork).
+Until version 2026.11.24 the whole project was under the PolyForm Noncommercial License 1.0.0; the versions published
+then keep it.
 
     This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
     License as published by the Free Software Foundation, version 3.
@@ -101,19 +102,21 @@ Required Notice: Copyright (c) 2026 nanaisu - NBT-AAD (https://github.com/Sq00ky
 The license text is in [LICENSE-PolyForm-Noncommercial-1.0.0.md](LICENSE-PolyForm-Noncommercial-1.0.0.md) and also
 kept next to the code in [src/android_auto/LICENSE.NBT-AAD.md](src/android_auto/LICENSE.NBT-AAD.md).
 
-## Files with code from valinet's fork under PolyForm Noncommercial
+## Files with parts from valinet's fork
 
 These files of this project contain parts taken from their versions in valinet's fork
-(<https://github.com/valinet/nbt-android-auto>), which he published under the PolyForm Noncommercial License 1.0.0
-(decoder mode and CarPlay mode of the service, the page with its buttons and its pool of focus events, the start and
-build steps for his programs). They are under the PolyForm Noncommercial License 1.0.0:
+(<https://github.com/valinet/nbt-android-auto>): decoder mode and CarPlay mode of the service, the page with its
+buttons and its pool of focus events, the start and build steps for his programs. He had published those parts under
+the PolyForm Noncommercial License 1.0.0 and agreed on 2026-11-25 that they are licensed under GPL-3.0-only here
+(<https://github.com/JayJay3071/nbt-android-auto/issues/8#issuecomment-7148918117>). The files are under GPL-3.0-only like the rest of this project's own code; they were under the PolyForm
+Noncommercial License 1.0.0 in version 2026.11.24.2:
 
 - `src/android_auto/nbt_native_service.c`
 - `src/idrive/aa_entry_plugin.cpp`, `src/idrive/NbtAndroidAuto.xml`, `src/idrive/make_aa_entry_resources.py`,
   `src/idrive/reboot/README.md`
 - `scripts/nbt-aa-boot.sh`, `scripts/build-qnx.sh`, `scripts/build_all.py`
 
-Required Notice: Copyright (c) 2026 JayJay3071 and Valentin Radu
+Copyright (C) 2026 JayJay3071 and Valentin Radu
 
 ## GPLv3 parts by Valentin Radu
 
