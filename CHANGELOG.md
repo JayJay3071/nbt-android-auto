@@ -7,6 +7,8 @@ Versions are named after the build date of the installer payload.
 - **Licenses:** the eight files with parts from valinet's fork (the service, the page, the start and build scripts)
   are now GPL-3.0-only too; Valentin Radu agreed on 2026-11-25. In 2026.11.24.2 they were still under the PolyForm
   Noncommercial License. See [NOTICE.md](NOTICE.md).
+- **CarPlay, first connection:** the README and docs/CARPLAY.md now say that the first connection of an iPhone takes
+  2 to 3 minutes and ends with the iPhone's trust question; later connections take about 10 to 20 seconds.
 - **Correction:** the "about 98 % CPU with CarPlay" in the README and in docs/CARPLAY.md of 2026.11.24.2 was one short
   sample taken during testing and does not hold. The load has not been measured properly yet; see the README's known
   limitations.
@@ -29,6 +31,10 @@ iOS 27), except three small things that were added afterwards and the installer:
 
 The installer of this version was tested in the QNX VM (install, update, logs, uninstall in a test folder), not yet on
 a car; its gateway search only against a stand-in.
+
+**Update of 25 November:** this version was then installed with its installer in the developer's car and driven,
+Android Auto and CarPlay for about an hour each, without problems. The three additions above, the lock between
+Android phone and iPhone among them, were tested with it.
 
 - **Wired CarPlay** ([docs/CARPLAY.md](docs/CARPLAY.md)): plug in an iPhone and choose
   *Multimedia → Android Auto / CarPlay*. Picture, iDrive controller, sound, Siri and calls with the car microphone,

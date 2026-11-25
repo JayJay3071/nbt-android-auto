@@ -7,7 +7,8 @@ the instrument cluster.
 
 > **Status: community prototype.** It works in the developer's car (BMW F07, 2014, OnePlus 7 Pro, iPhone 17 Air). It
 > has not been tested on other cars, other NBT software levels (I-Stufen) or NBT Evo. CarPlay and the new picture path
-> are new in 2026.11.24.2. Read the [disclaimer](#disclaimer) first.
+> are new in 2026.11.24.2; that version was installed with its installer and driven in this car on 25 November
+> (Android Auto and CarPlay for about an hour each, without problems). Read the [disclaimer](#disclaimer) first.
 
 **Thanks to Valentin Radu ([valinet](https://github.com/valinet/nbt-android-auto)):** the sharp picture, hardware
 decoding, CarPlay and the head unit reset are his work, see [Credits](#credits).
@@ -61,6 +62,10 @@ example when you got in), switch Bluetooth on the phone off and on once.
 
    ![Only Audio is enabled for the iPhone](docs/images/carplay-bluetooth-audio-only.jpg)
 4. On the iPhone, pick **CarPlay** as the audio output.
+
+**The first CarPlay connection takes 2 to 3 minutes.** Leave the iPhone plugged in and unlocked and wait: after a few
+minutes it asks whether to trust this device, confirm that with the iPhone's code. Once the iPhone is registered,
+later connections take about 10 to 20 seconds.
 
 Navigation prompts of Android Auto still come from the phone over its normal Bluetooth connection.
 
@@ -268,6 +273,9 @@ So sieht es im Auto aus: [Video auf Instagram](https://www.instagram.com/reel/Df
   Dafür muss das Telefon zusätzlich per Bluetooth verbunden sein (erst USB, dann Bluetooth). Beim **iPhone** im Auto
   unter Einstellungen → Verbindungen → Bluetooth → OPTION → „Gerät einrichten“ **nur „Audio“** aktivieren (Telefon 1
   und 2 aus) und am iPhone CarPlay als Tonausgabe wählen. Bilder dazu: [Sound](#sound).
+- **Erste CarPlay-Verbindung:** dauert 2 bis 3 Minuten. iPhone eingesteckt und entsperrt lassen; nach ein paar Minuten
+  fragt es, ob dem Gerät vertraut werden soll (mit dem Code des iPhones bestätigen). Danach dauert das Verbinden etwa
+  10 bis 20 Sekunden.
 - **Einschränkungen:** pro NBT-Start nur eine Art Telefon (Android oder iPhone, sonst „NBT neu starten“),
   Navi-Ansagen von Android Auto weiter über das Telefon per Bluetooth, getestet mit einem Auto (F07, 2014), einem
   Android-Telefon und einem iPhone.

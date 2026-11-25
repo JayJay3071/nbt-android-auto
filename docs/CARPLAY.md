@@ -37,6 +37,9 @@ The sound uses the head unit's Bluetooth audio entry, so the iPhone has to be co
    Telephone 2 stay off: calls and Siri then stay in CarPlay and use the car's microphone.
 3. On the iPhone, pick **CarPlay** as the audio output (AirPlay symbol in the player or in Control Centre).
 
+The first connection of an iPhone takes 2 to 3 minutes: leave it plugged in and unlocked, after a few minutes it asks
+whether to trust this device (confirm with the iPhone's code). Later connections take about 10 to 20 seconds.
+
 The music then shows under Multimedia with title, artist, album, cover and progress, and skip works from iDrive, the
 steering wheel and the radio panel keys. As with Android Auto, the Bluetooth connection has to come up while the
 service is already running: USB first, then Bluetooth (otherwise switch Bluetooth on the iPhone off and on once).
