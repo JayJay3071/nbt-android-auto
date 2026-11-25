@@ -10,10 +10,6 @@ the instrument cluster.
 > are new in 2026.11.24.2; that version was installed with its installer and driven in this car on 25 November
 > (Android Auto and CarPlay for about an hour each, without problems). Read the [disclaimer](#disclaimer) first.
 
-> **Warning:** NEVER run `/sbin/shutdown` on the BMW NBT head unit. It causes a boot lock that can only be cleared by
-> disconnecting the vehicle battery. To reset the head unit, use the vehicle's ZGW (central gateway) as described in
-> the [NBT reset guide](src/idrive/reboot/README.md).
-
 **Thanks to Valentin Radu ([valinet](https://github.com/valinet/nbt-android-auto)):** the sharp picture, hardware
 decoding, CarPlay and the head unit reset are his work, see [Credits](#credits).
 
