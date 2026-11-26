@@ -28,7 +28,7 @@ Das Freischalten verändert die Konfiguration des Geräts. Wie alles hier geschi
 4. Das iDrive neu starten.
 5. Telefon per USB anstecken und **Multimedia → Android Auto / CarPlay** wählen. Ein iPhone fragt beim ersten Mal
    „Diesem Computer vertrauen?“.
-6. Für den Ton das Telefon **danach** per Bluetooth mit dem Auto verbinden (siehe unten).
+6. Für den Ton das Telefon zusätzlich per Bluetooth mit dem Auto verbinden (siehe unten). Die Reihenfolge ist egal.
 
 ## Was das Paket auf dem NBT kann
 
@@ -47,10 +47,9 @@ Das Freischalten verändert die Konfiguration des Geräts. Wie alles hier geschi
     Bluetooth das iPhone wählen, OPTION drücken, **Gerät einrichten**, und **nur „Audio“** aktivieren (Telefon 1 und
     Telefon 2 aus). Am iPhone als Tonausgabe **CarPlay** wählen. Anrufe und Siri laufen dann über CarPlay und das
     Mikrofon des Autos. Bilder dazu stehen im [README](../README.md#sound).
-  - Das Telefon muss sich per Bluetooth verbinden, **während Android Auto schon läuft**: erst USB anstecken, dann
-    Bluetooth verbinden.
-  - War Bluetooth schon vorher verbunden (z. B. beim Einsteigen), gibt es zunächst nur den normalen Bluetooth-Eintrag
-    ohne Android-Auto-Ton. Dann Bluetooth am Telefon einmal aus- und wieder einschalten.
+  - Die Reihenfolge von Bluetooth und USB ist seit 2026.11.26 egal: Ist das Telefon nur per Bluetooth verbunden,
+    spielt es seine Musik wie gewohnt. Beim Einstecken kommt der Ton von Android Auto oder CarPlay von selbst, nach
+    dem Abziehen wieder der Bluetooth-Ton. Gefahren bisher mit einem iPhone, mit einem Android-Telefon noch nicht.
   - Ohne Bluetooth-Verbindung gibt es keinen Android-Auto-Ton.
   - Bisher nur mit einem Auto, einem Android-Telefon (OnePlus 7 Pro) und einem iPhone (iPhone 17 Air) getestet.
   - Abschalten: auf dem NBT die Datei `/var/opt/hmi/data/rw/NbtAndroidAutoRT/iap.off` anlegen. Ein erneutes

@@ -2,8 +2,43 @@
 
 Versions are named after the build date of the installer payload.
 
-## After 2026.11.24.2 (not released yet)
+## 2026.11.26 (pre-release)
 
+Driven in the developer's car with the iPhone (CarPlay and plain Bluetooth sound) on the evening of 2026-11-26. Not
+driven with an Android phone yet: Android Auto uses the same changed sound device and Bluetooth layer. The change to
+the first pairing of an iPhone (below) was built after the drive and has not run on a car.
+
+- **Fix: the whole head unit restarted when a CarPlay session ended.** `nbt_carplay` gave every USB transfer to the
+  head unit's USB stack (`io-usb`) with a time limit and ended without finishing the transfers that were still
+  running. The stack then at times kept the timer of a transfer whose memory it had already released, crashed on its
+  next timer tick (crash dump `/var/dump/io-usb.core.gz`), and the head unit restarted. Now no transfer has a time
+  limit inside the stack, the waiting is done in `nbt_carplay`, and everything still running is ended before the
+  program disconnects (`src/carplay/cp_usb.c`).
+- **Sound: the order of Bluetooth and USB no longer matters.** The head unit asks only once per Bluetooth connection
+  where the sound comes from. That place is now always this project's sound device: while no phone session runs it
+  hands on the phone's own Bluetooth sound (and the phone's own titles are shown), with a session it delivers the
+  session's sound. So a phone that is only connected by Bluetooth plays as usual, the CarPlay sound comes by itself
+  when the cable is plugged in, and the Bluetooth sound comes back after unplugging. Switching Bluetooth off and on
+  is no longer needed (`nbt_aa_wms`, `nbt_ipod_tap`, `nbt-aa-iap.sh`).
+- **Fix: no sound for the rest of a Bluetooth connection.** The head unit's player reads the sound device once right
+  after opening it and never again if that read fails; the device answered "nothing there" after one second while the
+  phone was not playing yet. A read now waits until sound is there.
+- **CarPlay, first pairing of an iPhone (not car-tested yet):** the two RSA-2048 keys of the pair record are made
+  once and stored at once, and so are the two identifiers the head unit shows the iPhone. Until now they were made
+  again at every attempt (6 to 56 s per key on the head unit) and only stored after "Trust". An iPhone that dropped
+  off USB during those seconds never got to the trust question
+  ([#21](https://github.com/JayJay3071/nbt-android-auto/issues/21): more than 70 attempts). This is probably also why
+  a first connection took 2 to 3 minutes. An iPhone that is already paired is not affected
+  (`src/carplay/cp_lockdown.c`).
+- **CarPlay, instrument cluster:** roundabouts are drawn with their exit (from the exit angle the iPhone sends, other
+  exits as stubs), the lane guidance of Apple Maps is shown, and "proceed to the route" has its own state.
+- **CarPlay sound:** lost sound packets are counted in the log.
+- **Diagnostics:** the USB side of each session start and end (bus errors, unplug) is written to
+  `logs/usb-events.txt` and saved with the logs.
+- **Good to know: iPhone hotspot.** With the personal hotspot on, the iPhone in the developer's car kept dropping off
+  USB every minute or so (the head unit's USB controller reports transfer errors on all endpoints, then the iPhone
+  re-connects). With the hotspot off and low power mode on it ran a whole drive without a drop. The suspected reason,
+  not measured: the phone then needs more power than the head unit's USB port delivers.
 - **Licenses:** the eight files with parts from valinet's fork (the service, the page, the start and build scripts)
   are now GPL-3.0-only too; Valentin Radu agreed on 2026-11-25. In 2026.11.24.2 they were still under the PolyForm
   Noncommercial License. See [NOTICE.md](NOTICE.md).

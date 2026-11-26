@@ -32,10 +32,10 @@ decoding, CarPlay and the head unit reset are his work, see [Credits](#credits).
 - **Sound with title and cover**: the phone's music appears under Multimedia like a built-in source, with title,
   artist, album, cover and progress, also in the instrument cluster; skip works from iDrive, the steering wheel and
   the radio panel keys. Works for Android Auto and CarPlay; the phone has to be connected by Bluetooth as well
-  (see [Sound](#sound)).
+  (see [Sound](#sound)). A phone that is only connected by Bluetooth plays its own music as usual.
 - **Navigation in the instrument cluster** (6WB cluster) while Google Maps or Apple Maps guides a route: arrow,
   distance bar, street name; with Android Auto also motorway/road shields and lanes (lanes not yet confirmed with a
-  real phone). BMW navigation takes priority when it guides itself.
+  real phone); with CarPlay roundabouts with their exit and the lanes of Apple Maps. BMW navigation takes priority when it guides itself.
 - **Restart buttons** on the page: **Restart Android Auto** restarts only the service and saves a diagnostic snapshot
   first; **Restart NBT** restarts the whole head unit after a confirmation.
 
@@ -46,8 +46,9 @@ entry that this project adds under Multimedia, so iDrive shows what is playing a
 
 ![Title, artist, album, cover and skip keys in iDrive](docs/images/now-playing-title-cover.jpg)
 
-**Android Auto:** plug the phone in by USB, then connect it by Bluetooth. If Bluetooth was connected before (for
-example when you got in), switch Bluetooth on the phone off and on once.
+**Android Auto:** plug the phone in by USB and connect it by Bluetooth. Since 2026.11.26 the order does not matter:
+Bluetooth may already be connected when the cable is plugged in, the session's sound then comes by itself, and after
+unplugging the phone's own Bluetooth music plays again. (Driven with an iPhone so far, not yet with an Android phone.)
 
 **CarPlay:** the iPhone is paired by Bluetooth too, but with **only "Audio" enabled**:
 
@@ -71,8 +72,11 @@ Navigation prompts of Android Auto still come from the phone over its normal Blu
 
 ## Known limitations
 
-- **Sound needs Bluetooth:** see [Sound](#sound). The phone has to connect by Bluetooth while the service is already
-  running (USB first, then Bluetooth). Tested with one Android phone and one iPhone.
+- **Sound needs Bluetooth:** see [Sound](#sound). Tested with one Android phone and one iPhone; the new handling of
+  the order (Bluetooth before USB) was driven with the iPhone only.
+- **iPhone hotspot:** with the personal hotspot on, the iPhone in the developer's car kept dropping off USB about
+  every minute; with the hotspot off it ran a whole drive. Suspected, not measured: the phone then needs more power
+  than the head unit's USB port delivers.
 - **One kind of phone per start of the head unit:** after an Android phone, an iPhone only works after a restart of
   the head unit, and the other way round. The page then shows "Restart the NBT first"; **Restart NBT** is below it.
 - **Decoder change needs a restart of the head unit** (the Decoder button says so).
@@ -201,7 +205,8 @@ The same address is also the place to reach me with questions or suggestions.
 
 - **Android Auto: calls, the assistant and the car's microphone through the car**, as CarPlay already does it. Today
   calls run over the phone's normal Bluetooth connection, and the assistant (Gemini) does not work.
-- **CarPlay: better turn hints in the instrument cluster** (more manoeuvre types, roundabouts, lanes).
+- **CarPlay: better turn hints in the instrument cluster** (more manoeuvre types; roundabouts and lanes came with
+  2026.11.26).
 - **Navigation prompts through the car speakers**, for Android Auto and CarPlay.
 - **Sound without Bluetooth**, keeping the page with title, cover and skip keys.
 - **USB drop-outs** on some cars and phones ([#9](https://github.com/JayJay3071/nbt-android-auto/issues/9)).
@@ -271,11 +276,15 @@ So sieht es im Auto aus: [Video auf Instagram](https://www.instagram.com/reel/Df
   [Forum-Thread](https://www.supramkv.com/threads/ssh-access-guide-supra-nbtevo-headunit.24190/).
 - **Installation:** Installer aus den [Releases](../../releases) laden und der Anleitung in
   [installer/README.md](installer/README.md) folgen.
+- **Neu in 2026.11.26:** Das NBT startet beim Ende einer CarPlay-Sitzung nicht mehr neu (Fehler im Umgang mit dem
+  USB-Treiber des NBT behoben). Die Reihenfolge von Bluetooth und USB ist egal: Ein nur per Bluetooth verbundenes
+  Telefon spielt normal, der CarPlay-Ton kommt beim Einstecken von selbst. Kreisverkehre und Spuren von Apple Karten
+  im Kombi. Mit eingeschaltetem Hotspot fiel das iPhone im Testauto etwa jede Minute vom USB, ohne Hotspot nicht.
 - **Neu in 2026.11.24.2:** CarPlay (iPhone per USB, Siri und Anrufe über das Mikrofon des Autos), scharfes Bild über den
   Hardware-Decoder des Autos, Knöpfe „Android Auto neu starten“ und „NBT neu starten“. Decoder, CarPlay und der
   Neustart stammen von Valentin Radu ([valinet](https://github.com/valinet/nbt-android-auto)).
 - **Ton:** Die Musik des Telefons läuft über die Lautsprecher und erscheint unter Multimedia mit Titel, Cover und Skip.
-  Dafür muss das Telefon zusätzlich per Bluetooth verbunden sein (erst USB, dann Bluetooth). Beim **iPhone** im Auto
+  Dafür muss das Telefon zusätzlich per Bluetooth verbunden sein (die Reihenfolge ist seit 2026.11.26 egal). Beim **iPhone** im Auto
   unter Einstellungen → Verbindungen → Bluetooth → OPTION → „Gerät einrichten“ **nur „Audio“** aktivieren (Telefon 1
   und 2 aus) und am iPhone CarPlay als Tonausgabe wählen. Bilder dazu: [Sound](#sound).
 - **Erste CarPlay-Verbindung:** dauert 2 bis 3 Minuten. iPhone eingesteckt und entsperrt lassen; nach ein paar Minuten

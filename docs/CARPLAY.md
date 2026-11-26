@@ -25,7 +25,8 @@ fork, all in `src/carplay/`:
 - **Turn hints (`cp_iap2.c`):** the identification names a route guidance display (parameter 30), so the iPhone sends
   route guidance and manoeuvre updates (0x5201 / 0x5202) while Apple Maps guides. They go into `nav.state` for
   `nbt_cluster`. Only "start", left and right turns were seen on the car so far; the other manoeuvre types follow a
-  table that is not confirmed, roundabouts are taken from the exit angle, lanes are not shown.
+  table that is not confirmed. Since 2026.11.26 roundabouts are drawn with their exit (from the exit angle, the other
+  exits as stubs) and the lanes of Apple Maps are shown.
 - **Picture rate:** `native_service` starts `nbt_carplay --fps 30`; at the iPhone's 60 the car's decoder fell behind.
 
 ### Sound: pair the iPhone by Bluetooth, audio only
@@ -41,8 +42,9 @@ The first connection of an iPhone takes 2 to 3 minutes: leave it plugged in and 
 whether to trust this device (confirm with the iPhone's code). Later connections take about 10 to 20 seconds.
 
 The music then shows under Multimedia with title, artist, album, cover and progress, and skip works from iDrive, the
-steering wheel and the radio panel keys. As with Android Auto, the Bluetooth connection has to come up while the
-service is already running: USB first, then Bluetooth (otherwise switch Bluetooth on the iPhone off and on once).
+steering wheel and the radio panel keys. Since 2026.11.26 the order does not matter: the iPhone may already be
+connected by Bluetooth (it then plays its own music as usual), the CarPlay sound comes by itself when the cable is
+plugged in, and the Bluetooth sound comes back after unplugging.
 
 ![Bluetooth functions of the iPhone: only Audio](images/carplay-bluetooth-audio-only.jpg)
 
