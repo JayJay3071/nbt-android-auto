@@ -195,6 +195,10 @@ fi
       rm -f /fs/ram3/nbt-aa-cap.tmp
       tail -100 /fs/ram3/nbt-cluster.log > $L/cluster-tail.log 2>/dev/null
       if test $changed = 1; then
+        # the USB side of a session's start or end (bus errors, unplug, the car's own iPod handlers): to tell a bad
+        # cable from a device that was reset (2026-11-25: connections ended every minute, the reason was not logged)
+        { date +%T; sloginfo 2>/dev/null | grep -e EHCI -e OHCI -e CLASS_ -e 'Removal Callback' -e 'ipod audio' | tail -40; } >> $L/usb-events.txt
+        tail -400 $L/usb-events.txt > /fs/ram3/nbt-aa-cap.tmp && cp /fs/ram3/nbt-aa-cap.tmp $L/usb-events.txt; rm -f /fs/ram3/nbt-aa-cap.tmp
         sloginfo 2>/dev/null | grep -e DisplayManagerScreen -e nvideocapture -e 'WindowVisible' -e 'zorder' -e 'NVRM' -e watchdog -e nme -e Nme -e NME -e udio -e a2i | grep -v -e 'NmeGraph video' -e AVRCP | tail -120 > $L/slog-tail.txt
       fi
     fi
