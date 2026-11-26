@@ -543,6 +543,33 @@ static int gen_key(mbedtls_pk_context* k, char* pem, unsigned size)
     return r ? -1 : 0;
 }
 
+static void put_text(const char* name, const char* text)
+{
+    state_write(name, text, (unsigned)strlen(text));
+}
+
+/* A key of the pair record: the stored one, else a new one that is stored at once. Making one takes 6 to 56 s on the
+ * head unit, and until 2026.11.26 both were made again at every attempt and only stored after "Trust". An iPhone that
+ * drops off USB during those seconds (logs of issue #21: after about 10 s, more than 70 attempts) then never got as
+ * far as the trust question. The keys do not depend on the iPhone; pair_load() still asks for pair-done, so stored
+ * keys alone are not taken as a finished pairing. */
+static int stored_key(mbedtls_pk_context* k, const char* name, char* pem, unsigned size)
+{
+    if (!get_text(name, pem, size)) {
+        if (!mbedtls_pk_parse_key(k, (const unsigned char*)pem, strlen(pem) + 1, 0, 0, cp_rng, 0)) {
+            say("pair: %s from the state directory", name);
+            return 0;
+        }
+        say("pair: %s in the state directory cannot be read: a new one", name);
+        mbedtls_pk_free(k);
+        mbedtls_pk_init(k);
+    }
+    if (gen_key(k, pem, size))
+        return -1;
+    put_text(name, pem);
+    return 0;
+}
+
 static int pair_make(const char* device_pem)
 {
     mbedtls_pk_context root, host, device;
@@ -554,13 +581,17 @@ static int pair_make(const char* device_pem)
         say("pair: the iPhone's key could not be read");
         goto out;
     }
-    if (gen_key(&root, g_pair.root_key, sizeof(g_pair.root_key)) ||
-        gen_key(&host, g_pair.host_key, sizeof(g_pair.host_key)) ||
+    /* the certificates are signed anew each time (milliseconds; the device's hangs on this iPhone's key) */
+    if (stored_key(&root, "pair-root-key.pem", g_pair.root_key, sizeof(g_pair.root_key)) ||
+        stored_key(&host, "pair-host-key.pem", g_pair.host_key, sizeof(g_pair.host_key)) ||
         make_cert(&root, &root, 1, 0, g_pair.root_cert, sizeof(g_pair.root_cert)) ||
         make_cert(&host, &root, 0, 0, g_pair.host_cert, sizeof(g_pair.host_cert)) ||
         make_cert(&device, &root, 0, 1, g_pair.device_cert, sizeof(g_pair.device_cert)))
         goto out;
-    uuid(g_pair.host_id);
+    if (get_text("pair-host-id", g_pair.host_id, sizeof(g_pair.host_id)) || strlen(g_pair.host_id) != 36) {
+        uuid(g_pair.host_id);
+        put_text("pair-host-id", g_pair.host_id);
+    }
     r = 0;
 out:
     mbedtls_pk_free(&root);
@@ -593,11 +624,6 @@ static int lockdown_connect(struct stream* s)
     return s->c ? 0 : -1;
 }
 
-static void put_text(const char* name, const char* text)
-{
-    state_write(name, text, (unsigned)strlen(text));
-}
-
 /* "Trust": until it is answered, Pair says PairingDialogResponsePending; asked again (a new connection each time)
  * for up to 2 minutes */
 static int pair(void)
@@ -606,8 +632,10 @@ static int pair(void)
     static char value[4096], device_pem[2048], body[16384], dev64[3000], host64[3000], root64[3000];
     size_t n = 0;
     long long until;
-    if (!g_pair.buid[0])
+    if (!g_pair.buid[0] && (get_text("pair-buid", g_pair.buid, sizeof(g_pair.buid)) || strlen(g_pair.buid) != 36)) {
         uuid(g_pair.buid);
+        put_text("pair-buid", g_pair.buid);
+    }
     if (lockdown_connect(&s))
         return -1;
     snprintf(body, sizeof(body),
@@ -626,7 +654,7 @@ static int pair(void)
     }
     device_pem[n] = 0;
     tcp_close(s.c);
-    say("pair: making the pair record (two RSA-2048 keys, once)");
+    say("pair: making the pair record (two RSA-2048 keys, made once and kept)");
     if (pair_make(device_pem))
         return -1;
     pem_base64(g_pair.device_cert, dev64, sizeof(dev64));
