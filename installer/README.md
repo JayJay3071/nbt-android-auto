@@ -49,7 +49,7 @@ Das Freischalten verändert die Konfiguration des Geräts. Wie alles hier geschi
     Mikrofon des Autos. Bilder dazu stehen im [README](../README.md#sound).
   - Die Reihenfolge von Bluetooth und USB ist seit 2026.11.26 egal: Ist das Telefon nur per Bluetooth verbunden,
     spielt es seine Musik wie gewohnt. Beim Einstecken kommt der Ton von Android Auto oder CarPlay von selbst, nach
-    dem Abziehen wieder der Bluetooth-Ton. Gefahren bisher mit einem iPhone, mit einem Android-Telefon noch nicht.
+    dem Abziehen wieder der Bluetooth-Ton.
   - Ohne Bluetooth-Verbindung gibt es keinen Android-Auto-Ton.
   - Bisher nur mit einem Auto, einem Android-Telefon (OnePlus 7 Pro) und einem iPhone (iPhone 17 Air) getestet.
   - Abschalten: auf dem NBT die Datei `/var/opt/hmi/data/rw/NbtAndroidAutoRT/iap.off` anlegen. Ein erneutes

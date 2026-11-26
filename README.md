@@ -48,7 +48,7 @@ entry that this project adds under Multimedia, so iDrive shows what is playing a
 
 **Android Auto:** plug the phone in by USB and connect it by Bluetooth. Since 2026.11.26 the order does not matter:
 Bluetooth may already be connected when the cable is plugged in, the session's sound then comes by itself, and after
-unplugging the phone's own Bluetooth music plays again. (Driven with an iPhone so far, not yet with an Android phone.)
+unplugging the phone's own Bluetooth music plays again.
 
 **CarPlay:** the iPhone is paired by Bluetooth too, but with **only "Audio" enabled**:
 
@@ -72,8 +72,7 @@ Navigation prompts of Android Auto still come from the phone over its normal Blu
 
 ## Known limitations
 
-- **Sound needs Bluetooth:** see [Sound](#sound). Tested with one Android phone and one iPhone; the new handling of
-  the order (Bluetooth before USB) was driven with the iPhone only.
+- **Sound needs Bluetooth:** see [Sound](#sound). Tested with one Android phone and one iPhone.
 - **iPhone hotspot:** with the personal hotspot on, the iPhone in the developer's car kept dropping off USB about
   every minute; with the hotspot off it ran a whole drive. Suspected, not measured: the phone then needs more power
   than the head unit's USB port delivers.

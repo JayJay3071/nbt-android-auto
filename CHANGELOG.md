@@ -4,9 +4,9 @@ Versions are named after the build date of the installer payload.
 
 ## 2026.11.26 (pre-release)
 
-Driven in the developer's car with the iPhone (CarPlay and plain Bluetooth sound) on the evening of 2026-11-26. Not
-driven with an Android phone yet: Android Auto uses the same changed sound device and Bluetooth layer. The change to
-the first pairing of an iPhone (below) was built after the drive and has not run on a car.
+Driven in the developer's car on 2026-11-26 with the iPhone (CarPlay and plain Bluetooth sound) and with the Android
+phone (Android Auto). The change to the first pairing of an iPhone (below) was built after the drive and has not run
+on a car.
 
 - **Fix: the whole head unit restarted when a CarPlay session ended.** `nbt_carplay` gave every USB transfer to the
   head unit's USB stack (`io-usb`) with a time limit and ended without finishing the transfers that were still
