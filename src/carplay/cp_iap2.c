@@ -153,8 +153,9 @@ static int send_identification(void)
 {
     static const unsigned short sent[] = {0x5000, 0x5002, 0x5200, 0x5203, 0xae00, 0xae02, 0x4157, 0x4159,
                                           0x4154, 0x4156, 0xae03, 0x4301, 0x6800, 0x6802, 0x6803};
+    /* 5204 = lanes; accepted with the display's lane limits by iOS 27 on the car, 2026-11-25 */
     static const unsigned short taken[] = {0xea00, 0xea01, 0x5001, 0x5201, 0x5202, 0xae01, 0x4158, 0x4155, 0x4300,
-                                           0x6801};
+                                           0x6801, 0x5204};
     unsigned char b[2048], g[256];
     unsigned at = 0, gn;
     at = prm_str(b, at, 0, "BMW NBT");
@@ -191,6 +192,8 @@ static int send_identification(void)
         gn = prm_u16(g, gn, 4, 64);
         gn = prm_u16(g, gn, 5, 64);
         gn = prm_u16(g, gn, 6, 8);
+        gn = prm_u16(g, gn, 7, 64);   /* lane guidance: description length, storage */
+        gn = prm_u16(g, gn, 8, 8);
         at = prm(b, at, 30, g, gn);
     }
     return csm_send(0x1d01, b, at);
@@ -374,18 +377,30 @@ static int np_text(const unsigned char* g, unsigned len, unsigned id, char* out,
  * (read by nbt_cluster). 5202 = one manoeuvre of the route (1 index, 3 type, 4 road after it, 10 exit angle, counted
  * counter-clockwise: -90 = right); 5201 = the state (1: 1 = guiding), the distance to the next manoeuvre (10 metres, 11
  * text, 12 unit: 0 km, 1 mi, 2 m, 3 yd, 4 ft) and the coming manoeuvres' indices (13). Seen on the car 2026-11-24.
- * ponytail: the type numbers beyond 1, 2 and 11 are from memory of the iAP2 specification; an unknown one draws the
- * straight arrow. Roundabouts are drawn from the exit angle. No lanes yet. */
+ * In 5202, 10 (several) are the angles of the junction's other roads and 11 is the exit's, clockwise from straight on:
+ * 90 = right, -90 = left (car log 2026-11-24: a right turn has 11 = 90, a left turn -90).
+ * 5204 = one lane picture (1 index, 2 per lane: 1 status, 0 = not to take, 2 angles, 3 the angle to drive); 5201 says
+ * which one to show (16 index, 17 how many, 18 showing; car log 2026-11-24).
+ * ponytail: the type numbers beyond 1, 2 and 11 and all of 5204 are from memory of the iAP2 specification; an unknown
+ * type draws the straight arrow. Roundabouts are drawn from the exit angle, the other roads as stubs (exits=).
+ * nav.state's angle is Android Auto's: the way round the roundabout from the entry (90 right, 180 straight on, 270
+ * left), so 180 - the iPhone's. */
 #define NAV_STATE "/fs/ram3/nbt-aa-native/nav.state"
 static struct {
     int type, angle;
     char road[124];
+    char exits[36];   /* the junction's other roads, as nav.state's exits= */
 } g_man[64];
 static struct {
-    unsigned seq, state, unit, cur, next, has_next;
+    unsigned seq, state, unit, cur, next, has_next, lane, lanes_on;
     long long dist, written;
     char dist_text[16];
 } g_rg;
+
+static char g_lanes[16][40];   /* per lane picture: "4h,1o,1o" as nbt_cluster reads it */
+/* 1 = on the route, 6 = "proceed to the route" (parked beside the road: the first manoeuvre is already given; car
+ * 2026-11-25) */
+#define GUIDING (g_rg.state == 1 || g_rg.state == 6)
 
 /* iAP2 manoeuvre type -> Android Auto's (as nbt_cluster draws it) */
 static int nav_type(unsigned t)
@@ -411,14 +426,16 @@ static int nav_type(unsigned t)
 static void nav_write(void)
 {
     char buf[512];
-    const int on = g_rg.state == 1 && g_rg.cur < 64, two = on && g_rg.has_next && g_rg.next < 64;
+    const int on = GUIDING && g_rg.cur < 64, two = on && g_rg.has_next && g_rg.next < 64;
     const int type = on ? nav_type((unsigned)g_man[g_rg.cur].type) : 0;
     const int m = snprintf(buf, sizeof(buf),
                            "seq=%u\nstatus=%d\ntype=%d\nangle=%d\nhas_angle=%d\ndist_m=%lld\ndist_text=%s\nunit=%u\nroad=%s\n"
-                           "type2=%d\nroad2=%s\nlanes=\n",
-                           ++g_rg.seq, on, type, on ? -g_man[g_rg.cur].angle : 0, type == 34, g_rg.dist, g_rg.dist_text,
+                           "type2=%d\nroad2=%s\nlanes=%s\nexits=%s\n",
+                           ++g_rg.seq, on, type, on ? 180 - g_man[g_rg.cur].angle : 0, type == 34, g_rg.dist, g_rg.dist_text,
                            g_rg.unit, on ? g_man[g_rg.cur].road : "", two ? nav_type((unsigned)g_man[g_rg.next].type) : -1,
-                           two ? g_man[g_rg.next].road : "");
+                           two ? g_man[g_rg.next].road : "",
+                           on && g_rg.lanes_on && g_rg.lane < 16 ? g_lanes[g_rg.lane] : "",
+                           type == 34 ? g_man[g_rg.cur].exits : "");
     const int fd = open(NAV_STATE ".tmp", O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0)
         return;
@@ -430,15 +447,71 @@ static void nav_write(void)
 
 static void manoeuvre(const unsigned char* p, unsigned n)
 {
-    unsigned l, i;
+    unsigned l, i, at = 0, len = 0;
     const unsigned char* v = prm_find(p, n, 1, &l);
     if (!v || l < 2 || (i = get16(v)) >= 64)
         return;
+    while (at + 4 <= n) {   /* every parameter 10 is another road of the junction; the one we came from is left out */
+        const unsigned pl = get16(p + at);
+        if (pl < 4 || at + pl > n)
+            break;
+        if (get16(p + at + 2) == 10 && pl >= 6 && len + 6 < sizeof(g_man[i].exits)) {
+            const int a = (short)get16(p + at + 4);
+            if (a > -160 && a < 160)
+                len += (unsigned)snprintf(g_man[i].exits + len, sizeof(g_man[i].exits) - len, "%s%d", len ? "," : "",
+                                          180 - a);
+        }
+        at += pl;
+    }
+    g_man[i].exits[len] = 0;
     if ((v = prm_find(p, n, 3, &l)) != 0 && l >= 1)
         g_man[i].type = v[0];
-    if ((v = prm_find(p, n, 10, &l)) != 0 && l >= 2)
+    if ((v = prm_find(p, n, 11, &l)) != 0 && l >= 2)
         g_man[i].angle = (short)get16(v);
     np_text(p, n, 4, g_man[i].road, sizeof(g_man[i].road));
+    if (nav_type((unsigned)g_man[i].type) == 34)
+        say("iap2: manoeuvre %u: roundabout type %d, exit at %d degrees, others %s", i, g_man[i].type, g_man[i].angle,
+            g_man[i].exits);
+}
+
+/* an angle (clockwise from straight on) -> the lane arrow's shape in nav.state */
+static int lane_shape(int a)
+{
+    const int right = a > 0, m = a < 0 ? -a : a;
+    return m < 20 ? 1 : m < 68 ? 2 + right : m < 113 ? 4 + right : m < 170 ? 6 + right : 8 + right;
+}
+
+static void lane_guidance(const unsigned char* p, unsigned n)
+{
+    static unsigned shown;
+    unsigned l, i, at = 0, len = 0;
+    const unsigned char* v = prm_find(p, n, 1, &l);
+    if (shown < 8) {   /* the first ones whole: the layout is unconfirmed */
+        shown++;
+        hexdump("iap2: lanes", p, n < 400 ? n : 400);
+    }
+    if (!v || l < 2 || (i = get16(v)) >= 16)
+        return;
+    while (at + 4 <= n) {   /* every parameter 2 is one lane, left to right */
+        const unsigned gl = get16(p + at), id = get16(p + at + 2);
+        unsigned sl, al;
+        const unsigned char *s, *a;
+        if (gl < 4 || at + gl > n)
+            break;
+        if (id == 2 && len + 6 < sizeof(g_lanes[i])) {
+            const unsigned char* g = p + at + 4;
+            const int take = (s = prm_find(g, gl - 4, 1, &sl)) != 0 && sl >= 1 && s[0] != 0;
+            a = take ? prm_find(g, gl - 4, 3, &al) : 0;
+            if (!a || al < 2)
+                a = prm_find(g, gl - 4, 2, &al);
+            len += (unsigned)snprintf(g_lanes[i] + len, sizeof(g_lanes[i]) - len, "%s%d%c", len ? "," : "",
+                                      a && al >= 2 ? lane_shape((short)get16(a)) : 1, take ? 'h' : 'o');
+        }
+        at += gl;
+    }
+    g_lanes[i][len] = 0;
+    if (g_rg.lanes_on && g_rg.lane == i)
+        nav_write();
 }
 
 static void route_guidance(const unsigned char* p, unsigned n)
@@ -462,6 +535,10 @@ static void route_guidance(const unsigned char* p, unsigned n)
         if (g_rg.has_next)
             g_rg.next = get16(v + 2);
     }
+    if ((v = prm_find(p, n, 16, &l)) != 0 && l >= 2)
+        g_rg.lane = get16(v);
+    if ((v = prm_find(p, n, 18, &l)) != 0 && l >= 1)
+        g_rg.lanes_on = v[0];
     nav_write();
 }
 
@@ -494,7 +571,7 @@ static void on_message(unsigned id, const unsigned char* p, unsigned n)
     unsigned char out[1400], sig[128];
     unsigned at, len, sl;
     const unsigned char* v;
-    if (id != 0x5001 && id != 0xae01 && id != 0x5201 && id != 0x5202)
+    if (id != 0x5001 && id != 0xae01 && id != 0x5201 && id != 0x5202 && id != 0x5204)
         say("iap2: <- %04x (%u bytes)", id, n + 6);
     switch (id) {
     case 0x1d00:
@@ -563,6 +640,9 @@ static void on_message(unsigned id, const unsigned char* p, unsigned n)
         break;
     case 0x5202:
         manoeuvre(p, n);
+        break;
+    case 0x5204:
+        lane_guidance(p, n);
         break;
     default:
         break;
@@ -699,7 +779,7 @@ int iap2_run(struct stream* s, const struct iap2_carplay* cp)
         /* nbt_cluster shows the guidance only while nav.state is younger than 15 s; the iPhone sends nothing while
          * nothing changes (standing at a light), so the file is written again every 5 s (car 2026-11-24: the arrow
          * went on and off) */
-        if (g_rg.state == 1 && ms_now() - g_rg.written > 5000)
+        if (GUIDING && ms_now() - g_rg.written > 5000)
             nav_write();
         if (!g_l.synced && !resent && ms_now() - t0 > 5000) {
             resent = 1;

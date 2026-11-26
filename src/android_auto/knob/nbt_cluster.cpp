@@ -218,7 +218,7 @@ void uTurn(bool left) {
     p.push_back(V{116.0 + s * 22, Y(96)}); p.push_back(V{116.0 + s * 22, Y(132)});
     arrowOutline(p);
 }
-void roundabout(double exitDeg) {
+void roundabout(double exitDeg, const std::string& others = "") {
     V c = { 116, Y(116) };
     std::vector<Pt> ring;
     for (int i = 0; i <= 16; ++i) { V p = atS(c, i * 22.5, 24); ring.push_back(P(p.x, p.y)); }
@@ -227,6 +227,15 @@ void roundabout(double exitDeg) {
     polyline(inl, 2);
     std::vector<Pt> inr; inr.push_back(P(116 + kHalf, Y(172))); inr.push_back(P(116 + kHalf, Y(116) + 24 * kStretch));
     polyline(inr, 2);
+    // the roundabout's other exits (CarPlay, nav.state exits=): short stubs, so the arrow's exit can be counted
+    for (size_t i = 0; i < others.size();) {
+        const double d = 180.0 - atof(others.c_str() + i);
+        V a = atS(c, d, 24), b = atS(c, d, 34);
+        std::vector<Pt> stub; stub.push_back(P(a.x, a.y)); stub.push_back(P(b.x, b.y)); polyline(stub, 2);
+        const size_t e = others.find(',', i);
+        if (e == std::string::npos) break;
+        i = e + 1;
+    }
     std::vector<V> ex; ex.push_back(atS(c, exitDeg, 24)); ex.push_back(atS(c, exitDeg, 44));
     arrowOutline(ex);
 }void destination() {
@@ -270,7 +279,7 @@ void drawLanes(const std::vector<Lane>& lanes) {
         smallArrow(x0 + i * step, ang[sh], sh == 8, sh == 9, lanes[i].take);
     }
     g_inst = kDraw;}// AA Maneuver TYPE_* -> drawing (big arrow)
-void drawManeuver(int type, bool hasAngle, long long angle) {
+void drawManeuver(int type, bool hasAngle, long long angle, const std::string& exits = "") {
     switch (type) {
         case 3: case 5: turnArrow(-45); break;               // keep / slight left
         case 4: case 6: turnArrow(45); break;                // keep / slight right
@@ -286,7 +295,7 @@ void drawManeuver(int type, bool hasAngle, long long angle) {
             // counter-clockwise (right-hand traffic) roundabouts: exit angle counted counter-clockwise from the entry
             double exitDeg = hasAngle ? 180.0 - (double)angle : 0.0;
             if (type == 32 || type == 33 || type == 43 || type == 44) exitDeg = hasAngle ? (double)angle - 180.0 : 0.0;
-            roundabout(exitDeg);
+            roundabout(exitDeg, exits);
             break;
         }
         case 39: case 40: case 41: case 42: destination(); break;
@@ -294,7 +303,7 @@ void drawManeuver(int type, bool hasAngle, long long angle) {
     }
 }
 
-struct Nav { int status, type, unit, type2, speedLimit; long long angle, dist; bool hasAngle; long mtime; std::string distText, road, road2, lanes; };
+struct Nav { int status, type, unit, type2, speedLimit; long long angle, dist; bool hasAngle; long mtime; std::string distText, road, road2, lanes, exits; };
 bool readNav(Nav& n) {
     struct stat st;
     if (stat(kNav, &st) != 0) return false;
@@ -316,6 +325,7 @@ bool readNav(Nav& n) {
         else if (!strncmp(line, "type2=", 6)) n.type2 = atoi(line + 6);
         else if (!strncmp(line, "road2=", 6)) n.road2 = line + 6;
         else if (!strncmp(line, "lanes=", 6)) n.lanes = line + 6;
+        else if (!strncmp(line, "exits=", 6)) n.exits = line + 6;
     }
     fclose(f);
     return true;
@@ -744,7 +754,7 @@ int main(int argc, char** argv) {
 
     const long long t0 = nowMs();
     bool shown = false, barShown = false;
-    int drawn = -1000; long long drawnAngle = -999; std::string drawnLanes;
+    int drawn = -1000; long long drawnAngle = -999; std::string drawnExits, drawnLanes;
     std::string shownStreet = "\x01", shownDist = "\x01", shownUnit = "\x01", shownShield;
     int lastBar = -1; unsigned lastBmw = 0;
     while (!g_stop && (!seconds || nowMs() - t0 < seconds * 1000LL)) {
@@ -775,18 +785,18 @@ int main(int argc, char** argv) {
         if (want && shown) {
             const int big = n.type;                       // the current step, always (bar = its distance)
             const long long ang = n.hasAngle ? n.angle : -999;
-            if (big != drawn || ang != drawnAngle || n.lanes != drawnLanes) {
+            if (big != drawn || ang != drawnAngle || n.lanes != drawnLanes || n.exits != drawnExits) {
                 printf("[cluster] big arrow: type %d (%lld m), next: type %d '%s'\n", big, n.dist, n.type2, n.road2.c_str());
                 clearInst(kDraw); g_item = 0x80;
                 colour(kDraw, kColour); lineWidth(kDraw, kLine);
                 std::vector<Lane> lanes = parseLanes(n.lanes);
                 g_dy = 0;                                 // lanes have their own strip now
-                drawManeuver(big, n.hasAngle, n.angle);
+                drawManeuver(big, n.hasAngle, n.angle, n.exits);
                 if (n.lanes != drawnLanes) {
                     if (!lanes.empty()) { printf("[cluster] lanes %s\n", n.lanes.c_str()); drawLanes(lanes); }
                     else clearInst(kLanes);
                 }
-                drawn = big; drawnAngle = ang; drawnLanes = n.lanes;
+                drawn = big; drawnAngle = ang; drawnLanes = n.lanes; drawnExits = n.exits;
             }
             // top line: street and distance of the current step (user 2026-11-08: the following step later)
             std::string street = fitStreet(toIso(n.road));

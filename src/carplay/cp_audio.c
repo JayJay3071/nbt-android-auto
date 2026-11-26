@@ -128,7 +128,8 @@ struct stream {
     int started;
     unsigned first_sample;
     long long origin_ms;
-    unsigned long long packets, bad;
+    unsigned long long packets, bad, lost;   /* lost: gaps in the RTP sequence numbers (heard as short drop-outs) */
+    unsigned seq;
     FILE* wav;
     unsigned wav_bytes;
 };
@@ -212,6 +213,9 @@ static void* stream_thread(void* arg)
             continue;
         }
         m -= 16;
+        if (s->packets && get16(p + 2) != ((s->seq + 1) & 0xffff))
+            s->lost += (get16(p + 2) - s->seq - 1) & 0xffff;
+        s->seq = get16(p + 2);
         ++s->packets;
         if (!s->started) {
             s->started = 1;
@@ -239,7 +243,7 @@ static void* stream_thread(void* arg)
         pthread_mutex_unlock(&g_m);
         if (ms_now() - last_log > 30000) {
             last_log = ms_now();
-            say("audio %d: %llu packets, %llu not authentic", s->type, s->packets, s->bad);
+            say("audio %d: %llu packets, %llu not authentic, %llu lost", s->type, s->packets, s->bad, s->lost);
         }
     }
     return 0;
