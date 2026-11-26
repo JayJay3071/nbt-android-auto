@@ -116,6 +116,7 @@ The stock NBT does not accept SSH logins, so SSH has to be unlocked (patched) on
 - **How it was done on the developer's car:** with **FeatureInstaller**. It can take **several attempts**. The last
   step sometimes reports **errors even though SSH access was enabled**, so try to connect (for example
   `ssh root@169.254.199.99`) before you assume it failed.
+- **Alternative method:** the [Enable SSH guide on Bimmerfest](https://www.bimmerfest.com/threads/enable-ssh.1495527/) has also been successfully tested by a community member.
 - **Root password:** it can be looked up in this forum thread:
   [SSH access guide (supramkv.com)](https://www.supramkv.com/threads/ssh-access-guide-supra-nbtevo-headunit.24190/).
   The thread is about the NBT Evo in the Toyota Supra; the root password is given there.
