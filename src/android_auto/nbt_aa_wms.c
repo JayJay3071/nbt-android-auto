@@ -343,6 +343,95 @@ static int g_q_head, g_q_count;
 static pthread_mutex_t g_q_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_q_cond = PTHREAD_COND_INITIALIZER;
 
+/* ---- the phone's own Bluetooth sound while no phone session runs (2026-11-26) ----
+ * The head unit's player opens this device once, a few seconds after the phone connects by Bluetooth, and never asks
+ * for the sound URL again (car 2026-11-26: not when a session starts, not when it is told the device is gone). So the
+ * URL always points here, and without a session this device hands on what the stock device of the phone's A2DP stream
+ * (--phone, /dev/wms/player1) delivers: its packets and its status answer, whatever the codec (an iPhone sends AAC,
+ * status word 2 = 3). The player takes the codec from the status (recorded 2026-11-23: SBC before streaming, AAC once
+ * the stream ran, within one open), so each change between the two sources is answered as "not streaming" for
+ * HOLD_MS first. A session = status.txt of native_service (same directory) says connecting / starting_decoder /
+ * running and is fresh. */
+#define HOLD_MS 1500
+static const char* g_phone = "/dev/wms/player1";
+static const char* g_status = "status.txt";
+static volatile int g_session = 1; /* 1 = the session's sound (as before), 0 = the phone's own */
+static volatile long g_hold_until;  /* mono ms: until then neither source is handed out */
+static volatile int g_phone_fd = -1;
+static unsigned long long g_phone_packets, g_changes;
+
+static long mono_ms(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return t.tv_sec * 1000L + t.tv_nsec / 1000000L;
+}
+
+static void queue_put(const unsigned char* packet, size_t len)
+{
+    pthread_mutex_lock(&g_q_lock);
+    if (g_q_count == QUEUE) { /* nobody reads: drop the oldest */
+        g_q_head = (g_q_head + 1) % QUEUE;
+        --g_q_count;
+    }
+    memcpy(g_queue[(g_q_head + g_q_count) % QUEUE].data, packet, len);
+    g_queue[(g_q_head + g_q_count) % QUEUE].len = len;
+    ++g_q_count;
+    pthread_cond_broadcast(&g_q_cond);
+    pthread_mutex_unlock(&g_q_lock);
+}
+
+static int session_now(void)
+{
+    char line[80];
+    struct stat st;
+    FILE* f = !stat(g_status, &st) && time(0) - st.st_mtime <= 10 ? fopen(g_status, "r") : 0;
+    int on = 0;
+    while (f && fgets(line, sizeof(line), f))
+        if (!strncmp(line, "state=", 6))
+            on = !strncmp(line + 6, "running", 7) || !strncmp(line + 6, "starting_decoder", 16) ||
+                 !strncmp(line + 6, "connecting", 10);
+    if (f)
+        fclose(f);
+    return on;
+}
+
+/* reads the phone's stream all the time (so the stock device never backs up) and hands it on while no session runs */
+static void* phone(void* arg)
+{
+    unsigned char packet[MAXPACKET];
+    (void)arg;
+    while (!g_stop) {
+        ssize_t n;
+        if (g_phone_fd < 0) {
+            const int fd = open(g_phone, O_RDONLY);
+            if (fd < 0) {
+                sleep(1);
+                continue;
+            }
+            g_phone_fd = fd;
+            note("phone sound device %s opened", g_phone);
+        }
+        n = read(g_phone_fd, packet, sizeof(packet));
+        if (n <= 0) {
+            if (n < 0 && (errno == EAGAIN || errno == EINTR || errno == ETIMEDOUT)) {
+                usleep(20000);
+                continue;
+            }
+            note("phone sound device: read ended (%s)", n ? strerror(errno) : "end");
+            close(g_phone_fd);
+            g_phone_fd = -1;
+            sleep(1);
+            continue;
+        }
+        if (!g_session && mono_ms() >= g_hold_until) {
+            queue_put(packet, (size_t)n);
+            ++g_phone_packets;
+        }
+    }
+    return 0;
+}
+
 static void* encoder(void* arg)
 {
     static double pcm[SAMPLES_PER_FRAME][2];
@@ -413,19 +502,11 @@ static void* encoder(void* arg)
             }
             continue;
         }
-        pthread_mutex_lock(&g_q_lock);
-        if (g_q_count == QUEUE) { /* nobody reads: drop the oldest */
-            g_q_head = (g_q_head + 1) % QUEUE;
-            --g_q_count;
-        }
-        memcpy(g_queue[(g_q_head + g_q_count) % QUEUE].data, packet, len);
-        g_queue[(g_q_head + g_q_count) % QUEUE].len = len;
-        ++g_q_count;
+        if (g_session && mono_ms() >= g_hold_until)
+            queue_put(packet, len);
         ++g_packets;
         if (!real)
             ++g_silent_packets;
-        pthread_cond_broadcast(&g_q_cond);
-        pthread_mutex_unlock(&g_q_lock);
         next.tv_nsec += period_ns;
         while (next.tv_nsec >= 1000000000L) {
             next.tv_nsec -= 1000000000L;
@@ -456,14 +537,31 @@ static int d_read(resmgr_context_t* ctp, io_read_t* msg, iofunc_ocb_t* ocb)
     size_t len, want = msg->i.nbytes;
     struct timespec until;
     int status = iofunc_read_verify(ctp, msg, ocb, 0);
+    static unsigned calls;
+    if (calls++ < 8 || calls % 2000 == 0)
+        note("read call %u by pid %d: %u bytes, xtype %x, verify %d, %d queued", calls, ctp->info.pid, (unsigned)want,
+             (unsigned)msg->i.xtype, status, g_q_count);
     if (status != EOK)
         return status;
-    clock_gettime(CLOCK_REALTIME, &until);
-    until.tv_sec += 1;
+    /* A read waits until a packet is there, as the stock device does: the player reads once right after it opened the
+     * device and never again if that read fails (car 2026-11-26: "nothing there" after 1 s while the phone was not
+     * playing yet = no sound for the rest of the Bluetooth connection). Each second: is the reader still waiting? */
     pthread_mutex_lock(&g_q_lock);
-    while (!g_q_count && !g_stop)
-        if (pthread_cond_timedwait(&g_q_cond, &g_q_lock, &until) == ETIMEDOUT)
-            break;
+    while (!g_q_count && !g_stop) {
+        struct _msg_info info;
+        clock_gettime(CLOCK_REALTIME, &until);
+        until.tv_sec += 1;
+        if (pthread_cond_timedwait(&g_q_cond, &g_q_lock, &until) != ETIMEDOUT)
+            continue;
+        if (MsgInfo(ctp->rcvid, &info) == -1) { /* the reader is gone */
+            pthread_mutex_unlock(&g_q_lock);
+            return _RESMGR_NOREPLY;
+        }
+        if (info.flags & _NTO_MI_UNBLOCK_REQ) { /* it gave up waiting */
+            pthread_mutex_unlock(&g_q_lock);
+            return EINTR;
+        }
+    }
     if (!g_q_count) {
         pthread_mutex_unlock(&g_q_lock);
         return EAGAIN;
@@ -484,8 +582,25 @@ static int d_devctl(resmgr_context_t* ctp, io_devctl_t* msg, iofunc_ocb_t* ocb)
 {
     if ((msg->i.dcmd & 0xffff) == 0x0520 && msg->i.nbytes >= 32) {
         uint32_t* v = (uint32_t*)_DEVCTL_DATA(msg->o);
-        const int streaming = g_read_packets > 0;
+        const int held = mono_ms() < g_hold_until;
+        const int streaming = g_read_packets > 0 && !held && g_session;
         static int logged[2];
+        if (!g_session && !held && g_phone_fd >= 0) { /* the phone's own stream: its status as it is */
+            unsigned char own[32];
+            memset(own, 0, sizeof(own));
+            if (devctl(g_phone_fd, (int)msg->i.dcmd, own, sizeof(own), 0) == EOK) {
+                static unsigned char last[32];
+                if (memcmp(last, own, 32)) {
+                    const uint32_t* w = (const uint32_t*)own;
+                    memcpy(last, own, 32);
+                    note("status handed on to pid %d: %x %x %x %x %x %x %x %x", ctp->info.pid, w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);
+                }
+                memset(&msg->o, 0, sizeof(msg->o));
+                memcpy(v, own, sizeof(own));
+                msg->o.nbytes = 32;
+                return _RESMGR_PTR(ctp, &msg->o, sizeof(msg->o) + 32);
+            }
+        }
         memset(&msg->o, 0, sizeof(msg->o));
         v[0] = 1;
         v[1] = 1; /* SBC (AAC: 3) */
@@ -510,6 +625,15 @@ static int d_devctl(resmgr_context_t* ctp, io_devctl_t* msg, iofunc_ocb_t* ocb)
     }
 }
 
+static int d_notify(resmgr_context_t* ctp, io_notify_t* msg, iofunc_ocb_t* ocb)
+{
+    static unsigned n;
+    (void)ocb;
+    if (n++ < 8)
+        note("notify by pid %d: action %x flags %x", ctp->info.pid, (unsigned)msg->i.action, (unsigned)msg->i.flags);
+    return ENOSYS;
+}
+
 int main(int argc, char** argv)
 {
     const char* path = "/dev/wms/nbtaa";
@@ -519,7 +643,7 @@ int main(int argc, char** argv)
     thread_pool_attr_t pattr;
     thread_pool_t* pool;
     struct sigaction sa;
-    pthread_t rt, et;
+    pthread_t rt, et, pt;
     int i;
     unsigned seconds = 0;
     /* Started by native_service in place of nbt_a2i_play (boot.sh copies it under that name when the iPod-over-Bluetooth
@@ -539,6 +663,10 @@ int main(int argc, char** argv)
             g_bitpool = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--rate"))
             g_rate = atoi(argv[i + 1]);
+        else if (!strcmp(argv[i], "--phone")) /* "" = never the phone's own sound (as before 2026-11-26) */
+            g_phone = argv[i + 1];
+        else if (!strcmp(argv[i], "--status"))
+            g_status = argv[i + 1];
         else if (!strcmp(argv[i], "--selftest"))
             g_selftest = fopen(argv[i + 1], "wb");
         else
@@ -576,6 +704,7 @@ int main(int argc, char** argv)
     g_connect.open = d_open;
     g_io.read = d_read;
     g_io.devctl = d_devctl;
+    g_io.notify = d_notify;
     iofunc_attr_init(&g_attr, S_IFNAM | 0666, 0, 0);
     if (resmgr_attach(dpp, &rattr, path, _FTYPE_ANY, 0, &g_connect, &g_io, &g_attr) < 0) {
         note("resmgr_attach(%s) failed: %s", path, strerror(errno));
@@ -583,6 +712,8 @@ int main(int argc, char** argv)
     }
     pthread_create(&rt, 0, reader, 0);
     pthread_create(&et, 0, encoder, 0);
+    if (*g_phone)
+        pthread_create(&pt, 0, phone, 0);
     memset(&pattr, 0, sizeof(pattr));
     pattr.handle = dpp;
     pattr.context_alloc = dispatch_context_alloc;
@@ -600,10 +731,25 @@ int main(int argc, char** argv)
     note("A2DP device %s: SBC %d Hz, bitpool %d, %u bytes per frame, sound from %s", path, g_rate, g_bitpool,
          (unsigned)frame_length(), g_fifo);
     while (!g_stop) {
-        sleep(1);
+        int tick;
+        for (tick = 0; tick < 4 && !g_stop; ++tick) { /* which source: looked at four times a second */
+            const int on = *g_phone ? session_now() : 1;
+            if (on != g_session) {
+                g_hold_until = mono_ms() + HOLD_MS;
+                g_session = on;
+                pthread_mutex_lock(&g_q_lock);
+                g_q_count = 0;
+                pthread_mutex_unlock(&g_q_lock);
+                ++g_changes;
+                note("source now %s", on ? "the phone session" : "the phone's own Bluetooth sound");
+            }
+            usleep(250000);
+        }
         if (++seconds % 60 == 0)
-            note("packets made %llu (silent %llu), read %llu, ran dry %llu times, cut back %llu times, %u ms queued", g_packets, g_silent_packets,
-                 g_read_packets, g_underruns, g_trims, (unsigned)(g_fill * 1000 / IN_RATE));
+            note("packets made %llu (silent %llu), read %llu, ran dry %llu times, cut back %llu times, %u ms queued; "
+                 "phone's own %llu, source changes %llu",
+                 g_packets, g_silent_packets, g_read_packets, g_underruns, g_trims, (unsigned)(g_fill * 1000 / IN_RATE),
+                 g_phone_packets, g_changes);
     }
     note("stopped");
     return 0;

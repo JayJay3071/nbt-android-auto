@@ -80,6 +80,11 @@ static int g_block_pid;
  * would not be played by the head unit's player. */
 static const char* g_url;
 static const char* g_run;
+/* With --iap (2026-11-26): only a phone that connects by Bluetooth while a USB session runs is made an iPod (car: an
+ * iPhone connected only by Bluetooth showed its titles but had no sound, the sound URL pointed at our empty device).
+ * g_claimed = the current Bluetooth connection was made one; <run>/iap.claimed tells nbt-aa-iap.sh to start nbt_aa_ipod.
+ * Without it, or once the session has ended, everything is passed through unchanged (plain Bluetooth audio). */
+static volatile int g_claimed;
 
 /* ---- what Android Auto plays (<run>/media.state of oneplus_native), read at most twice a second ---- */
 static struct {
@@ -242,6 +247,50 @@ static long mono_ms(void)
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
     return t.tv_sec * 1000L + t.tv_nsec / 1000000L;
+}
+
+/* A phone session is on: <run>/status.txt of native_service says connecting / starting_decoder / running. The service
+ * rewrites it at least every 2 s, so a file older than 10 s means the service is gone. Read at most twice a second. */
+static int session_on(void)
+{
+    static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+    static long last_ms = -1000000;
+    static int on;
+    char path[160], line[80];
+    struct stat st;
+    FILE* f;
+    int r;
+    if (!g_run)
+        return 1;
+    pthread_mutex_lock(&lock);
+    if (mono_ms() - last_ms >= 500) {
+        last_ms = mono_ms();
+        on = 0;
+        snprintf(path, sizeof(path), "%s/status.txt", g_run);
+        f = !stat(path, &st) && time(0) - st.st_mtime <= 10 ? fopen(path, "r") : 0;
+        while (f && fgets(line, sizeof(line), f))
+            if (!strncmp(line, "state=", 6))
+                on = !strncmp(line + 6, "running", 7) || !strncmp(line + 6, "starting_decoder", 16) ||
+                     !strncmp(line + 6, "connecting", 10);
+        if (f)
+            fclose(f);
+    }
+    r = on;
+    pthread_mutex_unlock(&lock);
+    return r;
+}
+
+static void set_claimed(int on)
+{
+    char path[160];
+    g_claimed = on;
+    if (!g_run)
+        return;
+    snprintf(path, sizeof(path), "%s/iap.claimed", g_run);
+    if (on)
+        close(open(path, O_WRONLY | O_CREAT, 0644));
+    else
+        unlink(path);
 }
 
 /* ---- log ---- */
@@ -585,7 +634,7 @@ static int t_devctl(resmgr_context_t* ctp, io_devctl_t* msg, RESMGR_OCB_T* o)
     unsigned char* data = (unsigned char*)_DEVCTL_DATA(msg->i);
     unsigned char in[64];
     char key[160], shown_in[200], shown_out[1400];
-    int info = 0, rc;
+    int info = 0, rc, ours;
     const size_t in_n = nbytes < sizeof(in) ? nbytes : sizeof(in);
 
     if ((dcmd & 0xff00u) == 0x0100u) /* flags of the client's own open file */
@@ -594,6 +643,10 @@ static int t_devctl(resmgr_context_t* ctp, io_devctl_t* msg, RESMGR_OCB_T* o)
         nbytes = 65000;
     memcpy(in, data, in_n);
     rc = devctl(o->fd, (int)dcmd, data, nbytes, &info);
+    /* the answers below are only changed while this connection is our iPod and the session still runs */
+    ours = !g_iap || (g_claimed && session_on());
+    /* the URL always: the player asks once per Bluetooth connection, long before a session may start (car 2026-11-26);
+     * without a session nbt_aa_wms hands on the phone's own stream */
     if (g_url && (dcmd & 0xffffu) == 0x0e6eu && nbytes > strlen(g_url)) {
         const char* was = rc == EOK ? (const char*)data : "(error)";
         char old[100];
@@ -604,7 +657,7 @@ static int t_devctl(resmgr_context_t* ctp, io_devctl_t* msg, RESMGR_OCB_T* o)
         rc = EOK;
         note("url     %-28s pid %d (%s): %s -> %s", o->rel, o->pid, who(o->pid), old, g_url);
     }
-    if (g_run && rc == EOK && (dcmd & 0xffffu) == 0x0e19u && nbytes >= 8) {
+    if (g_run && ours && rc == EOK && (dcmd & 0xffffu) == 0x0e19u && nbytes >= 8) {
         uint32_t* s = (uint32_t*)data;
         s[1] = aa_playing() ? 1 : 2;
         if (nbytes >= 28) { /* length and position as Android Auto has them */
@@ -618,7 +671,7 @@ static int t_devctl(resmgr_context_t* ctp, io_devctl_t* msg, RESMGR_OCB_T* o)
     }
     /* --run: the event queue with Android Auto's title data (see aa_events); the phone's own track / metadata /
      * position / now-playing records are left out, anything else of it is passed on behind ours */
-    if (g_run && (dcmd & 0xffffu) == 0x0e37u && nbytes >= 64) {
+    if (g_run && ours && (dcmd & 0xffffu) == 0x0e37u && nbytes >= 64) {
         unsigned char* mine = malloc(nbytes);
         size_t used = 0, at = 0;
         const size_t stock = rc == EOK && info > 0 ? (size_t)info : 0;
@@ -649,7 +702,7 @@ static int t_devctl(resmgr_context_t* ctp, io_devctl_t* msg, RESMGR_OCB_T* o)
                      who(o->pid), (unsigned)used);
         }
     }
-    if (g_run && nbytes > 1 &&
+    if (g_run && ours && nbytes > 1 &&
         ((dcmd & 0xffffu) == 0x0e64u || (dcmd & 0xffffu) == 0x0e65u || (dcmd & 0xffffu) == 0x0e66u)) {
         pthread_mutex_lock(&g_aa_lock);
         aa_refresh();
@@ -665,16 +718,21 @@ static int t_devctl(resmgr_context_t* ctp, io_devctl_t* msg, RESMGR_OCB_T* o)
         }
         pthread_mutex_unlock(&g_aa_lock);
     }
-    if (g_run && rc == EOK && (dcmd & 0xffffu) == 0x0e6bu) {
+    if (g_run && ours && rc == EOK && (dcmd & 0xffffu) == 0x0e6bu) {
         pthread_mutex_lock(&g_aa_lock);
         if (aa.valid && aa.duration_s > 0)
             info = (int)(aa.duration_s * 1000);
         pthread_mutex_unlock(&g_aa_lock);
     }
+    /* always said, also without a session (car 2026-11-26: saying it only during a session meant Bluetooth off / on
+     * after plugging in); without a session the answers above stay the phone's own and nbt-aa-iap.sh keeps the iPod
+     * place away, so the phone is plain Bluetooth audio until a session starts */
     if (g_iap && rc == EOK && (dcmd & 0xffffu) == 0x0e8bu && nbytes > 64) {
         static const char from[] = "<iap status=\"not_supported\"/>", to[] = "<iap status=\"supported\"/>";
         char* end = memchr(data, 0, nbytes);
         char* at;
+        if (!g_claimed)
+            set_claimed(1);
         if (!end) {
             end = (char*)data + nbytes - 1;
             *end = 0;
@@ -928,6 +986,7 @@ int main(int argc, char** argv)
     if (!pool || thread_pool_start(pool) < 0)
         return 6;
     pthread_create(&pulses, 0, pulse_thread, 0);
+    set_claimed(0);
     note("watching %s for %u s", g_mount, seconds);
     clock_gettime(CLOCK_MONOTONIC, &start);
     while (!g_stop) {
@@ -957,12 +1016,14 @@ int main(int argc, char** argv)
         } else if (!alive && id >= 0) {
             resmgr_detach(dpp, id, _RESMGR_DETACH_PATHNAME);
             id = -1;
+            set_claimed(0); /* the Bluetooth connection ended: the next one is decided again */
             note("stock driver left %s: name taken away, waiting for the next mount", g_mount);
         }
         usleep(15000);
     }
     if (id >= 0)
         resmgr_detach(dpp, id, _RESMGR_DETACH_PATHNAME);
+    set_claimed(0);
     pthread_mutex_lock(&g_lock);
     for (i = 0; i < MAXKEYS && g_keys[i].key[0]; ++i)
         fprintf(stderr, "summary %6u x %s\n", g_keys[i].count, g_keys[i].key);
