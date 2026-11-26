@@ -518,7 +518,7 @@ static void done(struct usbd_urb* urb, struct usbd_pipe* pipe, void* arg)
     p->status = (unsigned)status;
     p->actual = (unsigned)actual;
     p->done = 1;
-    pthread_cond_signal(&p->c);
+    pthread_cond_broadcast(&p->c);
     pthread_mutex_unlock(&p->m);
 }
 
@@ -541,40 +541,82 @@ static int wait_done(struct usb_pipe* p, unsigned ms)
     return d;
 }
 
+/* Transfers are given to the USB stack WITHOUT a time limit, and the waiting is done here. With a limit the stack
+ * (io-usb) keeps a timer inside the transfer's memory; when this program ended while such transfers were still
+ * running (three readers with 1 s limits, always), the stack at times kept the timer of a transfer whose memory it
+ * had already released and crashed on its next timer tick - and with it the whole head unit restarted (car
+ * 2026-11-26 17:32: io-usb core, SIGSEGV in its timer list on an unmapped transfer page). So: no timers in the
+ * stack; a read that brings nothing in time stays with the stack and the next call goes on waiting for it; only a
+ * write that does not finish is aborted; usb_close() ends everything that is still running before it disconnects. */
+static volatile int g_closing;
+
 int usb_xfer(struct usb_pipe* p, void* data, unsigned n, unsigned ms, unsigned* actual)
 {
-    int rc;
+    int rc = EOK;
     *actual = 0;
-    if (n > p->size || g_gone)
+    if (n > p->size || g_closing || (g_gone && !p->pending))
         return EINVAL;
-    if (!p->in)
-        memcpy(p->buf, data, n);
-    p->done = 0;
-    if (p->interrupt)
-        usbd_setup_interrupt(p->urb, URB_DIR_IN | URB_SHORT_XFER_OK, p->buf, n);
-    else
-        usbd_setup_bulk(p->urb, p->in ? URB_DIR_IN | URB_SHORT_XFER_OK : URB_DIR_OUT, p->buf, n);
-    rc = usbd_io(p->urb, p->pipe, done, p, ms);
-    if (rc != EOK)
-        return rc;
-    if (!wait_done(p, ms + 1000)) {
+    if (!p->pending) {
+        if (!p->in)
+            memcpy(p->buf, data, n);
+        p->done = 0;
+        if (p->interrupt)
+            usbd_setup_interrupt(p->urb, URB_DIR_IN | URB_SHORT_XFER_OK, p->buf, n);
+        else
+            usbd_setup_bulk(p->urb, p->in ? URB_DIR_IN | URB_SHORT_XFER_OK : URB_DIR_OUT, p->buf, n);
+        rc = usbd_io(p->urb, p->pipe, done, p, USBD_TIME_INFINITY);
+        if (rc != EOK)
+            return rc;
+        p->pending = 1;
+    }
+    if (!wait_done(p, ms)) {
+        if (p->in)
+            return ETIMEDOUT;   /* still with the stack: the next call waits for the same transfer */
         usbd_abort_pipe(p->pipe);
-        if (!wait_done(p, 1000)) {   /* the stack still owns the buffer: never touched again */
-            say("usb: a transfer did not end after its abort; stopping");
-            _exit(3);
+        if (!wait_done(p, 2000)) {   /* the stack still owns the buffer: no further transfer on this pipe */
+            say("usb: a transfer did not end after its abort");
+            return EIO;
         }
         rc = ETIMEDOUT;
     }
+    p->pending = 0;
     *actual = p->actual;
     if (p->in && p->actual)
         memcpy(data, p->buf, p->actual);
-    if (rc == EOK && p->status && !p->actual && p->in)
-        rc = ETIMEDOUT;   /* a timed-out read ends with a status and nothing in it */
+    if (rc == EOK && p->status && !p->actual && p->in) {
+        rc = ETIMEDOUT;   /* a read that ends with a status and nothing in it: as "nothing came" */
+        if (p->status & 0x0a000000u)   /* ended with an error or aborted: the callers try again at once */
+            usleep(50000);
+    }
     return rc;
 }
 
 void usb_close(struct usb* u)
 {
+    struct usb_pipe* all[5];
+    unsigned i, round, left = 0;
+    all[0] = &u->mux_in;
+    all[1] = &u->mux_out;
+    all[2] = &u->ncm_in;
+    all[3] = &u->ncm_out;
+    all[4] = &u->ncm_int;
+    g_closing = 1;   /* no new transfers */
+    /* what is still with the stack is ended and waited for BEFORE the connection goes (see usb_xfer); twice, for a
+     * reader that was just handing a transfer over */
+    for (round = 0; round < 2 && u->conn; ++round) {
+        left = 0;
+        for (i = 0; i < 5; ++i) {
+            struct usb_pipe* p = all[i];
+            if (!p->pipe || !p->pending || p->done)
+                continue;
+            usbd_abort_pipe(p->pipe);
+            if (!wait_done(p, 2000))
+                ++left;
+        }
+        usleep(100000);
+    }
+    if (left)   /* without timers in the stack nothing of ours is left behind in it either way */
+        say("usb: %u transfer(s) did not end before the disconnect", left);
     if (u->conn)
         usbd_disconnect(u->conn);
     u->conn = 0;

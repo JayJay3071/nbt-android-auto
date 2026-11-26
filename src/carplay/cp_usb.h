@@ -22,6 +22,7 @@ struct usb_pipe {
     pthread_mutex_t m;
     pthread_cond_t c;
     int done;
+    int pending;   /* a transfer is with the USB stack (a read that timed out here stays there for the next call) */
     unsigned status, actual;
 };
 
